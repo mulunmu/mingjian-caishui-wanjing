@@ -1,0 +1,35 @@
+name: 2.0 CI
+
+# 本文件位于 2.0/.github/workflows：当 git 仓库根目录为 2.0/ 时生效。
+# 若 monorepo 根为 risk-assessment/（含 1.0、2.0），请使用仓库根
+# .github/workflows/ci-2.0.yml（paths: 2.0/**）。
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  frontend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+      - run: npm run build
+
+  backend-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - run: python -c "from app.main import app; print(f'{len(app.routes)} routes OK')"
+      - name: pytest (exclude optional llm)
+        run: python -m pytest tests/ -q -m "not llm"

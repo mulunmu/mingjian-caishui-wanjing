@@ -1,0 +1,109 @@
+# 2.0 上线部署：MySQL(源库) + PostgreSQL + Redis + backend + frontend
+#
+# 真实数据回填（首次启动，一次性，产出 193 家真实脱敏主体）：
+#   1) docker compose --profile etl up -d mysql
+#   2) docker compose exec -T mysql sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" bill_tax_fusion_dwd_standrad' < data/数据.sql
+#   3) docker compose run --rm backend python -m app.etl.pipeline
+#   4) docker compose up -d --build backend frontend
+#
+# 上线前必设（.env）：
+#   AUTH_REQUIRED=true
+#   JWT_SECRET=<openssl rand -hex 32，≥32 字符>
+#   CORS_ORIGINS=https://your-frontend.example
+#   DEMO_USER_PASSWORD=<强口令>
+#   POSTGRES_PASSWORD / MYSQL_* 勿用默认弱口令
+#
+# 说明：mysql 仅 profile=etl；应用运行期只读 PostgreSQL。
+#       DB/Redis 默认仅绑定 127.0.0.1，避免局域网裸奔。
+services:
+  mysql:
+    profiles: ["etl"]
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_pass}
+      MYSQL_DATABASE: bill_tax_fusion_dwd_standrad
+      MYSQL_USER: risk_user
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-risk_pass}
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./data/mysql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root_pass}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: risk_db
+      POSTGRES_USER: risk_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-risk_pass}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U risk_user -d risk_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://risk_user:${POSTGRES_PASSWORD:-risk_pass}@db:5432/risk_db
+      REDIS_URL: redis://redis:6379/0
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: risk_user
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-risk_pass}
+      MYSQL_DB: bill_tax_fusion_dwd_standrad
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-v4-pro}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      LLM_FALLBACK_MODEL: ${LLM_FALLBACK_MODEL:-deepseek-v4-flash}
+      LLM_DAILY_LIMIT: ${LLM_DAILY_LIMIT:-1000}
+      # 本地 .env 可设 AUTH_REQUIRED=false；未设置时默认 true（生产 fail-closed）
+      JWT_SECRET: ${JWT_SECRET:-risk-assessment-dev-jwt-do-not-use-in-prod}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
+      ALLOW_SELF_REGISTER: ${ALLOW_SELF_REGISTER:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-admin@localhost}
+      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-change-me-now}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      # 开发：Dockerfile（vite :3000）。生产：FRONTEND_DOCKERFILE=Dockerfile.prod
+      # Dockerfile.prod 的 nginx 现监听 3000，与下方 ports 对齐，无需再改映射。
+      dockerfile: ${FRONTEND_DOCKERFILE:-Dockerfile}
+    ports:
+      - "3000:3000"
+    environment:
+      VITE_API_URL: http://backend:8000
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  mysql_data:

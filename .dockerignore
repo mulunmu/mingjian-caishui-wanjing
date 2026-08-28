@@ -1,0 +1,14 @@
+node_modules
+dist
+backend
+.claude
+.git
+.gitignore
+*.zip
+.env
+.env.*
+data
+*.sql
+*.sql.gz
+AUDIT_REPORT.md
+项目介绍.md

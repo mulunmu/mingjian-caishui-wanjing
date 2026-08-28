@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    @page { size: A4; margin: 2cm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      font-size: 11pt;
+      color: #1e293b;
+      line-height: 1.6;
+    }
+    .page { page-break-after: always; }
+    .page:last-child { page-break-after: auto; }
+
+    /* 封面 */
+    .cover {
+      text-align: center;
+      padding-top: 6cm;
+    }
+    .cover-tag {
+      display: inline-block;
+      padding: 4px 16px;
+      border: 1px solid #3b82f6;
+      color: #3b82f6;
+      border-radius: 20px;
+      font-size: 10pt;
+      margin-bottom: 24px;
+    }
+    .cover h1 {
+      font-size: 28pt;
+      color: #0f172a;
+      margin: 0 0 12px;
+    }
+    .cover .meta {
+      color: #64748b;
+      font-size: 11pt;
+      margin: 8px 0;
+    }
+    .risk-banner {
+      margin-top: 48px;
+      padding: 24px;
+      background: {{ risk_bg }};
+      border-radius: 12px;
+    }
+    .risk-banner .score {
+      font-size: 48pt;
+      font-weight: bold;
+      color: {{ risk_color }};
+      margin: 0;
+    }
+    .risk-banner .level {
+      font-size: 18pt;
+      color: {{ risk_color }};
+      margin-top: 8px;
+    }
+
+    /* 通用 */
+    h2 {
+      font-size: 16pt;
+      color: #0f172a;
+      border-bottom: 2px solid #3b82f6;
+      padding-bottom: 6px;
+      margin: 0 0 16px;
+    }
+    h3 {
+      font-size: 12pt;
+      color: #334155;
+      margin: 16px 0 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+    }
+    th, td {
+      border: 1px solid #e2e8f0;
+      padding: 8px 12px;
+      text-align: left;
+    }
+    th {
+      background: #f1f5f9;
+      font-weight: 600;
+      color: #475569;
+    }
+    .radar-wrap {
+      text-align: center;
+      margin: 16px 0;
+    }
+    .radar-wrap svg {
+      max-width: 100%;
+      height: auto;
+    }
+    .metrics-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 12px 0;
+    }
+    .metric-box {
+      flex: 1 1 30%;
+      min-width: 120px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px;
+      text-align: center;
+    }
+    .metric-box .label { font-size: 9pt; color: #64748b; }
+    .metric-box .value { font-size: 14pt; font-weight: bold; color: #0f172a; }
+
+    /* 预警 */
+    .warning-item {
+      padding: 8px 12px;
+      margin: 6px 0;
+      border-radius: 6px;
+      border-left: 4px solid #ef4444;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+    .warning-item.yellow {
+      border-left-color: #f59e0b;
+      background: #fffbeb;
+      color: #92400e;
+    }
+    .no-warning {
+      padding: 16px;
+      background: #f0fdf4;
+      color: #166534;
+      border-radius: 8px;
+      text-align: center;
+    }
+    .tips-box {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 16px 0;
+    }
+    .footer-note {
+      margin-top: 24px;
+      padding-top: 12px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 9pt;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 第1页：封面 + Executive Summary（Reference: FinRobot Section 1-2） -->
+  <div class="page cover">
+    <div class="cover-tag">企业风险评估报告</div>
+    <h1>{{ enterprise_name }}</h1>
+    <p class="meta">企业编号：{{ enterprise_id }}</p>
+    <p class="meta">评估日期：{{ report_date }}</p>
+    <p class="meta">报告编号：{{ report_id }}</p>
+    <div class="risk-banner">
+      <p class="score">{{ overall_score }}</p>
+      <p class="level">{{ risk_level }}</p>
+    </div>
+    <p class="meta" style="margin-top:32px; text-align:left; max-width:480px; margin-left:auto; margin-right:auto;">
+      <strong>评估摘要：</strong>{{ executive_summary }}
+    </p>
+    <p class="meta" style="text-align:left; max-width:480px; margin-left:auto; margin-right:auto;">
+      <strong>企业概览：</strong>
+      {{ company_overview.industry_l1 }} / {{ company_overview.industry_l2 }} ·
+      {{ company_overview.province }} {{ company_overview.city }}
+    </p>
+  </div>
+
+  <!-- 第2页：Financial Analysis（Reference: FinRobot Section 3） -->
+  <div class="page">
+    <h2>三维评分详情</h2>
+    <div class="radar-wrap">{{ radar_svg | safe }}</div>
+    <h3>各维度得分</h3>
+    <table>
+      <thead>
+        <tr><th>评估维度</th><th>权重</th><th>得分</th><th>行业均值</th></tr>
+      </thead>
+      <tbody>
+        {% for dim in dimension_rows %}
+        <tr>
+          <td>{{ dim.name }}</td>
+          <td>{{ dim.weight }}</td>
+          <td><strong>{{ dim.score }}</strong></td>
+          <td>{{ dim.industry_avg }}</td>
+        </tr>
+        {% endfor %}
+        <tr>
+          <td><strong>综合评分</strong></td>
+          <td>100%</td>
+          <td><strong>{{ overall_score }}</strong></td>
+          <td>{{ industry_overall_avg }}</td>
+        </tr>
+      </tbody>
+    </table>
+    <h3>关键指标</h3>
+    <div class="metrics-grid">
+      {% for m in key_metrics %}
+      <div class="metric-box">
+        <div class="label">{{ m.label }}</div>
+        <div class="value">{{ m.value }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <h3>行业对标（Industry Positioning）</h3>
+    <p>{{ industry_positioning }}</p>
+  </div>
+
+  <!-- 第3页：Risk Assessment + Valuation（Reference: FinRobot Section 5-6） -->
+  <div class="page">
+    <h2>预警信号清单</h2>
+    {% if warnings %}
+      {% for w in warnings %}
+      <div class="warning-item {{ w.severity }}">{{ w.label }}</div>
+      {% endfor %}
+    {% else %}
+      <div class="no-warning">✓ 当前无预警信号，企业经营状况良好</div>
+    {% endif %}
+
+    <h2>风险提示与建议</h2>
+    <div class="tips-box">{{ risk_tips }}</div>
+
+    <h2>估值与展望（Valuation &amp; Outlook）</h2>
+    <table>
+      <tr><th>指标</th><th>数值</th></tr>
+      <tr><td>市盈率 (PE)</td><td>{{ valuation_outlook.pe_ratio }}</td></tr>
+      <tr><td>营收同比</td><td>{{ valuation_outlook.revenue_yoy }}</td></tr>
+      <tr><td>Z-Score 等级</td><td>{{ valuation_outlook.z_score_level }}</td></tr>
+    </table>
+    <p style="font-size:10pt; color:#475569;">{{ valuation_outlook.outlook }}</p>
+
+    <h2>附录：数据来源说明（Appendix）</h2>
+    <table>
+      <tr><th>数据类别</th><th>来源</th></tr>
+      <tr><td>税务数据</td><td>税务局公开数据、企业申报记录</td></tr>
+      <tr><td>工商信息</td><td>国家企业信用信息公示系统</td></tr>
+      <tr><td>司法诉讼</td><td>中国裁判文书网、企查查</td></tr>
+      <tr><td>财务指标</td><td>上市公司公告、行业数据库</td></tr>
+      <tr><td>社保趋势</td><td>人社部门统计数据</td></tr>
+    </table>
+    <div class="footer-note">
+      本报告由企业风险评估系统自动生成，仅供参考，不构成投资建议或法律意见。
+      报告数据截至 {{ report_date }}，评估模型版本 v1.0。
+    </div>
+  </div>
+
+</body>
+</html>

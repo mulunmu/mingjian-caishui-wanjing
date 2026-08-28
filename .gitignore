@@ -1,0 +1,28 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# secrets / env
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# tooling
+.impeccable/
+*.zip
+
+# 源库数据（大文件，不提交；schema 见 data/mysql-init/*.sql 仍纳入版本管理）
+data/数据.sql
+data/import.log
+data/*.xlsx
+
+# 生成产物（不提交）
+backend/reports/

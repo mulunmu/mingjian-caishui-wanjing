@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ title }}</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 16mm 22mm 16mm;
+      @top-center {
+        content: "明鉴・财税票・万景 · 风控报告";
+        font-size: 8pt;
+        color: #94a3b8;
+      }
+      @bottom-right {
+        content: "第 " counter(page) " 页";
+        font-size: 8pt;
+        color: #94a3b8;
+      }
+    }
+    @page :first {
+      @top-center { content: none; }
+      @bottom-right { content: none; }
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      font-family: "WenQuanYi Micro Hei", "Microsoft YaHei", "PingFang SC", sans-serif;
+      font-size: 10.5pt;
+      color: #0f172a;
+      line-height: 1.55;
+      margin: 0;
+    }
+
+    .page-break { page-break-after: always; }
+
+    /* 封面 */
+    .cover {
+      text-align: center;
+      padding: 48px 24px 32px;
+      min-height: 240mm;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .cover-badge {
+      display: inline-block;
+      padding: 4px 14px;
+      border: 1px solid #2563eb;
+      color: #2563eb;
+      border-radius: 999px;
+      font-size: 9pt;
+      margin-bottom: 20px;
+    }
+    .cover h1 {
+      font-size: 22pt;
+      margin: 0 0 10px;
+      color: #0f172a;
+    }
+    .cover .story {
+      color: #475569;
+      max-width: 420px;
+      margin: 0 auto 28px;
+    }
+    .narration {
+      background: #f0f6ff;
+      border: 1px solid #dbeafe;
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin: 0 0 12px;
+      color: #334155;
+      font-size: 9.5pt;
+    }
+    .kpi-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      width: 100%;
+      max-width: 520px;
+      margin: 0 auto 28px;
+    }
+    .kpi-card {
+      flex: 1 1 22%;
+      min-width: 100px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 12px 8px;
+      text-align: center;
+    }
+    .kpi-card .label { font-size: 8.5pt; color: #64748b; }
+    .kpi-card .value {
+      font-size: 14pt;
+      font-weight: 700;
+      color: #0f172a;
+      margin-top: 4px;
+    }
+    .kpi-card .unit { font-size: 8pt; color: #94a3b8; }
+    .cover-meta {
+      color: #64748b;
+      font-size: 9.5pt;
+      margin: 4px 0;
+    }
+    .validation-pill {
+      display: inline-block;
+      margin-top: 16px;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 9pt;
+      background: {% if validation_ok %}#ecfdf5{% else %}#fef2f2{% endif %};
+      color: {% if validation_ok %}#059669{% else %}#dc2626{% endif %};
+      border: 1px solid {% if validation_ok %}#a7f3d0{% else %}#fecaca{% endif %};
+    }
+
+    h2 {
+      font-size: 14pt;
+      color: #0f172a;
+      border-bottom: 2px solid #2563eb;
+      padding-bottom: 6px;
+      margin: 0 0 14px;
+    }
+    h3 {
+      font-size: 11pt;
+      color: #334155;
+      margin: 18px 0 8px;
+    }
+    p { margin: 0 0 8px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0 16px;
+      font-size: 9.5pt;
+    }
+    th, td {
+      border: 1px solid #e2e8f0;
+      padding: 7px 10px;
+      text-align: left;
+    }
+    th {
+      background: #f1f5f9;
+      color: #475569;
+      font-weight: 600;
+    }
+
+    .chart-img {
+      display: block;
+      max-width: 100%;
+      margin: 12px auto;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+    }
+
+    ul.claims {
+      margin: 8px 0;
+      padding-left: 18px;
+    }
+    ul.claims li { margin-bottom: 6px; }
+    .inferred { color: #64748b; font-style: italic; }
+
+    .trace-block {
+      margin: 6px 0 10px;
+      padding: 8px 10px;
+      background: #f8fafc;
+      border-left: 3px solid #cbd5e1;
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 8.5pt;
+      color: #475569;
+    }
+    .trace-block .evidence {
+      margin-left: 12px;
+      color: #94a3b8;
+    }
+
+    .drag-list { margin: 8px 0; padding-left: 18px; }
+    .footer-note {
+      margin-top: 24px;
+      padding-top: 12px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 8.5pt;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 封面 -->
+  <section class="cover page-break">
+    <span class="cover-badge">匿名切片风控报告</span>
+    <h1>{{ title }}</h1>
+    <p class="story">{{ story }}</p>
+
+    {% if summary_kpis %}
+    <div class="kpi-grid">
+      {% for k in summary_kpis %}
+      <div class="kpi-card">
+        <div class="label">{{ k.label }}</div>
+        <div class="value">{{ k.value }}<span class="unit">{{ k.unit }}</span></div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <p class="cover-meta">报告日期：{{ report_date }}</p>
+    <p class="cover-meta">报告编号：{{ report_id }}</p>
+    <p class="cover-meta">场景：{{ scenario_label or scenario }}</p>
+    <p class="cover-meta">报告层级：{{ tier_label or '通用模板' }}</p>
+    <span class="validation-pill">
+      抗幻觉校验：{% if validation_ok %}通过{% else %}有告警{% endif %}（{{ validation_detail }}）
+    </span>
+  </section>
+
+  <!-- 执行摘要 -->
+  {% if executive_summary %}
+  <section class="page-break">
+    <h2>执行摘要</h2>
+    <p>{{ executive_summary }}</p>
+  </section>
+  {% endif %}
+
+  <!-- 归因 -->
+  {% if attribution and attribution.summary %}
+  <section class="page-break">
+    <h2>维度归因 · 为什么</h2>
+    <p>{{ attribution.summary }}</p>
+
+    {% if attribution.drag_factors %}
+    <h3>主要拖累因素</h3>
+    <ul class="drag-list">
+      {% for d in attribution.drag_factors[:6] %}
+      <li>{{ d.item }}（{{ d.count }} 家）</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if attribution_chart_data_uri %}
+    <h3>五维加权贡献</h3>
+    <img class="chart-img" src="{{ attribution_chart_data_uri }}" alt="五维归因图">
+    {% endif %}
+
+    {% if attribution_dimensions %}
+    <h3>维度得分明细</h3>
+    <table>
+      <thead>
+        <tr><th>维度</th><th>得分</th><th>权重</th><th>加权贡献</th></tr>
+      </thead>
+      <tbody>
+        {% for d in attribution_dimensions %}
+        <tr>
+          <td>{{ d.label }}</td>
+          <td>{{ "%.1f"|format(d.score) }}</td>
+          <td>{{ "%.0f"|format(d.weight * 100) }}%</td>
+          <td>{{ "%.1f"|format(d.net_contribution) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <!-- 章节 -->
+  {% for ch in chapters %}
+  <section class="{% if not loop.last %}page-break{% endif %}">
+    <h2>{{ loop.index }}. {{ ch.title }}</h2>
+    <p style="color:#64748b; font-size:9.5pt;">{{ ch.purpose }}</p>
+
+    {% if ch.narration %}
+    <p class="narration">{{ ch.narration }}</p>
+    {% endif %}
+
+    {% if ch.chart_data_uri %}
+    <h3>图表</h3>
+    <img class="chart-img" src="{{ ch.chart_data_uri }}" alt="{{ ch.title }}">
+    {% endif %}
+
+    {% if ch.numeric_rows %}
+    <h3>关键数字</h3>
+    <table>
+      <thead>
+        <tr><th>指标</th><th>数值</th><th>单位</th><th>说明摘要</th></tr>
+      </thead>
+      <tbody>
+        {% for row in ch.numeric_rows[:12] %}
+        <tr>
+          {% for cell in row %}
+          <td>{{ cell }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    <h3>结论</h3>
+    <ul class="claims">
+      {% for c in ch.claims %}
+      <li>
+        {% if c.confidence == 'inferred' %}<span class="inferred">[据推断]</span> {% endif %}
+        {{ c.claim }}
+      </li>
+      {% endfor %}
+    </ul>
+
+    <h3>证据链 / 溯源</h3>
+    {% for c in ch.claims %}
+      {% if c.trace %}
+      <div class="trace-block">
+        &larr; {{ c.trace.table }}.{{ c.trace.field }}
+        query={{ c.trace.query_id }}
+        {% if c.trace.detail_table %} detail={{ c.trace.detail_table }}{% endif %}
+        {% for ev in (c.evidence_chain or [])[:3] %}
+        <div class="evidence">evidence: {{ ev }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    {% endfor %}
+  </section>
+  {% endfor %}
+
+  <!-- 附录 -->
+  <section>
+    <h2>附录：数据说明</h2>
+    <ul>
+      {% for s in appendix.data %}
+      <li>{{ s }}</li>
+      {% endfor %}
+    </ul>
+    <h2>附录：方法说明</h2>
+    <ul>
+      {% for s in appendix.methods %}
+      <li>{{ s }}</li>
+      {% endfor %}
+    </ul>
+    <p class="footer-note">
+      本报告由明鉴・财税票・万景自动生成（WeasyPrint 渲染）。正文数字均可回溯至表字段；LLM 仅组织语言，不产生新数字。
+    </p>
+  </section>
+
+</body>
+</html>
