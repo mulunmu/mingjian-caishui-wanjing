@@ -9,6 +9,7 @@ interface AuthStore {
   error: string;
 
   login: (email: string, password: string) => Promise<boolean>;
+  demoLogin: () => Promise<boolean>;
   register: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
   clearError: () => void;
@@ -25,7 +26,14 @@ const useAuthStore = create<AuthStore>((set) => ({
     const token = localStorage.getItem('access_token');
     const email = localStorage.getItem('userEmail');
     if (token && email) {
-      set({ isLoggedIn: true, user: { email } });
+      set({
+        isLoggedIn: true,
+        user: {
+          email,
+          role: localStorage.getItem('userRole') || 'user',
+          plan: localStorage.getItem('userPlan') || 'free',
+        },
+      });
     } else {
       set({ isLoggedIn: false, user: null });
     }
@@ -38,10 +46,41 @@ const useAuthStore = create<AuthStore>((set) => ({
       localStorage.setItem('access_token', res.access_token);
       localStorage.setItem('isLoggedIn', 'true');
       localStorage.setItem('userEmail', email);
-      set({ isLoggedIn: true, user: { email }, isLoading: false });
+      localStorage.setItem('userRole', res.role || 'user');
+      localStorage.setItem('userPlan', res.plan || 'free');
+      set({
+        isLoggedIn: true,
+        user: { email, role: res.role, plan: res.plan },
+        isLoading: false,
+      });
       return true;
     } catch (err: unknown) {
       const message = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '登录失败，请重试';
+      set({ error: message, isLoading: false });
+      return false;
+    }
+  },
+
+  demoLogin: async () => {
+    set({ isLoading: true, error: '' });
+    try {
+      const res = await authApi.demoLogin();
+      const email = res.email || 'demo';
+      localStorage.setItem('access_token', res.access_token);
+      localStorage.setItem('isLoggedIn', 'true');
+      localStorage.setItem('userEmail', email);
+      localStorage.setItem('userRole', res.role || 'user');
+      localStorage.setItem('userPlan', res.plan || 'free');
+      set({
+        isLoggedIn: true,
+        user: { email, role: res.role, plan: res.plan },
+        isLoading: false,
+      });
+      return true;
+    } catch (err: unknown) {
+      const message =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        '演示登录失败，请确认 DEMO_LOGIN_ENABLED=true';
       set({ error: message, isLoading: false });
       return false;
     }
@@ -65,6 +104,8 @@ const useAuthStore = create<AuthStore>((set) => ({
     localStorage.removeItem('isLoggedIn');
     localStorage.removeItem('userEmail');
     localStorage.removeItem('userName');
+    localStorage.removeItem('userRole');
+    localStorage.removeItem('userPlan');
     set({ isLoggedIn: false, user: null });
   },
 

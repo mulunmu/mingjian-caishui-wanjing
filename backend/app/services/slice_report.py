@@ -14,9 +14,11 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.core_metrics import CoreMetrics, IndustryBenchmark
+from app.models.financials import EnterpriseFinancials
 from app.schemas.claim import Claim, ClaimTrace, ClaimValue, filter_claims
 from app.services import conclusion_store, hallucination_guard, judgment_service, llm_reply
-from app.services import assessment
+from app.services import assessment, financial_benchmarks, insight_engine
 from app.services.intent_engine import IntentResult
 from app.services.report_charts import (
     render_bar_chart_png,
@@ -724,6 +726,178 @@ async def generate_slice_report(
     return report_id, output_path, context
 
 
+# 三大报表行项目（标签 → EnterpriseFinancials 列名），供财务章 numeric_rows
+_BALANCE_SHEET = [
+    ("资产总计", "total_assets"),
+    ("负债合计", "total_liab"),
+    ("流动资产合计", "current_assets"),
+    ("流动负债合计", "current_liab"),
+    ("货币资金", "cash_equiv"),
+    ("存货", "inventory"),
+    ("应收账款", "accounts_receivable"),
+    ("固定资产净额", "fixed_assets"),
+    ("短期借款", "short_loan"),
+    ("所有者权益合计", "owner_equity"),
+    ("未分配利润", "retained_earnings"),
+]
+_INCOME_STATEMENT = [
+    ("营业收入", "revenue"),
+    ("营业成本", "cost"),
+    ("税金及附加", "tax_surcharge"),
+    ("销售费用", "sell_expense"),
+    ("管理费用", "admin_expense"),
+    ("财务费用", "finance_expense"),
+    ("营业利润", "operating_profit"),
+    ("利润总额", "total_profit"),
+    ("所得税费用", "income_tax"),
+    ("净利润", "net_profit"),
+]
+_CASH_FLOW = [
+    ("经营活动现金流量净额", "operating_cf"),
+    ("投资活动现金流量净额", "investing_cf"),
+    ("筹资活动现金流量净额", "financing_cf"),
+]
+
+# 行业基准映射（百分比类比率 → IndustryBenchmark.avg_* 列），供财务章对标柱状图
+_BENCH_PCT_RATIOS = [
+    ("debt_ratio", "avg_debt_ratio"),
+    ("gross_margin", "avg_gross_margin"),
+    ("net_margin", "avg_net_margin"),
+    ("roe", "avg_roe"),
+    ("roa", "avg_roa"),
+]
+
+
+def _threshold_text(cfg: dict[str, Any]) -> str | None:
+    """阈值对照文案（百分比 ×100，倍数保留 1 位）。"""
+    warn_dir = cfg.get("warn_dir")
+    thr = cfg.get("warn_threshold")
+    if warn_dir is None or thr is None:
+        return None
+    op = ">" if warn_dir == "gt" else "<"
+    if cfg.get("is_pct"):
+        return f"{op}{float(thr) * 100:.0f}%"
+    return f"{op}{float(thr):.1f}"
+
+
+async def _financial_chapter(
+    db: AsyncSession, *, enterprise_id: str
+) -> tuple[dict[str, Any], list[Claim]] | None:
+    """个体报告「财务分析」章：三大报表 + 四能力比率（弃权优先，无报表不产章）。
+
+    数字只来自 enterprise_financials；评级由 financial_benchmarks 统一决定（对齐洞察引擎）。
+    """
+    if db is None:
+        return None
+    fin = await db.get(EnterpriseFinancials, enterprise_id)
+    cm = await db.get(CoreMetrics, enterprise_id)
+    if fin is None or cm is None or not cm.has_financial_statements:
+        return None
+
+    def _c(text: str, *, metric: str, field: str, number: float | None, unit: str = "") -> Claim:
+        return Claim(
+            claim=text,
+            value=ClaimValue(metric=metric, number=number, unit=unit) if number is not None else None,
+            trace=ClaimTrace(table="enterprise_financials", field=field, query_id="Q_ent_report_financial"),
+            confidence="computed",
+        )
+
+    # ① 四能力比率结论（0=弃权）
+    claims: list[Claim] = []
+    ratio_ratings: dict[str, str] = {}
+    for field, cfg in financial_benchmarks.FINANCIAL_RATIOS.items():
+        raw = float(getattr(fin, field) or 0)
+        disp = financial_benchmarks.format_financial_ratio(field, raw)
+        rating = financial_benchmarks.assess_financial_ratio(field, raw)
+        ratio_ratings[field] = rating
+        if raw == 0.0:
+            text = f"{cfg['label']}：无数据/未覆盖（弃权）。"
+            number = None
+        else:
+            thr = _threshold_text(cfg)
+            if rating == "预警":
+                text = f"{cfg['label']} {disp}，评级「预警」（阈值 {thr}）。"
+            else:
+                text = f"{cfg['label']} {disp}，评级「达标」"
+                text += f"（参考 {thr}）" if thr else "。"
+            number = raw
+        claims.append(_c(text, metric=f"fin_{field}", field=field, number=number, unit=cfg["unit"]))
+
+    # ①.b 杜邦分解（ROE 三因子，弃权优先）
+    dupont = financial_benchmarks.dupont_breakdown(
+        net_margin=getattr(fin, "net_margin", 0),
+        asset_turnover=getattr(fin, "asset_turnover", 0),
+        total_assets=getattr(fin, "total_assets", 0),
+        owner_equity=getattr(fin, "owner_equity", 0),
+        roe=getattr(fin, "roe", 0),
+    )
+    if dupont["complete"]:
+        nm, at, em = (f["disp"] for f in dupont["factors"])
+        claims.append(
+            _c(
+                f"杜邦分解：ROE {dupont['roe_disp']} = 净利率 {nm} × 总资产周转率 {at} × 权益乘数 {em}"
+                "（盈利质量 × 营运效率 × 财务杠杆）。",
+                metric="fin_dupont", field="roe", number=float(getattr(fin, "roe") or 0), unit="%",
+            )
+        )
+    else:
+        missing = "、".join(f["label"] for f in dupont["factors"] if f["value"] is None)
+        claims.append(
+            _c(
+                f"杜邦分解：{missing}无数据/未覆盖（弃权），本期不做完整分解。",
+                metric="fin_dupont", field="roe", number=None, unit="",
+            )
+        )
+
+    # ② 三大报表 numeric_rows
+    numeric_rows: list[list[str]] = []
+    for title, items in (("资产负债表", _BALANCE_SHEET), ("利润表", _INCOME_STATEMENT), ("现金流量表", _CASH_FLOW)):
+        numeric_rows.append([f"—— {title} ——", "", "", ""])
+        for label, col in items:
+            numeric_rows.append([label, f"{float(getattr(fin, col) or 0):,.2f}", "元", f"enterprise_financials.{col}"])
+
+    # ③ 对标柱状图（本样本 vs 行业均值，百分比类比率）
+    chart: dict[str, Any] | None = None
+    bench = await db.get(IndustryBenchmark, cm.industry_l1) if cm.industry_l1 else None
+    if bench is not None:
+        labels, own_vals, bench_vals = [], [], []
+        for field, bfield in _BENCH_PCT_RATIOS:
+            own = float(getattr(fin, field) or 0)
+            if own == 0.0:
+                continue
+            labels.append(financial_benchmarks.FINANCIAL_RATIOS[field]["label"])
+            own_vals.append(own * 100)
+            bench_vals.append(float(getattr(bench, bfield) or 0) * 100)
+        if labels:
+            chart = {
+                "type": "bar",
+                "data": {
+                    "labels": labels,
+                    "series": [
+                        {"name": "行业均值", "values": bench_vals},
+                        {"name": "本样本", "values": own_vals},
+                    ],
+                },
+            }
+
+    chapter = {
+        "title": "财务分析",
+        "purpose": "三大报表与四能力比率（偿债/营运/盈利/成长），客观评级对齐洞察引擎。",
+        "function": "enterprise",
+        "dimension": "financial",
+        "claims": _claims_to_ctx(claims),
+        "meta": {
+            "report_year": fin.report_year or "",
+            "has_financial_statements": True,
+            "ratio_ratings": ratio_ratings,
+            "dupont": dupont,
+        },
+        "charts": chart,
+        "numeric_rows": numeric_rows,
+    }
+    return chapter, claims
+
+
 async def build_enterprise_report_context(
     db: AsyncSession, *, enterprise_id: str, report_id: str | None = None
 ) -> dict[str, Any]:
@@ -813,6 +987,38 @@ async def build_enterprise_report_context(
         }
     )
     chapter_claims.append(overview_claims)
+
+    # ①.5 洞察研判（多指标联动，确定性规则引擎）
+    insight_metrics, insight_features = await insight_engine.load_insight_inputs(db, enterprise_id)
+    if insight_metrics is not None:
+        insights = insight_engine.evaluate_insights(insight_metrics, insight_features)
+        if insights:
+            insight_claims = insight_engine.insights_to_claims(insights, short_id, label)
+            ctx_insight = _claims_to_ctx(insight_claims)
+            chapters.append(
+                {
+                    "title": "洞察研判",
+                    "purpose": "多指标联动研判结论与场景化建议",
+                    "function": "insight",
+                    "dimension": "enterprise",
+                    "claims": ctx_insight,
+                    "meta": {
+                        "insight_count": len(insights),
+                        "high_risk_count": sum(1 for i in insights if i.severity == "高危"),
+                        "rule_ids": [i.rule_id for i in insights],
+                    },
+                    "charts": None,
+                    "numeric_rows": _numeric_table_rows(ctx_insight),
+                }
+            )
+            chapter_claims.append(insight_claims)
+
+    # ①.8 财务分析（三大报表 + 四能力比率，无完整报表则弃权不产章）
+    fin_result = await _financial_chapter(db, enterprise_id=enterprise_id)
+    if fin_result is not None:
+        fin_chapter, fin_claims = fin_result
+        chapters.append(fin_chapter)
+        chapter_claims.append(fin_claims)
 
     # ② 同业基准定位
     benchmark_claims: list[Claim] = []

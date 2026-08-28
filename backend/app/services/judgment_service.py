@@ -1090,7 +1090,9 @@ async def run_judgment(
 # ---------------------------------------------------------------------------
 
 _PERCENT_METRICS = frozenset(
-    {"revenue_yoy", "profit_margin", "revenue_deviation", "profit_yoy", "debt_ratio", "tax_on_time_rate"}
+    {"revenue_yoy", "profit_margin", "revenue_deviation", "profit_yoy", "debt_ratio", "tax_on_time_rate",
+     "customer_concentration", "supplier_concentration", "category_concentration",
+     "vat_burden", "income_tax_burden"}
 )
 
 
@@ -1117,6 +1119,17 @@ def _metric_to_source_field(metric: str) -> str | None:
         "tax_on_time_rate": "tax_on_time_rate",
         "profit_yoy": "profit_yoy",
         "debt_ratio": "debt_ratio",
+        "customer_concentration": "customer_concentration",
+        "supplier_concentration": "supplier_concentration",
+        "category_concentration": "category_concentration",
+        "vat_burden": "vat_burden",
+        "income_tax_burden": "income_tax_burden",
+        "correction_times": "correction_times",
+        "social_headcount": "social_headcount",
+        "tax_late_penalty_cnt": "tax_late_penalty_cnt",
+        "void_invoice_cnt": "void_invoice_cnt",
+        "unit_price_ratio": "unit_price_ratio",
+        "change_cnt": "change_cnt",
     }.get(metric)
 
 

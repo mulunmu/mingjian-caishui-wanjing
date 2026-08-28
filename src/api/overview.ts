@@ -4,6 +4,7 @@ import type {
   WarningEnterprise,
   OverviewKpi,
   RiskDistItem,
+  IndustryProfileItem,
 } from '@/types/overview';
 
 /** 信号代码 → 中文标签 */
@@ -39,6 +40,7 @@ export interface OverviewData {
   kpi: OverviewKpi;
   riskDistribution: RiskDistItem[];
   industryDistribution: RiskDistItem[];
+  industryProfiles: IndustryProfileItem[];
   warnings: WarningEnterprise[];
 }
 
@@ -85,6 +87,7 @@ export const overviewApi = {
         },
         riskDistribution,
         industryDistribution,
+        industryProfiles: summary.industry_profiles || [],
         warnings,
       };
     } catch (e) {

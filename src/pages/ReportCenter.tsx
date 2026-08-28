@@ -1,16 +1,27 @@
 import { useState, useEffect, useCallback } from 'react';
-import { FileText, Download, Eye, Calendar, Search, RefreshCw, Loader2, X, AlertTriangle } from 'lucide-react';
+import { FileText, Download, Eye, FilePlus2, Search, RefreshCw, Loader2, X, AlertTriangle } from 'lucide-react';
 import useReportStore from '@/stores/reportStore';
+import useAuthStore from '@/stores/authStore';
+import { needsUpgrade } from '@/utils/plan';
+import UpgradeModal from '@/components/ui/UpgradeModal';
+import GenerateReportModal from '@/components/report/GenerateReportModal';
+import type { ReportScenarioDef } from '@/constants/reportScenarios';
 import type { ReportListItem } from '@/types/report';
 import client from '@/api/client';
 
 export default function ReportCenter() {
-  const { reportList, isLoadingList, listError, fetchReportList, downloadPdf } = useReportStore();
+  const { reportList, isLoadingList, listError, fetchReportList, downloadPdf, generateSlice } =
+    useReportStore();
+  const user = useAuthStore((s) => s.user);
   const [searchTerm, setSearchTerm] = useState('');
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  const [showGenerate, setShowGenerate] = useState(false);
+  const [generatingScenario, setGeneratingScenario] = useState<string | null>(null);
+  const [generateError, setGenerateError] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchReportList();
@@ -37,8 +48,8 @@ export default function ReportCenter() {
     }
 
     try {
-      // 用 scenario 从 report_id 中提取（格式 slice_{scenario}_{date}_{time}）
-      const scenarioMatch = report.report_id.match(/^slice_([a-zA-Z0-9_-]+)_\d{8}_\d{6}$/);
+      // 用 scenario 从 report_id 中提取（格式 slice_{scenario}_{date}_{time}[_{uuid8}]）
+      const scenarioMatch = report.report_id.match(/^slice_([a-zA-Z0-9_-]+)_\d{8}_\d{6}(?:_[a-f0-9]{8})?$/);
       const scenario = scenarioMatch ? scenarioMatch[1] : 'general';
 
       const res = await client.post('/report/preview', {
@@ -80,7 +91,36 @@ export default function ReportCenter() {
 
   const handleDownload = async (e: React.MouseEvent, reportId: string) => {
     e.stopPropagation();
+    if (needsUpgrade(user)) {
+      setShowUpgrade(true);
+      return;
+    }
     await downloadPdf(reportId);
+  };
+
+  /** 选择报告模块生成切片报告；付费模块 / 非定制用户触发升级提示 */
+  const handleGenerate = async (scenario: ReportScenarioDef) => {
+    if (scenario.tier === 'premium' || needsUpgrade(user)) {
+      setShowUpgrade(true);
+      return;
+    }
+    setGeneratingScenario(scenario.key);
+    setGenerateError(null);
+    try {
+      const reportId = await generateSlice(scenario.key);
+      await fetchReportList();
+      // 选中并预览新生成的报告
+      const item = useReportStore.getState().reportList.find((r) => r.report_id === reportId);
+      setShowGenerate(false);
+      if (item) {
+        setViewingId(reportId);
+        loadPreview(item);
+      }
+    } catch {
+      setGenerateError('报告生成失败，请稍后重试');
+    } finally {
+      setGeneratingScenario(null);
+    }
   };
 
   const formatSize = (bytes: number) => {
@@ -99,14 +139,26 @@ export default function ReportCenter() {
           <h1 className="text-lg font-semibold text-warm-800">报告中心</h1>
           <p className="text-xs text-warm-400 mt-0.5">查看和管理税务风险分析报告</p>
         </div>
-        <button
-          onClick={fetchReportList}
-          disabled={isLoadingList}
-          className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-warm-200 text-xs text-warm-600 hover:bg-warm-100 transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${isLoadingList ? 'animate-spin' : ''}`} />
-          刷新
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setGenerateError(null);
+              setShowGenerate(true);
+            }}
+            className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-amber text-white text-xs hover:bg-amber-dark transition-colors"
+          >
+            <FilePlus2 className="w-3.5 h-3.5" />
+            生成报告
+          </button>
+          <button
+            onClick={fetchReportList}
+            disabled={isLoadingList}
+            className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-warm-200 text-xs text-warm-600 hover:bg-warm-100 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingList ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
+        </div>
       </div>
 
       {/* 搜索栏 — 与左侧报告列表左对齐 */}
@@ -213,7 +265,13 @@ export default function ReportCenter() {
               <div className="flex items-center gap-1 flex-shrink-0">
                 {activeReport && (
                   <button
-                    onClick={() => window.open(activeReport.download_url || `/api/v1/report/${activeReport.report_id}/download`, '_blank')}
+                    onClick={() => {
+                      if (needsUpgrade(user)) {
+                        setShowUpgrade(true);
+                        return;
+                      }
+                      window.open(activeReport.download_url || `/api/v1/report/${activeReport.report_id}/download`, '_blank');
+                    }}
                     className="text-[11px] text-warm-500 hover:text-warm-700 px-2 py-1 rounded hover:bg-warm-100 transition-colors"
                   >
                     新窗口打开
@@ -258,6 +316,20 @@ export default function ReportCenter() {
           </div>
         )}
       </div>
+
+      <GenerateReportModal
+        open={showGenerate}
+        onClose={() => setShowGenerate(false)}
+        onSelect={handleGenerate}
+        busyScenario={generatingScenario}
+        error={generateError}
+      />
+
+      <UpgradeModal
+        open={showUpgrade}
+        onClose={() => setShowUpgrade(false)}
+        feature="报告生成 / 下载"
+      />
     </div>
   );
 }

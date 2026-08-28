@@ -20,7 +20,7 @@ const dimensions: DimensionItem[] = [
 ];
 
 const functions: FunctionItem[] = [
-  { id: 'score', label: '评分', description: '五维风险评分', icon: 'score', suffix: '风险评分情况' },
+  { id: 'score', label: '评分', description: '六维风险评分', icon: 'score', suffix: '风险评分情况' },
   { id: 'authenticity', label: '真实性', description: '经营真实性验证', icon: 'authenticity', suffix: '经营真实性' },
   { id: 'fraud', label: '反欺诈', description: '进销错配检测', icon: 'fraud', suffix: '反欺诈分析' },
   { id: 'benchmark', label: '基准', description: '行业基准对比', icon: 'benchmark', suffix: '行业基准对比' },

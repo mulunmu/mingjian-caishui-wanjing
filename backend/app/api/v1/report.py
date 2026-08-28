@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user_optional
+from app.api.deps import get_current_user_optional, require_plan
 from app.db.session import get_db
 from app.services import auth_service, email_service, slice_report
 from app.services.report_templates import PremiumReportLocked, get_scenario_label
@@ -106,7 +106,7 @@ async def list_reports(_user: dict | None = Depends(get_current_user_optional)):
 async def generate_report(
     body: GenerateReportRequest,
     db: AsyncSession = Depends(get_db),
-    _user: dict | None = Depends(get_current_user_optional),
+    _user: dict | None = Depends(require_plan("subscriber")),
 ):
     if body.enterprise_id:
         raise HTTPException(
@@ -142,7 +142,7 @@ async def generate_report(
 async def generate_slice(
     body: GenerateSliceReportRequest,
     db: AsyncSession = Depends(get_db),
-    _user: dict | None = Depends(get_current_user_optional),
+    _user: dict | None = Depends(require_plan("subscriber")),
 ):
     try:
         report_id, _, ctx = await generate_slice_report(
@@ -172,7 +172,7 @@ async def generate_slice(
 async def email_report(
     body: EmailReportRequest,
     db: AsyncSession = Depends(get_db),
-    _user: dict | None = Depends(get_current_user_optional),
+    _user: dict | None = Depends(require_plan("subscriber")),
 ):
     if not email_service.is_configured():
         return {"success": False, "message": email_service.NOT_CONFIGURED_MSG}
@@ -217,7 +217,7 @@ async def email_report(
 async def generate_enterprise(
     body: GenerateEnterpriseReportRequest,
     db: AsyncSession = Depends(get_db),
-    _user: dict | None = Depends(get_current_user_optional),
+    _user: dict | None = Depends(require_plan("subscriber")),
 ):
     """个体深度报告：单一样本画像 + 同业基准 + 归因 + 预警（脱敏，仅哈希 id）。"""
     try:
@@ -262,7 +262,7 @@ async def preview_slice_report(
 
 
 @router.get("/{report_id}/download")
-async def download_report(report_id: str, _user: dict | None = Depends(get_current_user_optional)):
+async def download_report(report_id: str, _user: dict | None = Depends(require_plan("subscriber"))):
     path = get_report_path(report_id)
     if not path:
         raise HTTPException(status_code=404, detail="报告不存在")

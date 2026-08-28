@@ -22,7 +22,9 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.core_metrics import CoreMetrics, IndustryBenchmark, LegalEvent
+from app.models.financials import EnterpriseFinancials
 from app.db.session import Base
+from app.etl import profiles as profile_etl
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +132,16 @@ def _f(v: Any, default: float = 0.0) -> float:
         return float(v)
     except Exception:
         return default
+
+
+def _report_year(end_date: Any) -> str | None:
+    """从报告期 end_date 抽取年份；缺失/不可解析 → None（弃权，不编造）。"""
+    if not end_date:
+        return None
+    if hasattr(end_date, "year"):
+        return str(end_date.year)
+    s = str(end_date)
+    return s[:4] if len(s) >= 4 and s[:4].isdigit() else None
 
 
 def _scale_label(employees: Any, capital: Any) -> str:
@@ -428,7 +440,79 @@ def load_vat_revenue() -> dict[str, float]:
     return {enterprise_id_of(r["taxpayer_id"]): _f(r["rev"]) for r in rows}
 
 
+def _fin_key(name: str) -> str:
+    """归一化行项目名用于精确匹配：去序号/减加前缀/括号/非汉字。"""
+    n = (name or "").strip()
+    n = re.sub(r"^[一二三四五六七八九十]+、", "", n)      # 「一、」等序号
+    n = re.sub(r"^(减|加|其中)[：:]", "", n)             # 「减：」「加：」
+    n = re.sub(r"[（(].*?[）)]", "", n)                   # 去括号（如「（亏损以-号填列）」）
+    return re.sub(r"[^一-鿿]", "", n)            # 只留汉字
+
+
+# 行项目别名（值 = 归一化后的精确名，优先级从高到低）。精确匹配避免「营业收入」误命中「主营业务收入」。
+_BALANCE_ALIASES: dict[str, list[str]] = {
+    "total_assets": ["资产总计", "资产合计"],
+    "total_liab": ["负债合计", "负债总计"],
+    "current_assets": ["流动资产合计"],
+    "current_liab": ["流动负债合计"],
+    "cash_equiv": ["货币资金"],
+    "inventory": ["存货"],
+    "accounts_receivable": ["应收账款"],
+    "fixed_assets": ["固定资产净额", "固定资产账面价值", "固定资产净值"],
+    "short_loan": ["短期借款"],
+    "owner_equity": ["所有者权益或股东权益合计", "所有者权益合计", "所有者权益或股东权益总计", "所有者权益总计"],
+    "retained_earnings": ["未分配利润"],
+}
+_PROFIT_ALIASES: dict[str, list[str]] = {
+    "revenue": ["营业收入", "主营业务收入"],
+    "cost": ["营业成本", "主营业务成本"],
+    "tax_surcharge": ["税金及附加", "主营业务税金及附加"],
+    "sell_expense": ["销售费用", "营业费用"],
+    "admin_expense": ["管理费用"],
+    "finance_expense": ["财务费用"],
+    "operating_profit": ["营业利润"],
+    "total_profit": ["利润总额"],
+    "income_tax": ["所得税费用", "所得税"],
+    "net_profit": ["净利润"],
+}
+_CASHFLOW_ALIASES: dict[str, list[str]] = {
+    "operating_cf": ["经营活动产生的现金流量净额"],
+    "investing_cf": ["投资活动产生的现金流量净额"],
+    "financing_cf": ["筹资活动产生的现金流量净额"],
+}
+
+
+def _extract_field_rows(rows: list[dict], aliases: dict[str, list[str]], value_key: str) -> dict[str, dict]:
+    """按别名精确匹配行项目，取最新报告期（rows 已按 end_date DESC 排序，首条命中即最新）。"""
+    alias_to_field: dict[str, str] = {}
+    for field, names in aliases.items():
+        for nm in names:
+            alias_to_field.setdefault(nm, field)
+    out: dict[str, dict] = defaultdict(dict)
+    seen: dict[str, set[str]] = defaultdict(set)
+    for r in rows:
+        eid = enterprise_id_of(r["taxpayer_id"])
+        key = _fin_key(r.get("project_name") or "")
+        field = alias_to_field.get(key)
+        if field and field not in seen[eid]:
+            seen[eid].add(field)
+            out[eid][field] = _f(r.get(value_key))
+    return out
+
+
+def _ratio(num: float, den: float, lo: float, hi: float) -> float:
+    """比率：分母绝对值 <= 1 视为弃权置 0，否则夹在 [lo, hi]。"""
+    if abs(den) <= 1.0:
+        return 0.0
+    return max(lo, min(hi, num / den))
+
+
 def load_finance() -> dict[str, dict]:
+    """抽取完整三大报表行项目 + 计算四能力比率。
+
+    返回 {eid: {财务代理字段 + 四能力比率 + 原始行项目金额}}，
+    由 build_metrics 取比率字段写入 CoreMetrics，build_financials 取原始行项目写 EnterpriseFinancials。
+    """
     profit_rows = fetch_all(
         f"""
         SELECT taxpayer_id, {U('project_name')} AS project_name,
@@ -440,23 +524,6 @@ def load_finance() -> dict[str, dict]:
         ORDER BY end_date DESC
         """
     )
-    finance: dict[str, dict] = defaultdict(dict)
-    seen_rev: set[str] = set()
-    seen_profit: set[str] = set()
-    for r in profit_rows:
-        eid = enterprise_id_of(r["taxpayer_id"])
-        name = r.get("project_name") or ""
-        if "营业收入" in name and eid not in seen_rev:
-            seen_rev.add(eid)
-            cur, prev = _f(r["cur"]), _f(r["prev"])
-            finance[eid]["finance_revenue"] = cur
-            finance[eid]["revenue_yoy"] = ((cur - prev) / abs(prev)) if abs(prev) > 1 else 0.0
-        if "净利润" in name and eid not in seen_profit:
-            seen_profit.add(eid)
-            cur, prev = _f(r["cur"]), _f(r["prev"])
-            finance[eid]["net_profit"] = cur
-            finance[eid]["profit_yoy"] = ((cur - prev) / abs(prev)) if abs(prev) > 1 else 0.0
-
     bal_rows = fetch_all(
         f"""
         SELECT taxpayer_id, {U('project_name')} AS project_name, ending_balance, end_date
@@ -465,62 +532,177 @@ def load_finance() -> dict[str, dict]:
         ORDER BY end_date DESC
         """
     )
-    seen_asset: set[str] = set()
-    seen_liab: set[str] = set()
-    for r in bal_rows:
-        eid = enterprise_id_of(r["taxpayer_id"])
-        name = r.get("project_name") or ""
-        val = _f(r["ending_balance"])
-        if ("资产总计" in name or name == "资产合计") and eid not in seen_asset:
-            seen_asset.add(eid)
-            finance[eid]["total_assets"] = val
-        if ("负债合计" in name or "负债总计" in name) and eid not in seen_liab:
-            seen_liab.add(eid)
-            finance[eid]["total_liab"] = val
-
     cf_rows = fetch_all(
         f"""
-        SELECT taxpayer_id, {U('project_name')} AS project_name, bnljje, end_date
+        SELECT taxpayer_id, {U('project_name')} AS project_name,
+               COALESCE(NULLIF(bnljje, 0), bqje, bnljje) AS bnljje,
+               end_date
         FROM syx_cash_flow
         WHERE taxpayer_id IS NOT NULL
         ORDER BY end_date DESC
         """
     )
-    seen_cf: set[str] = set()
-    for r in cf_rows:
-        eid = enterprise_id_of(r["taxpayer_id"])
-        if eid in seen_cf:
+
+    profit = _extract_field_rows(profit_rows, _PROFIT_ALIASES, "cur")
+    prev_profit = _extract_field_rows(profit_rows, _PROFIT_ALIASES, "prev")
+    balance = _extract_field_rows(bal_rows, _BALANCE_ALIASES, "ending_balance")
+    cashflow = _extract_field_rows(cf_rows, _CASHFLOW_ALIASES, "bnljje")
+
+    eids = set(profit) | set(balance) | set(cashflow)
+    # 最新报告期（取三表 end_date 的最大值，用于回填 report_year）
+    latest_end: dict[str, Any] = {}
+    for row in profit_rows + bal_rows + cf_rows:
+        eid = enterprise_id_of(row.get("taxpayer_id") or "")
+        ed = row.get("end_date")
+        if not eid or not ed:
             continue
-        name = r.get("project_name") or ""
-        if "经营活动产生的现金流量净额" in name:
-            seen_cf.add(eid)
-            finance[eid]["cash_flow_net"] = _f(r["bnljje"])
+        if eid not in latest_end or ed > latest_end[eid]:
+            latest_end[eid] = ed
 
     out: dict[str, dict] = {}
-    for eid, d in finance.items():
-        rev = d.get("finance_revenue", 0.0)
-        profit = d.get("net_profit", 0.0)
-        assets = d.get("total_assets", 0.0)
-        liab = d.get("total_liab", 0.0)
-        cf = d.get("cash_flow_net", 0.0)
-        margin = (profit / rev) if abs(rev) > 1 else 0.0
-        debt = (liab / assets) if abs(assets) > 1 else 0.0
-        if cf > 0 and margin >= 0:
+    for eid in eids:
+        p = profit.get(eid, {})
+        pp = prev_profit.get(eid, {})
+        b = balance.get(eid, {})
+        c = cashflow.get(eid, {})
+
+        revenue = p.get("revenue", 0.0)
+        cost = p.get("cost", 0.0)
+        net_profit = p.get("net_profit", 0.0)
+        total_assets = b.get("total_assets", 0.0)
+        total_liab = b.get("total_liab", 0.0)
+        current_assets = b.get("current_assets", 0.0)
+        current_liab = b.get("current_liab", 0.0)
+        inventory = b.get("inventory", 0.0)
+        accounts_receivable = b.get("accounts_receivable", 0.0)
+        owner_equity = b.get("owner_equity", 0.0)
+        operating_cf = c.get("operating_cf", 0.0)
+
+        # 四能力比率（弃权置 0）
+        current_ratio = _ratio(current_assets, current_liab, -10.0, 50.0)
+        quick_ratio = _ratio(current_assets - inventory, current_liab, -10.0, 50.0)
+        debt_ratio = _ratio(total_liab, total_assets, -2.0, 3.0)
+        receivables_turnover = _ratio(revenue, accounts_receivable, 0.0, 1000.0)
+        inventory_turnover = _ratio(cost, inventory, 0.0, 1000.0)
+        asset_turnover = _ratio(revenue, total_assets, 0.0, 100.0)
+        gross_margin = _ratio(revenue - cost, revenue, -5.0, 2.0)
+        net_margin = _ratio(net_profit, revenue, -5.0, 2.0)
+        roe = _ratio(net_profit, owner_equity, -5.0, 5.0)
+        roa = _ratio(net_profit, total_assets, -5.0, 5.0)
+
+        revenue_prev = pp.get("revenue", 0.0)
+        profit_prev = pp.get("net_profit", 0.0)
+        revenue_yoy = _ratio(revenue - revenue_prev, revenue_prev, -2.0, 5.0)
+        profit_yoy = _ratio(net_profit - profit_prev, profit_prev, -2.0, 5.0)
+
+        # 现金流健康度（沿用旧口径）
+        if operating_cf > 0 and net_margin >= 0:
             cf_level = "健康"
-        elif cf >= 0 or margin >= -0.05:
+        elif operating_cf >= 0 or net_margin >= -0.05:
             cf_level = "一般"
         else:
             cf_level = "承压"
+
         out[eid] = {
-            "finance_revenue": rev,
-            "profit_margin": max(-2.0, min(2.0, margin)),
-            "revenue_yoy": max(-2.0, min(5.0, d.get("revenue_yoy", 0.0))),
-            "profit_yoy": max(-2.0, min(5.0, d.get("profit_yoy", 0.0))),
-            "debt_ratio": max(0.0, min(3.0, debt)),
-            "cash_flow_net": cf,
+            # 财务代理字段（向后兼容 CoreMetrics 旧列）
+            "finance_revenue": revenue,
+            "profit_margin": max(-2.0, min(2.0, net_margin)),
+            "revenue_yoy": revenue_yoy,
+            "profit_yoy": profit_yoy,
+            "debt_ratio": debt_ratio,
+            "cash_flow_net": operating_cf,
             "cash_flow_level": cf_level,
+            # 四能力比率（新列）
+            "current_ratio": current_ratio,
+            "quick_ratio": quick_ratio,
+            "gross_margin": gross_margin,
+            "net_margin": net_margin,
+            "roe": roe,
+            "roa": roa,
+            "receivables_turnover": receivables_turnover,
+            "inventory_turnover": inventory_turnover,
+            "asset_turnover": asset_turnover,
+            "has_financial_statements": total_assets > 0 and revenue > 0,
+            "report_year": _report_year(latest_end.get(eid)),
+            # 原始行项目（写 EnterpriseFinancials）
+            "total_assets": total_assets,
+            "total_liab": total_liab,
+            "current_assets": current_assets,
+            "current_liab": current_liab,
+            "cash_equiv": b.get("cash_equiv", 0.0),
+            "inventory": inventory,
+            "accounts_receivable": accounts_receivable,
+            "fixed_assets": b.get("fixed_assets", 0.0),
+            "short_loan": b.get("short_loan", 0.0),
+            "owner_equity": owner_equity,
+            "retained_earnings": b.get("retained_earnings", 0.0),
+            "revenue": revenue,
+            "cost": cost,
+            "tax_surcharge": p.get("tax_surcharge", 0.0),
+            "sell_expense": p.get("sell_expense", 0.0),
+            "admin_expense": p.get("admin_expense", 0.0),
+            "finance_expense": p.get("finance_expense", 0.0),
+            "operating_profit": p.get("operating_profit", 0.0),
+            "total_profit": p.get("total_profit", 0.0),
+            "income_tax": p.get("income_tax", 0.0),
+            "net_profit": net_profit,
+            "operating_cf": operating_cf,
+            "investing_cf": c.get("investing_cf", 0.0),
+            "financing_cf": c.get("financing_cf", 0.0),
         }
     return out
+
+
+def build_financials(ents: dict[str, dict], finance: dict[str, dict]) -> list[EnterpriseFinancials]:
+    """从 load_finance 结果构造 EnterpriseFinancials（原始行项目 + 比率，用于报告溯源）。"""
+    now = datetime.now(timezone.utc)
+    rows: list[EnterpriseFinancials] = []
+    for eid in ents:
+        f = finance.get(eid, {})
+        rows.append(
+            EnterpriseFinancials(
+                enterprise_id=eid,
+                report_year=f.get("report_year"),
+                total_assets=_dec(f.get("total_assets", 0)),
+                total_liab=_dec(f.get("total_liab", 0)),
+                current_assets=_dec(f.get("current_assets", 0)),
+                current_liab=_dec(f.get("current_liab", 0)),
+                cash_equiv=_dec(f.get("cash_equiv", 0)),
+                inventory=_dec(f.get("inventory", 0)),
+                accounts_receivable=_dec(f.get("accounts_receivable", 0)),
+                fixed_assets=_dec(f.get("fixed_assets", 0)),
+                short_loan=_dec(f.get("short_loan", 0)),
+                owner_equity=_dec(f.get("owner_equity", 0)),
+                retained_earnings=_dec(f.get("retained_earnings", 0)),
+                revenue=_dec(f.get("revenue", 0)),
+                cost=_dec(f.get("cost", 0)),
+                tax_surcharge=_dec(f.get("tax_surcharge", 0)),
+                sell_expense=_dec(f.get("sell_expense", 0)),
+                admin_expense=_dec(f.get("admin_expense", 0)),
+                finance_expense=_dec(f.get("finance_expense", 0)),
+                operating_profit=_dec(f.get("operating_profit", 0)),
+                total_profit=_dec(f.get("total_profit", 0)),
+                income_tax=_dec(f.get("income_tax", 0)),
+                net_profit=_dec(f.get("net_profit", 0)),
+                operating_cf=_dec(f.get("operating_cf", 0)),
+                investing_cf=_dec(f.get("investing_cf", 0)),
+                financing_cf=_dec(f.get("financing_cf", 0)),
+                current_ratio=_dec(f.get("current_ratio", 0)),
+                quick_ratio=_dec(f.get("quick_ratio", 0)),
+                debt_ratio=_dec(f.get("debt_ratio", 0)),
+                receivables_turnover=_dec(f.get("receivables_turnover", 0)),
+                inventory_turnover=_dec(f.get("inventory_turnover", 0)),
+                asset_turnover=_dec(f.get("asset_turnover", 0)),
+                gross_margin=_dec(f.get("gross_margin", 0)),
+                net_margin=_dec(f.get("net_margin", 0)),
+                roe=_dec(f.get("roe", 0)),
+                roa=_dec(f.get("roa", 0)),
+                revenue_yoy=_dec(f.get("revenue_yoy", 0)),
+                profit_yoy=_dec(f.get("profit_yoy", 0)),
+                updated_at=now,
+            )
+        )
+    return rows
 
 
 def load_social() -> dict[str, dict]:
@@ -576,7 +758,13 @@ def load_loans() -> dict[str, dict]:
         return {}
 
 
-def build_metrics() -> tuple[list[CoreMetrics], list[LegalEvent]]:
+def build_metrics() -> tuple[
+    list[CoreMetrics],
+    list[LegalEvent],
+    list[EnterpriseFinancials],
+    list[profile_etl.EnterpriseInvoiceProfile],
+    list[profile_etl.EnterpriseTaxProfile],
+]:
     logger.info("Loading enterprises from MySQL...")
     ents = load_enterprises()
     credit = load_credit()
@@ -590,7 +778,13 @@ def build_metrics() -> tuple[list[CoreMetrics], list[LegalEvent]]:
     finance = load_finance()
     social = load_social()
     loans = load_loans()
-    logger.info("Aggregating %d enterprises...", len(ents))
+    logger.info("Loading invoice/tax profiles...")
+    invoice_profile = profile_etl.load_invoice_profile()
+    tax_profile = profile_etl.load_tax_profile()
+    logger.info(
+        "Aggregating %d enterprises (invoice profile %d, tax profile %d)...",
+        len(ents), len(invoice_profile), len(tax_profile),
+    )
 
     now = datetime.now(timezone.utc)
     metrics: list[CoreMetrics] = []
@@ -601,6 +795,8 @@ def build_metrics() -> tuple[list[CoreMetrics], list[LegalEvent]]:
         fin = finance.get(eid, {})
         soc = social.get(eid, {})
         loan = loans.get(eid, {})
+        invp = invoice_profile.get(eid, {})
+        taxp = tax_profile.get(eid, {})
 
         vat_rev = vat.get(eid, 0.0)
         inv_rev = inv.get("invoice_revenue", 0.0)
@@ -614,6 +810,9 @@ def build_metrics() -> tuple[list[CoreMetrics], list[LegalEvent]]:
 
         # 高危为违法子集，禁止与 tax_violation_cnt 恒等复制
         high_sev = high_sev_cnt.get(eid, 0)
+        avg_price = invp.get("avg_unit_price", 0.0) or 0.0
+        max_price = invp.get("max_unit_price", 0.0) or 0.0
+        price_ratio = max_price / avg_price if avg_price > 0 else 0.0
         metrics.append(
             CoreMetrics(
                 enterprise_id=eid,
@@ -650,6 +849,27 @@ def build_metrics() -> tuple[list[CoreMetrics], list[LegalEvent]]:
                 debt_ratio=_dec(fin.get("debt_ratio", 0)),
                 cash_flow_net=_dec(fin.get("cash_flow_net", 0)),
                 cash_flow_level=fin.get("cash_flow_level", "一般"),
+                current_ratio=_dec(fin.get("current_ratio", 0)),
+                quick_ratio=_dec(fin.get("quick_ratio", 0)),
+                gross_margin=_dec(fin.get("gross_margin", 0)),
+                net_margin=_dec(fin.get("net_margin", 0)),
+                roe=_dec(fin.get("roe", 0)),
+                roa=_dec(fin.get("roa", 0)),
+                receivables_turnover=_dec(fin.get("receivables_turnover", 0)),
+                inventory_turnover=_dec(fin.get("inventory_turnover", 0)),
+                asset_turnover=_dec(fin.get("asset_turnover", 0)),
+                has_financial_statements=bool(fin.get("has_financial_statements", False)),
+                customer_concentration=_dec(invp.get("top_customer_share", 0)),
+                supplier_concentration=_dec(invp.get("top_supplier_share", 0)),
+                category_concentration=_dec(invp.get("top_category_share", 0)),
+                vat_burden=_dec(taxp.get("vat_burden", 0)),
+                income_tax_burden=_dec(taxp.get("income_tax_burden", 0)),
+                correction_times=int(taxp.get("correction_times", 0)),
+                social_headcount=int(taxp.get("social_headcount", 0)),
+                tax_late_penalty_cnt=int(taxp.get("tax_late_penalty_cnt", 0)),
+                change_cnt=int(taxp.get("change_cnt", 0)),
+                void_invoice_cnt=int(invp.get("void_invoice_cnt", 0)),
+                unit_price_ratio=_dec(round(price_ratio, 4)),
                 updated_at=now,
             )
         )
@@ -667,7 +887,10 @@ def build_metrics() -> tuple[list[CoreMetrics], list[LegalEvent]]:
         for e in (illegal_events + audit_events)
         if e["enterprise_id"] in ents
     ]
-    return metrics, events
+    financials = build_financials(ents, finance)
+    invoice_profiles = profile_etl.build_invoice_profiles(ents, invoice_profile)
+    tax_profiles = profile_etl.build_tax_profiles(ents, tax_profile)
+    return metrics, events, financials, invoice_profiles, tax_profiles
 
 
 def build_benchmarks(metrics: list[CoreMetrics]) -> list[IndustryBenchmark]:
@@ -685,6 +908,17 @@ def build_benchmarks(metrics: list[CoreMetrics]) -> list[IndustryBenchmark]:
         margins = [float(x.profit_margin) for x in items]
         debts = [float(x.debt_ratio) for x in items]
         high = sum(1 for x in items if x.credit_level in ("C", "D", "M") or x.tax_violation_cnt > 0)
+        # 财务四能力比率基准仅取「有完整三大报表」的样本，避免 0（弃权）拉低均值
+        fin_items = [x for x in items if x.has_financial_statements]
+        curr_ratios = [float(x.current_ratio) for x in fin_items]
+        quick_ratios = [float(x.quick_ratio) for x in fin_items]
+        gross_margins = [float(x.gross_margin) for x in fin_items]
+        net_margins = [float(x.net_margin) for x in fin_items]
+        roes = [float(x.roe) for x in fin_items]
+        roas = [float(x.roa) for x in fin_items]
+        recv_turn = [float(x.receivables_turnover) for x in fin_items]
+        inv_turn = [float(x.inventory_turnover) for x in fin_items]
+        asset_turn = [float(x.asset_turnover) for x in fin_items]
 
         def avg(xs: list[float]) -> float:
             return sum(xs) / len(xs) if xs else 0.0
@@ -705,13 +939,68 @@ def build_benchmarks(metrics: list[CoreMetrics]) -> list[IndustryBenchmark]:
                 p50_credit_score=_dec(p50(credits)),
                 p50_invoice_monthly=_dec(p50(invs)),
                 high_risk_rate=_dec(high / len(items) if items else 0),
+                avg_current_ratio=_dec(avg(curr_ratios)),
+                avg_quick_ratio=_dec(avg(quick_ratios)),
+                avg_gross_margin=_dec(avg(gross_margins)),
+                avg_net_margin=_dec(avg(net_margins)),
+                avg_roe=_dec(avg(roes)),
+                avg_roa=_dec(avg(roas)),
+                avg_receivables_turnover=_dec(avg(recv_turn)),
+                avg_inventory_turnover=_dec(avg(inv_turn)),
+                avg_asset_turnover=_dec(avg(asset_turn)),
                 updated_at=now,
             )
         )
     return result
 
 
-def write_to_pg(metrics: list[CoreMetrics], events: list[LegalEvent], benchmarks: list[IndustryBenchmark]) -> dict:
+def _migrate_columns(engine) -> None:
+    """给已存在的表补新增列（create_all 不 ALTER 既有表），幂等。"""
+    _add: list[tuple[str, str, str]] = [
+        ("core_metrics", "current_ratio", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("core_metrics", "quick_ratio", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("core_metrics", "gross_margin", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("core_metrics", "net_margin", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("core_metrics", "roe", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("core_metrics", "roa", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("core_metrics", "receivables_turnover", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("core_metrics", "inventory_turnover", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("core_metrics", "asset_turnover", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("core_metrics", "has_financial_statements", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("core_metrics", "customer_concentration", "NUMERIC(8,4) NOT NULL DEFAULT 0"),
+        ("core_metrics", "supplier_concentration", "NUMERIC(8,4) NOT NULL DEFAULT 0"),
+        ("core_metrics", "category_concentration", "NUMERIC(8,4) NOT NULL DEFAULT 0"),
+        ("core_metrics", "vat_burden", "NUMERIC(8,4) NOT NULL DEFAULT 0"),
+        ("core_metrics", "income_tax_burden", "NUMERIC(8,4) NOT NULL DEFAULT 0"),
+        ("core_metrics", "correction_times", "INTEGER NOT NULL DEFAULT 0"),
+        ("core_metrics", "social_headcount", "INTEGER NOT NULL DEFAULT 0"),
+        ("core_metrics", "tax_late_penalty_cnt", "INTEGER NOT NULL DEFAULT 0"),
+        ("core_metrics", "change_cnt", "INTEGER NOT NULL DEFAULT 0"),
+        ("core_metrics", "void_invoice_cnt", "INTEGER NOT NULL DEFAULT 0"),
+        ("core_metrics", "unit_price_ratio", "NUMERIC(18,4) NOT NULL DEFAULT 0"),
+        ("industry_benchmark", "avg_current_ratio", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("industry_benchmark", "avg_quick_ratio", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("industry_benchmark", "avg_gross_margin", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("industry_benchmark", "avg_net_margin", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("industry_benchmark", "avg_roe", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("industry_benchmark", "avg_roa", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("industry_benchmark", "avg_receivables_turnover", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("industry_benchmark", "avg_inventory_turnover", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+        ("industry_benchmark", "avg_asset_turnover", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
+    ]
+    with engine.begin() as conn:
+        for table, col, ddl in _add:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {ddl}"))
+
+
+def write_to_pg(
+    metrics: list[CoreMetrics],
+    events: list[LegalEvent],
+    benchmarks: list[IndustryBenchmark],
+    financials: list[EnterpriseFinancials],
+    invoice_profiles: list[profile_etl.EnterpriseInvoiceProfile],
+    tax_profiles: list[profile_etl.EnterpriseTaxProfile],
+) -> dict:
     from app.etl.engine_features import build_engine_features, write_engine_features
 
     from app.db.urls import get_sync_engine
@@ -720,20 +1009,31 @@ def write_to_pg(metrics: list[CoreMetrics], events: list[LegalEvent], benchmarks
     # 指标表原子重写：TRUNCATE + 重灌 + commit 在同一事务内，读端在 commit 前仍见旧数据，
     # 不会读空/读不到（替代原 DROP 重建）。结论/会话/用户表保留；engine 表由 write_engine_features 原子写。
     Base.metadata.create_all(engine)
+    _migrate_columns(engine)
     SessionLocal = sessionmaker(bind=engine)
     with SessionLocal() as session:
         session.execute(
-            text("TRUNCATE core_metrics, legal_events, industry_benchmark CASCADE")
+            text(
+                "TRUNCATE core_metrics, legal_events, industry_benchmark, "
+                "enterprise_financials, enterprise_invoice_profile, enterprise_tax_profile CASCADE"
+            )
         )
         session.bulk_save_objects(metrics)
         session.bulk_save_objects(events)
         session.bulk_save_objects(benchmarks)
+        session.bulk_save_objects(financials)
+        session.bulk_save_objects(invoice_profiles)
+        session.bulk_save_objects(tax_profiles)
         session.commit()
         logger.info(
-            "Wrote %d core_metrics, %d legal_events, %d industry_benchmark",
+            "Wrote %d core_metrics, %d legal_events, %d industry_benchmark, "
+            "%d enterprise_financials, %d invoice_profiles, %d tax_profiles",
             len(metrics),
             len(events),
             len(benchmarks),
+            len(financials),
+            len(invoice_profiles),
+            len(tax_profiles),
         )
         # 同步路径：清空评估缓存，避免 ETL 后最长 TTL 内读到旧批次
         try:
@@ -771,9 +1071,9 @@ def write_to_pg(metrics: list[CoreMetrics], events: list[LegalEvent], benchmarks
 
 def run() -> dict:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    metrics, events = build_metrics()
+    metrics, events, financials, invoice_profiles, tax_profiles = build_metrics()
     benchmarks = build_benchmarks(metrics)
-    engine_features = write_to_pg(metrics, events, benchmarks)
+    engine_features = write_to_pg(metrics, events, benchmarks, financials, invoice_profiles, tax_profiles)
     by_ind = defaultdict(int)
     for m in metrics:
         by_ind[m.industry_l1] += 1

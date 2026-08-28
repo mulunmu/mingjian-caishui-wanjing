@@ -8,7 +8,6 @@ from app.api.deps import get_current_user_optional
 from app.db.session import get_db
 from app.responses import UTF8JSONResponse
 from app.services.chat_router import route_chat
-from app.services import rate_limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -24,10 +23,8 @@ class ChatRequest(BaseModel):
 
 @router.post("", response_class=UTF8JSONResponse)
 async def chat(body: ChatRequest, db: AsyncSession = Depends(get_db), _user: dict | None = Depends(get_current_user_optional)):
-    if not rate_limiter.check_api_limit():
-        raise HTTPException(status_code=429, detail="请求过于频繁，请稍后重试")
-    # 每日 LLM 配额耗尽时不再硬抛 429，而是由 route_chat / generate_claim_reply 内部
-    # 经 llm_available() 判断自动降级到规则模式（仍能回答，只是少了 LLM 润色）。
+    # 全局限流由 RateLimitMiddleware 按 IP 执行；此处不再二次扣全局桶。
+    # 每日 LLM 配额耗尽时由 route_chat / generate_claim_reply 经 llm_available() 降级规则模式。
 
     try:
         result = await route_chat(

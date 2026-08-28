@@ -5,6 +5,7 @@ export interface RiskSummaryResponse {
   avg_score: number;
   warning_count: number;
   risk_distribution: Record<string, number>;
+  industry_profiles?: IndustryProfileItem[];
   enterprises: {
     enterprise_id: string;
     display_label: string;
@@ -12,6 +13,17 @@ export interface RiskSummaryResponse {
     overall_score: number;
     industry_l1: string;
   }[];
+}
+
+/** 行业画像对标项（集中度/税负率 0-1，展示层 ×100） */
+export interface IndustryProfileItem {
+  industry_l1: string;
+  n: number;
+  customer_concentration: number | null;
+  supplier_concentration: number | null;
+  category_concentration: number | null;
+  vat_burden: number | null;
+  income_tax_burden: number | null;
 }
 
 /** 后端 /risk/warnings 响应中的企业条目 */

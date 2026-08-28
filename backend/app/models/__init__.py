@@ -1,4 +1,6 @@
 from app.models.core_metrics import CoreMetrics, IndustryBenchmark, LegalEvent
+from app.models.financials import EnterpriseFinancials
+from app.models.profiles import EnterpriseInvoiceProfile, EnterpriseTaxProfile
 from app.models.engine_store import (
     AppUser,
     ChatSessionRecord,
@@ -7,11 +9,15 @@ from app.models.engine_store import (
     EnterpriseEngineFeatures,
 )
 from app.models.metric_registry import FieldMapping, MetricDefinition
+from app.models.subscription import Subscription
 
 __all__ = [
     "CoreMetrics",
     "IndustryBenchmark",
     "LegalEvent",
+    "EnterpriseFinancials",
+    "EnterpriseInvoiceProfile",
+    "EnterpriseTaxProfile",
     "EnterpriseEngineFeatures",
     "EngineSnapshot",
     "ConclusionRecord",
@@ -19,4 +25,5 @@ __all__ = [
     "AppUser",
     "MetricDefinition",
     "FieldMapping",
+    "Subscription",
 ]

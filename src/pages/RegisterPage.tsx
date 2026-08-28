@@ -14,11 +14,9 @@ export default function RegisterPage() {
   const [isTyping, setIsTyping] = useState(false);
   const [isPasswordFieldFocused, setIsPasswordFieldFocused] = useState(false);
   const [formData, setFormData] = useState({
-    name: '',
     email: '',
     password: '',
     confirmPassword: '',
-    company: '',
   });
   const [localError, setLocalError] = useState('');
 
@@ -27,7 +25,6 @@ export default function RegisterPage() {
     clearError();
     setLocalError('');
 
-    // 验证表单
     if (!formData.email || !formData.password) {
       setLocalError('请填写邮箱和密码');
       return;
@@ -43,10 +40,8 @@ export default function RegisterPage() {
       return;
     }
 
-    // 调用后端注册 API（只发送 email + password）
     const success = await register(formData.email, formData.password);
     if (success) {
-      // 注册成功后跳转登录页
       navigate('/login');
     }
   };
@@ -55,9 +50,7 @@ export default function RegisterPage() {
 
   return (
     <div className="min-h-screen max-h-screen overflow-hidden grid lg:grid-cols-2">
-      {/* 左侧动画角色区域 - 暖色背景 */}
       <div className="relative hidden lg:flex flex-col justify-between bg-gradient-to-br from-amber-100 via-warm-100 to-orange-50 p-12 text-warm-800">
-        {/* Logo 放在右侧上方 */}
         <div className="relative z-20 flex justify-end">
           <div className="flex items-center gap-4">
             <div className="text-right">
@@ -79,16 +72,13 @@ export default function RegisterPage() {
           />
         </div>
 
-        {/* 装饰元素 - 暖色系 */}
         <div className="absolute inset-0 bg-grid-warm/[0.05] bg-[size:20px_20px]" />
         <div className="absolute top-1/4 right-1/4 size-64 bg-amber/10 rounded-full blur-3xl" />
         <div className="absolute bottom-1/4 left-1/4 size-96 bg-orange-200/20 rounded-full blur-3xl" />
       </div>
 
-      {/* Right Register Section */}
       <div className="flex items-center justify-center p-8 bg-warm-50 overflow-y-auto">
         <div className="w-full max-w-[420px]">
-          {/* Mobile Logo */}
           <div className="lg:hidden flex items-center justify-center gap-4 mb-8">
             <div className="w-20 h-20 rounded-2xl bg-amber/10 shadow-warm-sm flex items-center justify-center">
               <CuteEyeLogo size={64} />
@@ -99,7 +89,6 @@ export default function RegisterPage() {
             </div>
           </div>
 
-          {/* Header */}
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold tracking-tight mb-2 text-warm-800">
               创建账号
@@ -107,27 +96,7 @@ export default function RegisterPage() {
             <p className="text-warm-500 text-sm">开始使用财税票智能风控报告产品</p>
           </div>
 
-          {/* Register Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <label htmlFor="name" className="text-sm font-medium text-warm-700">
-                姓名
-              </label>
-              <input
-                id="name"
-                type="text"
-                placeholder="请输入您的姓名"
-                autoComplete="off"
-                value={formData.name}
-                onChange={(e) =>
-                  setFormData({ ...formData, name: e.target.value })
-                }
-                onFocus={() => setIsTyping(true)}
-                onBlur={() => setIsTyping(false)}
-                className="h-12 w-full rounded-lg border border-warm-200 bg-white px-4 py-2 text-warm-800 placeholder:text-warm-400 focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-colors"
-              />
-            </div>
-
             <div className="space-y-2">
               <label htmlFor="email" className="text-sm font-medium text-warm-700">
                 邮箱 <span className="text-terracotta">*</span>
@@ -140,25 +109,6 @@ export default function RegisterPage() {
                 value={formData.email}
                 onChange={(e) =>
                   setFormData({ ...formData, email: e.target.value })
-                }
-                onFocus={() => setIsTyping(true)}
-                onBlur={() => setIsTyping(false)}
-                className="h-12 w-full rounded-lg border border-warm-200 bg-white px-4 py-2 text-warm-800 placeholder:text-warm-400 focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-colors"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label htmlFor="company" className="text-sm font-medium text-warm-700">
-                公司名称
-              </label>
-              <input
-                id="company"
-                type="text"
-                placeholder="请输入公司名称（选填）"
-                autoComplete="off"
-                value={formData.company}
-                onChange={(e) =>
-                  setFormData({ ...formData, company: e.target.value })
                 }
                 onFocus={() => setIsTyping(true)}
                 onBlur={() => setIsTyping(false)}
@@ -256,7 +206,6 @@ export default function RegisterPage() {
             </div>
           </form>
 
-          {/* Terms */}
           <p className="text-xs text-warm-400 text-center mt-4">
             注册即表示您同意我们的{' '}
             <a href="#" className="text-amber hover:underline">服务条款</a>
@@ -264,7 +213,6 @@ export default function RegisterPage() {
             <a href="#" className="text-amber hover:underline">隐私政策</a>
           </p>
 
-          {/* Login Link */}
           <div className="text-center text-sm text-warm-500 mt-6">
             已有账号？{' '}
             <Link

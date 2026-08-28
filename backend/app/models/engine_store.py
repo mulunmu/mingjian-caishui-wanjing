@@ -82,4 +82,5 @@ class AppUser(Base):
     email: Mapped[str] = mapped_column(String(255), primary_key=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(32), default="user")
+    plan: Mapped[str] = mapped_column(String(32), default="free")
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

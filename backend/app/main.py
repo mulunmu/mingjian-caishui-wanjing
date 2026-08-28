@@ -18,6 +18,7 @@ from app.api.v1.ingest import router as ingest_router
 from app.api.v1.metrics import router as metrics_router
 from app.api.v1.report import router as report_router
 from app.api.v1.risk import router as risk_router
+from app.api.v1.subscription import router as subscription_router
 from app.db.session import _get_async_session_local
 from app.models.core_metrics import CoreMetrics
 from app.responses import UTF8JSONResponse
@@ -78,6 +79,23 @@ async def lifespan(app: FastAPI):
             await asyncio.to_thread(_ensure_chat_session_columns)
         except Exception as col_exc:
             logger.debug("chat_sessions column ensure: %s", col_exc)
+
+        def _ensure_app_user_plan_column() -> None:
+            """已有库 create_all 不会加列；补 app_users.plan（订阅分层）。"""
+            from sqlalchemy import text
+
+            with eng.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE app_users "
+                        "ADD COLUMN IF NOT EXISTS plan VARCHAR(32) NOT NULL DEFAULT 'free'"
+                    )
+                )
+
+        try:
+            await asyncio.to_thread(_ensure_app_user_plan_column)
+        except Exception as col_exc:
+            logger.debug("app_users plan column ensure: %s", col_exc)
 
         from app.services.auth_service import ensure_demo_user, validate_production_config
 
@@ -154,13 +172,25 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if not rate_limiter.check_api_limit():
+        client_key = _client_key_from_scope(scope)
+        if not rate_limiter.check_api_limit(client_key):
             response = JSONResponse(status_code=429, content={"detail": "请求过于频繁，请稍后重试"})
             await response(scope, receive, send)
             return
 
-        rate_limiter.record_api_call()
+        rate_limiter.record_api_call(client_key)
         await self.app(scope, receive, send)
+
+
+def _client_key_from_scope(scope: Scope) -> str:
+    headers = {k.decode().lower(): v.decode() for k, v in (scope.get("headers") or [])}
+    forwarded = (headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if forwarded:
+        return f"ip:{forwarded}"
+    client = scope.get("client")
+    if client and client[0]:
+        return f"ip:{client[0]}"
+    return "ip:unknown"
 
 
 app.add_middleware(RateLimitMiddleware)
@@ -172,6 +202,7 @@ app.include_router(report_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(metrics_router, prefix="/api/v1")
 app.include_router(ingest_router, prefix="/api/v1")
+app.include_router(subscription_router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")

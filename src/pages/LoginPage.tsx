@@ -8,7 +8,7 @@ import useAuthStore from '@/stores/authStore';
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { login, isLoading, error, clearError } = useAuthStore();
+  const { login, demoLogin, isLoading, error, clearError } = useAuthStore();
   const [showPassword, setShowPassword] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [isPasswordFieldFocused, setIsPasswordFieldFocused] = useState(false);
@@ -172,14 +172,13 @@ export default function LoginPage() {
 
             <InteractiveHoverButton
               type="button"
-              text="填充演示账号邮箱"
+              text={isLoading ? '登录中...' : '使用演示账号登录'}
               className="w-full h-12 mt-4 border-warm-300"
-              onClick={() => {
-                // 不在前端硬编码密码；仅填充邮箱（密码见服务端 DEMO_USER_* 配置）
-                setFormData((prev) => ({
-                  ...prev,
-                  email: import.meta.env.VITE_DEMO_USER_EMAIL || 'admin@localhost',
-                }));
+              disabled={isLoading}
+              onClick={async () => {
+                clearError();
+                const success = await demoLogin();
+                if (success) navigate('/overview');
               }}
               icon={
                 <svg
@@ -199,7 +198,7 @@ export default function LoginPage() {
               }
             />
             <p className="mt-2 text-center text-[11px] text-warm-400">
-              演示密码由服务端 DEMO_USER_PASSWORD 配置，勿将明文密码写进前端代码。
+              演示登录由服务端签发（DEMO_LOGIN_ENABLED），前端不携带口令
             </p>
           </div>
 

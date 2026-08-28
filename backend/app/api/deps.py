@@ -71,3 +71,28 @@ def require_roles(*roles: str) -> Callable:
         return user
 
     return _dep
+
+
+def require_plan(*plans: str) -> Callable:
+    """订阅分层 RBAC：定制功能守卫。
+
+    演示态（AUTH_REQUIRED=false）未登录放行（等同定制，便于开发）；
+    已登录（或 AUTH_REQUIRED=true）时：admin 或 plan 命中则放行，否则 403。
+    """
+
+    async def _dep(
+        credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    ) -> dict | None:
+        user = await get_current_user_optional(credentials)
+        if user is None:
+            return None
+        role = user.get("role") or "user"
+        plan = user.get("plan") or "free"
+        if role == "admin" or plan in plans:
+            return user
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="该功能为定制用户专享，请升级后使用",
+        )
+
+    return _dep

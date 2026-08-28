@@ -23,6 +23,8 @@ _tables_ready = False
 AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "false").lower() == "true"
 # 鉴权开启时默认关闭自助注册，避免任意人注册即获全站访问
 ALLOW_SELF_REGISTER = os.getenv("ALLOW_SELF_REGISTER", "false").lower() == "true"
+# 本地演示一键登录（不向前端下发口令）；生产务必 false
+DEMO_LOGIN_ENABLED = os.getenv("DEMO_LOGIN_ENABLED", "false").lower() == "true"
 _MIN_PASSWORD_LEN = 8 if AUTH_REQUIRED else 6
 
 
@@ -81,13 +83,18 @@ def _get_user_pg(email: str) -> dict | None:
             rec = session.get(AppUser, email)
             if not rec:
                 return None
-            return {"email": rec.email, "password_hash": rec.password_hash, "role": rec.role or "user"}
+            return {
+                "email": rec.email,
+                "password_hash": rec.password_hash,
+                "role": rec.role or "user",
+                "plan": rec.plan or "free",
+            }
     except Exception as exc:
         logger.debug("auth PG get failed: %s", exc)
         return None
 
 
-def _save_user_pg(email: str, password_hash: str, role: str = "user") -> bool:
+def _save_user_pg(email: str, password_hash: str, role: str = "user", plan: str = "free") -> bool:
     if not _ensure_tables():
         return False
     try:
@@ -105,6 +112,7 @@ def _save_user_pg(email: str, password_hash: str, role: str = "user") -> bool:
                     email=email,
                     password_hash=password_hash,
                     role=role,
+                    plan=plan,
                     created_at=datetime.now(timezone.utc),
                 )
             )
@@ -121,19 +129,19 @@ def _save_user_pg(email: str, password_hash: str, role: str = "user") -> bool:
         return False
 
 
-def register_user(email: str, password: str, role: str = "user") -> None:
+def register_user(email: str, password: str, role: str = "user", plan: str = "free") -> None:
     email = email.strip().lower()
     if len(password) < _MIN_PASSWORD_LEN:
         raise ValueError(f"密码至少{_MIN_PASSWORD_LEN}位")
     if _get_user_pg(email) or email in _users_fallback:
         raise ValueError("邮箱已注册")
     ph = hash_password(password)
-    if _save_user_pg(email, ph, role=role):
-        _users_fallback[email] = {"email": email, "password_hash": ph, "role": role}
+    if _save_user_pg(email, ph, role=role, plan=plan):
+        _users_fallback[email] = {"email": email, "password_hash": ph, "role": role, "plan": plan}
         return
     if email in _users_fallback:
         raise ValueError("邮箱已注册")
-    _users_fallback[email] = {"email": email, "password_hash": ph, "role": role}
+    _users_fallback[email] = {"email": email, "password_hash": ph, "role": role, "plan": plan}
     logger.warning("auth user %s stored in memory only (PG unavailable)", email)
 
 
@@ -142,12 +150,16 @@ def authenticate_user(email: str, password: str) -> dict | None:
     user = _get_user_pg(email) or _users_fallback.get(email)
     if not user or not verify_password(password, user["password_hash"]):
         return None
-    return {"email": user["email"], "role": user.get("role") or "user"}
+    return {
+        "email": user["email"],
+        "role": user.get("role") or "user",
+        "plan": user.get("plan") or "free",
+    }
 
 
-def create_access_token(email: str, role: str) -> str:
+def create_access_token(email: str, role: str, plan: str = "free") -> str:
     expire = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRE_HOURS)
-    payload = {"sub": email, "role": role, "exp": expire}
+    payload = {"sub": email, "role": role, "plan": plan, "exp": expire}
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
@@ -168,9 +180,44 @@ def ensure_demo_user() -> None:
     if _get_user_pg(email) or email in _users_fallback:
         return
     try:
-        register_user(email, password, role="admin")
+        register_user(email, password, role="admin", plan="subscriber")
         logger.info("demo user ensured: %s (role=admin)", email)
     except ValueError:
         pass
     except Exception as exc:
         logger.debug("ensure_demo_user: %s", exc)
+
+
+def get_user_profile(email: str) -> dict | None:
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+    user = _get_user_pg(email) or _users_fallback.get(email)
+    if not user:
+        return None
+    return {
+        "email": user["email"],
+        "role": user.get("role") or "user",
+        "plan": user.get("plan") or "free",
+    }
+
+
+def issue_demo_login_token() -> dict | None:
+    """DEMO_LOGIN_ENABLED 时为演示账号签发 token（不校验口令，口令不出前端）。"""
+    if not DEMO_LOGIN_ENABLED:
+        return None
+    email = (os.getenv("DEMO_USER_EMAIL") or "").strip().lower()
+    if not email:
+        return None
+    ensure_demo_user()
+    profile = get_user_profile(email)
+    if not profile:
+        return None
+    token = create_access_token(profile["email"], profile["role"], profile["plan"])
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "role": profile["role"],
+        "plan": profile["plan"],
+        "email": profile["email"],
+    }

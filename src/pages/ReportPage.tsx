@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import useReportStore from '@/stores/reportStore';
+import useAuthStore from '@/stores/authStore';
+import { needsUpgrade } from '@/utils/plan';
+import UpgradeModal from '@/components/ui/UpgradeModal';
 import Button from '@/components/ui/Button';
 import Skeleton from '@/components/ui/Skeleton';
 import Card from '@/components/ui/Card';
@@ -11,8 +14,10 @@ export default function ReportPage() {
   const navigate = useNavigate();
   const { currentReport, fetchReport, downloadPdf, isLoadingList, reportList, fetchReportList } =
     useReportStore();
+  const user = useAuthStore((s) => s.user);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [showUpgrade, setShowUpgrade] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -88,6 +93,10 @@ export default function ReportPage() {
             <Button
               disabled={downloading}
               onClick={async () => {
+                if (needsUpgrade(user)) {
+                  setShowUpgrade(true);
+                  return;
+                }
                 setDownloading(true);
                 try {
                   await downloadPdf(id);
@@ -101,6 +110,12 @@ export default function ReportPage() {
           </div>
         </Card>
       </div>
+
+      <UpgradeModal
+        open={showUpgrade}
+        onClose={() => setShowUpgrade(false)}
+        feature="报告下载"
+      />
     </div>
   );
 }

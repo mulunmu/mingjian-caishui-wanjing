@@ -1,11 +1,17 @@
 import { create } from 'zustand';
-import type { OverviewKpi, RiskDistItem, WarningEnterprise } from '@/types/overview';
+import type {
+  OverviewKpi,
+  RiskDistItem,
+  WarningEnterprise,
+  IndustryProfileItem,
+} from '@/types/overview';
 import { overviewApi } from '@/api/overview';
 
 interface OverviewStore {
   kpi: OverviewKpi | null;
   riskDistribution: RiskDistItem[];
   industryDistribution: RiskDistItem[];
+  industryProfiles: IndustryProfileItem[];
   warnings: WarningEnterprise[];
   isLoading: boolean;
   error: string | null;
@@ -16,6 +22,7 @@ const useOverviewStore = create<OverviewStore>((set) => ({
   kpi: null,
   riskDistribution: [],
   industryDistribution: [],
+  industryProfiles: [],
   warnings: [],
   isLoading: false,
   error: null,
@@ -28,6 +35,7 @@ const useOverviewStore = create<OverviewStore>((set) => ({
         kpi: data.kpi,
         riskDistribution: data.riskDistribution,
         industryDistribution: data.industryDistribution,
+        industryProfiles: data.industryProfiles,
         warnings: data.warnings,
         isLoading: false,
         error: null,
@@ -38,6 +46,7 @@ const useOverviewStore = create<OverviewStore>((set) => ({
         kpi: null,
         riskDistribution: [],
         industryDistribution: [],
+        industryProfiles: [],
         warnings: [],
         error: e instanceof Error ? e.message : '风控总览暂不可用',
       });

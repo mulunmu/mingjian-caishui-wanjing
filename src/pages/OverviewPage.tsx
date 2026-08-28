@@ -12,7 +12,8 @@ import useOverviewStore from '@/stores/overviewStore';
 import Badge from '@/components/ui/Badge';
 import Skeleton from '@/components/ui/Skeleton';
 import PieChart from '@/components/charts/PieChart';
-import type { WarningEnterprise } from '@/types/overview';
+import BarChart from '@/components/charts/BarChart';
+import type { WarningEnterprise, IndustryProfileItem } from '@/types/overview';
 
 /* ── 入场 ── */
 const fadeUp = {
@@ -23,6 +24,18 @@ const fadeUp = {
     transition: { delay: i * 0.04, duration: 0.28, ease: [0.4, 0, 0.2, 1] },
   }),
 };
+
+/* ── 行业画像对标：0-1 → %，剔除弃权（null/0）行业，避免把源缺失当 0 拉低对标 ── */
+function industryBarData(profiles: IndustryProfileItem[], field: keyof IndustryProfileItem) {
+  const rows = profiles
+    .filter((p) => typeof p[field] === 'number' && (p[field] as number) > 0)
+    .map((p) => ({ name: p.industry_l1, value: (p[field] as number) * 100 }))
+    .sort((a, b) => b.value - a.value);
+  return {
+    categories: rows.map((r) => r.name),
+    values: rows.map((r) => r.value),
+  };
+}
 
 /* ── KPI 卡 ── */
 function KpiCard({
@@ -89,7 +102,7 @@ function AlertRow({ ent, onClick }: { ent: WarningEnterprise; onClick: () => voi
 /* ── 主页面 ── */
 export default function OverviewPage() {
   const navigate = useNavigate();
-  const { kpi, riskDistribution, warnings, isLoading, error, fetchOverview } = useOverviewStore();
+  const { kpi, riskDistribution, industryProfiles, warnings, isLoading, error, fetchOverview } = useOverviewStore();
 
   useEffect(() => {
     void fetchOverview();
@@ -139,6 +152,9 @@ export default function OverviewPage() {
   const highRiskEnts = [...warnings]
     .filter((w) => (w.risk_level || '').includes('高'))
     .sort((a, b) => (a.overall_score || 0) - (b.overall_score || 0));
+
+  const customerBar = industryBarData(industryProfiles, 'customer_concentration');
+  const vatBurdenBar = industryBarData(industryProfiles, 'vat_burden');
 
   return (
     <div className="h-full overflow-y-auto">
@@ -228,6 +244,34 @@ export default function OverviewPage() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          </motion.div>
+        </div>
+
+        {/* ── 行业画像对标（横向条形图） ── */}
+        <div className="grid grid-cols-2 gap-4">
+          <motion.div custom={7} variants={fadeUp} initial="hidden" animate="visible">
+            <div className="bg-white rounded-xl border border-warm-200 shadow-sm p-4">
+              <p className="text-[11px] font-semibold text-warm-400 uppercase tracking-wider mb-1">
+                Benchmark · 各行业平均客户集中度
+              </p>
+              {customerBar.categories.length > 0 ? (
+                <BarChart data={customerBar} horizontal height={260} />
+              ) : (
+                <p className="text-xs text-warm-400 text-center py-8">暂无数据</p>
+              )}
+            </div>
+          </motion.div>
+          <motion.div custom={8} variants={fadeUp} initial="hidden" animate="visible">
+            <div className="bg-white rounded-xl border border-warm-200 shadow-sm p-4">
+              <p className="text-[11px] font-semibold text-warm-400 uppercase tracking-wider mb-1">
+                Benchmark · 各行业平均增值税税负率
+              </p>
+              {vatBurdenBar.categories.length > 0 ? (
+                <BarChart data={vatBurdenBar} horizontal height={260} />
+              ) : (
+                <p className="text-xs text-warm-400 text-center py-8">暂无数据</p>
+              )}
             </div>
           </motion.div>
         </div>

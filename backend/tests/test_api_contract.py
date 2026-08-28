@@ -65,4 +65,4 @@ def test_assessment_weights():
     from app.services.assessment_weights import DIMENSION_WEIGHTS, DIMENSION_LABELS
     total = sum(DIMENSION_WEIGHTS.values())
     assert abs(total - 1.0) < 0.01, f"Weights sum to {total}"
-    assert len(DIMENSION_LABELS) == 5
+    assert len(DIMENSION_LABELS) == 6

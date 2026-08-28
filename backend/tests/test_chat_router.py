@@ -20,7 +20,7 @@ def test_chart_helpers():
     }
     radar = _radar_chart(ent)
     assert radar["type"] == "radar"
-    assert len(radar["data"]["values"]) == 5
+    assert len(radar["data"]["values"]) == 6  # 六维（含发票健康）
 
     items = [
         {"industry_l1": "制造", "avg_revenue_yoy": 5.2},

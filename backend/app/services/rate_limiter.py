@@ -1,6 +1,7 @@
-"""调用次数限制 — LLM 每日上限 + 通用 API 速率限制
+"""调用次数限制 — LLM 每日上限 + 通用 API 速率限制（按客户端键隔离）
 
 设置 REDIS_URL 后跨进程共享；未设置则进程内内存（单测/单实例演示）。
+客户端键优先：user_id / IP，避免单用户耗尽全员额度。
 """
 from __future__ import annotations
 
@@ -13,9 +14,11 @@ logger = logging.getLogger(__name__)
 
 LLM_DAILY_LIMIT = int(os.getenv("LLM_DAILY_LIMIT", "1000"))
 API_RATE_PER_SECOND = int(os.getenv("API_RATE_PER_SECOND", "20"))
+# 单键 LLM 日上限（默认等于全局；可设更小防止单 IP 吃满）
+LLM_DAILY_LIMIT_PER_KEY = int(os.getenv("LLM_DAILY_LIMIT_PER_KEY", str(LLM_DAILY_LIMIT)))
 
 _llm_counters: dict[str, int] = {}
-_request_timestamps: list[float] = []
+_request_timestamps: dict[str, list[float]] = {}
 _redis = None
 _redis_checked = False
 
@@ -45,104 +48,121 @@ def _today_key() -> str:
     return date.today().isoformat()
 
 
+def _safe_key(client_key: str | None) -> str:
+    raw = (client_key or "anon").strip()[:128] or "anon"
+    return "".join(c if c.isalnum() or c in "._-:@" else "_" for c in raw)
+
+
 def _reset_if_new_day() -> None:
     today = _today_key()
-    stale = [k for k in _llm_counters if k != today]
+    prefix = f"{today}:"
+    stale = [k for k in _llm_counters if not k.startswith(prefix) and ":" in k]
+    # also legacy day-only keys
+    stale += [k for k in _llm_counters if k == today or (len(k) == 10 and k.count("-") == 2 and ":" not in k)]
     for k in stale:
         del _llm_counters[k]
-    _llm_counters.setdefault(today, 0)
 
 
-def check_llm_limit() -> bool:
+def check_llm_limit(client_key: str | None = None) -> bool:
+    key = _safe_key(client_key)
     r = _get_redis()
     if r is not None:
         try:
-            used = int(r.get(f"llm:daily:{_today_key()}") or 0)
-            return used < LLM_DAILY_LIMIT
+            used = int(r.get(f"llm:daily:{_today_key()}:{key}") or 0)
+            return used < LLM_DAILY_LIMIT_PER_KEY
         except Exception:
             pass
     _reset_if_new_day()
-    return _llm_counters[_today_key()] < LLM_DAILY_LIMIT
+    mem_key = f"{_today_key()}:{key}"
+    return _llm_counters.get(mem_key, 0) < LLM_DAILY_LIMIT_PER_KEY
 
 
-def increment_llm() -> int:
+def increment_llm(client_key: str | None = None) -> int:
+    key = _safe_key(client_key)
     r = _get_redis()
     if r is not None:
         try:
-            key = f"llm:daily:{_today_key()}"
-            used = int(r.incr(key))
+            rk = f"llm:daily:{_today_key()}:{key}"
+            used = int(r.incr(rk))
             if used == 1:
-                r.expire(key, 86400 + 3600)
+                r.expire(rk, 86400 + 3600)
             return used
         except Exception:
             pass
     _reset_if_new_day()
-    key = _today_key()
-    _llm_counters[key] = _llm_counters.get(key, 0) + 1
-    return _llm_counters[key]
+    mem_key = f"{_today_key()}:{key}"
+    _llm_counters[mem_key] = _llm_counters.get(mem_key, 0) + 1
+    return _llm_counters[mem_key]
 
 
-def get_llm_usage() -> dict:
+def get_llm_usage(client_key: str | None = None) -> dict:
+    key = _safe_key(client_key)
     r = _get_redis()
     if r is not None:
         try:
-            used = int(r.get(f"llm:daily:{_today_key()}") or 0)
+            used = int(r.get(f"llm:daily:{_today_key()}:{key}") or 0)
             return {
                 "date": _today_key(),
                 "used": used,
-                "limit": LLM_DAILY_LIMIT,
-                "remaining": max(0, LLM_DAILY_LIMIT - used),
+                "limit": LLM_DAILY_LIMIT_PER_KEY,
+                "remaining": max(0, LLM_DAILY_LIMIT_PER_KEY - used),
                 "backend": "redis",
+                "key": key,
             }
         except Exception:
             pass
     _reset_if_new_day()
-    used = _llm_counters.get(_today_key(), 0)
+    mem_key = f"{_today_key()}:{key}"
+    used = _llm_counters.get(mem_key, 0)
     return {
         "date": _today_key(),
         "used": used,
-        "limit": LLM_DAILY_LIMIT,
-        "remaining": max(0, LLM_DAILY_LIMIT - used),
+        "limit": LLM_DAILY_LIMIT_PER_KEY,
+        "remaining": max(0, LLM_DAILY_LIMIT_PER_KEY - used),
         "backend": "memory",
+        "key": key,
     }
 
 
-def check_api_limit() -> bool:
-    """滑动 1 秒窗口。"""
+def check_api_limit(client_key: str | None = None) -> bool:
+    """滑动 1 秒窗口（按客户端键）。"""
+    key = _safe_key(client_key)
     r = _get_redis()
     now = time.time()
     if r is not None:
         try:
-            key = "api:ratelimit"
+            rk = f"api:ratelimit:{key}"
             pipe = r.pipeline()
-            pipe.zremrangebyscore(key, 0, now - 1.0)
-            pipe.zcard(key)
+            pipe.zremrangebyscore(rk, 0, now - 1.0)
+            pipe.zcard(rk)
             results = pipe.execute()
             return int(results[1]) < API_RATE_PER_SECOND
         except Exception:
             pass
+    bucket = _request_timestamps.setdefault(key, [])
     cutoff = now - 1.0
-    while _request_timestamps and _request_timestamps[0] < cutoff:
-        _request_timestamps.pop(0)
-    return len(_request_timestamps) < API_RATE_PER_SECOND
+    while bucket and bucket[0] < cutoff:
+        bucket.pop(0)
+    return len(bucket) < API_RATE_PER_SECOND
 
 
-def record_api_call() -> None:
+def record_api_call(client_key: str | None = None) -> None:
+    key = _safe_key(client_key)
     r = _get_redis()
     now = time.time()
     if r is not None:
         try:
-            key = "api:ratelimit"
+            rk = f"api:ratelimit:{key}"
             member = f"{now:.6f}:{os.getpid()}"
             pipe = r.pipeline()
-            pipe.zadd(key, {member: now})
-            pipe.zremrangebyscore(key, 0, now - 1.0)
-            pipe.expire(key, 2)
+            pipe.zadd(rk, {member: now})
+            pipe.zremrangebyscore(rk, 0, now - 1.0)
+            pipe.expire(rk, 2)
             pipe.execute()
             return
         except Exception:
             pass
-    _request_timestamps.append(now)
+    _request_timestamps.setdefault(key, []).append(now)
 
 
 def redis_backend_active() -> bool:

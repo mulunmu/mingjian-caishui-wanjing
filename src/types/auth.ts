@@ -14,6 +14,8 @@ export interface RegisterRequest {
 export interface TokenResponse {
   access_token: string;
   token_type: string;
+  role?: string;
+  plan?: string;
 }
 
 /** 注册响应 */
@@ -24,4 +26,6 @@ export interface RegisterResponse {
 /** 当前用户信息 */
 export interface UserInfo {
   email: string;
+  role?: string;
+  plan?: string;
 }

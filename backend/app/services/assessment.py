@@ -132,10 +132,79 @@ def _calc_tax_health(m: CoreMetrics) -> tuple[float, list[dict], list[dict]]:
     if m.is_execution:
         negative.append({"item": "被执行标志", "deduction": 25, "count": 1})
 
+    # 税务画像补充信号（阈值与洞察规则 T-05~T-08 / T-10 对齐，0=弃权不误判）
+    late_cnt = int(getattr(m, "tax_late_penalty_cnt", 0) or 0)
+    if late_cnt > 0:
+        negative.append({"item": "滞纳金/罚款", "deduction": min(20, late_cnt * 5), "count": late_cnt})
+    corr = int(getattr(m, "correction_times", 0) or 0)
+    if corr >= 80:
+        negative.append({"item": "申报更正异常频繁", "deduction": 10, "count": corr})
+    if 0 < _to_float(m.vat_burden) < 0.005:
+        negative.append({"item": "增值税税负率明显偏低", "deduction": 15, "count": 1})
+    if 0 < _to_float(m.income_tax_burden) < 0.001:
+        negative.append({"item": "所得税税负率明显偏低", "deduction": 15, "count": 1})
+    change = int(getattr(m, "change_cnt", 0) or 0)
+    if change >= 15:
+        negative.append({"item": "变更登记频繁", "deduction": 10, "count": change})
+
     deduct = sum(n["deduction"] for n in negative)
     result = credit_contrib + tax_rate_contrib - deduct
     # 信用/准时率量纲若异常，封顶 100，避免 overall 无上界
     return max(-50.0, min(100.0, result)), positive, negative
+
+
+def _calc_invoice(m: CoreMetrics, all_metrics: list[CoreMetrics]) -> dict:
+    """发票健康：进销分散度（集中度逆向分位）+ 作废/单价质量扣分。
+
+    集中度 0=弃权（源缺失），从分散度分量剔除；三字段全弃权返回 50 中性分。
+    作废/单价信号与洞察规则 I-10 / I-11 同阈值。
+    """
+    cust_vals = [_to_float(x.customer_concentration) for x in all_metrics if _to_float(x.customer_concentration) > 0]
+    supp_vals = [_to_float(x.supplier_concentration) for x in all_metrics if _to_float(x.supplier_concentration) > 0]
+    cate_vals = [_to_float(x.category_concentration) for x in all_metrics if _to_float(x.category_concentration) > 0]
+
+    positive: list[dict] = []
+    negative: list[dict] = []
+    parts: list[tuple[str, float, float]] = []
+    for label, w, val, pop in (
+        ("客户分散度分位", 0.35, _to_float(m.customer_concentration), cust_vals),
+        ("供应商分散度分位", 0.35, _to_float(m.supplier_concentration), supp_vals),
+        ("品目分散度分位", 0.30, _to_float(m.category_concentration), cate_vals),
+    ):
+        if val > 0:
+            parts.append((label, w, 100 - _percentile(val, pop)))
+
+    note = ""
+    if not parts:
+        score = 50.0
+        positive.append({"item": "无集中度样本", "contribution": 50})
+        note = "集中度全弃权"
+    else:
+        total_w = sum(w for _, w, _ in parts)
+        score = sum(w * p for _, w, p in parts) / total_w
+        for label, w, p in parts:
+            positive.append({"item": label, "contribution": round(w * p / total_w, 2)})
+
+    # 发票质量绝对扣分（作废占比 / 单价离散）
+    void_cnt = int(getattr(m, "void_invoice_cnt", 0) or 0)
+    inv_cnt = int(getattr(m, "invoice_cnt", 0) or 0)
+    void_ratio = void_cnt / inv_cnt if inv_cnt > 0 else 0.0
+    if void_ratio > 0.15:
+        negative.append({"item": "作废发票占比异常", "deduction": 15, "count": void_cnt})
+    if _to_float(m.unit_price_ratio) > 100000:
+        negative.append({"item": "单价离散异常", "deduction": 10, "count": 1})
+
+    for n in negative:
+        score -= n["deduction"]
+    score = max(0.0, min(100.0, score))
+
+    return {
+        "score": score,
+        "positive": positive,
+        "negative": negative,
+        "engine": "invoice_concentration",
+        "note": note,
+    }
 
 
 def _calc_authenticity(m: CoreMetrics, all_metrics: list[CoreMetrics]) -> dict:
@@ -234,7 +303,83 @@ def _calc_industry(m: CoreMetrics, all_metrics: list[CoreMetrics]) -> dict:
 
 
 def _calc_finance(m: CoreMetrics, all_metrics: list[CoreMetrics]) -> dict:
-    """非上市口径：利润率 / 营收增速 / 负债率 / 现金流健康度"""
+    """财务健康：有完整三大报表 → 四能力比率分位；无 → 代理口径。"""
+    fin_peers = [x for x in all_metrics if getattr(x, "has_financial_statements", False)]
+    if getattr(m, "has_financial_statements", False) and len(fin_peers) >= 5:
+        return _calc_finance_ratios(m, fin_peers)
+    return _calc_finance_proxy(m, all_metrics)
+
+
+def _calc_finance_ratios(m: CoreMetrics, peers: list[CoreMetrics]) -> dict:
+    """四能力比率分位：偿债 30% / 盈利 30% / 营运 20% / 成长 20%。
+
+    每项比率在同业（有报表样本）内取分位，越高越好（资产负债率取逆向分位）。
+    弃权项（比率=0，源缺失）自然落在低分位，不影响整体可比性。
+    """
+    curr = [_to_float(x.current_ratio) for x in peers]
+    quick = [_to_float(x.quick_ratio) for x in peers]
+    debts = [_to_float(x.debt_ratio) for x in peers]
+    gross = [_to_float(x.gross_margin) for x in peers]
+    netm = [_to_float(x.net_margin) for x in peers]
+    roes = [_to_float(x.roe) for x in peers]
+    recv = [_to_float(x.receivables_turnover) for x in peers]
+    inv = [_to_float(x.inventory_turnover) for x in peers]
+    asset = [_to_float(x.asset_turnover) for x in peers]
+    yoys = [_to_float(x.revenue_yoy) for x in peers]
+    pyoys = [_to_float(x.profit_yoy) for x in peers]
+
+    curr_pct = _percentile(_to_float(m.current_ratio), curr)
+    quick_pct = _percentile(_to_float(m.quick_ratio), quick)
+    debt_rev = 100 - _percentile(_to_float(m.debt_ratio), debts)
+    gross_pct = _percentile(_to_float(m.gross_margin), gross)
+    netm_pct = _percentile(_to_float(m.net_margin), netm)
+    roe_pct = _percentile(_to_float(m.roe), roes)
+    recv_pct = _percentile(_to_float(m.receivables_turnover), recv)
+    inv_pct = _percentile(_to_float(m.inventory_turnover), inv)
+    asset_pct = _percentile(_to_float(m.asset_turnover), asset)
+    yoy_pct = _percentile(_to_float(m.revenue_yoy), yoys)
+    pyoy_pct = _percentile(_to_float(m.profit_yoy), pyoys)
+
+    solvency = curr_pct * 0.4 + quick_pct * 0.3 + debt_rev * 0.3
+    profitability = gross_pct * 0.35 + netm_pct * 0.35 + roe_pct * 0.3
+    operation = recv_pct * 0.4 + inv_pct * 0.3 + asset_pct * 0.3
+    growth = yoy_pct * 0.5 + pyoy_pct * 0.5
+
+    score = solvency * 0.3 + profitability * 0.3 + operation * 0.2 + growth * 0.2
+
+    positive = [
+        {"item": "偿债能力分", "contribution": round(solvency * 0.3, 2)},
+        {"item": "盈利能力分", "contribution": round(profitability * 0.3, 2)},
+        {"item": "营运能力分", "contribution": round(operation * 0.2, 2)},
+        {"item": "成长能力分", "contribution": round(growth * 0.2, 2)},
+    ]
+    negative: list[dict] = []
+    if 0 < _to_float(m.current_ratio) < 1.0:
+        negative.append({"item": "流动比率<1", "deduction": 10})
+    if _to_float(m.debt_ratio) > 0.85:
+        negative.append({"item": "资产负债率过高", "deduction": 10})
+    if _to_float(m.roe) < 0:
+        negative.append({"item": "净资产收益率为负", "deduction": 10})
+
+    return {
+        "score": score,
+        "positive": positive,
+        "negative": negative,
+        "engine": "four_capabilities",
+        "solvency_score": round(solvency, 2),
+        "profitability_score": round(profitability, 2),
+        "operation_score": round(operation, 2),
+        "growth_score": round(growth, 2),
+        "current_ratio_percentile": round(curr_pct, 1),
+        "gross_margin_percentile": round(gross_pct, 1),
+        "net_margin_percentile": round(netm_pct, 1),
+        "roe_percentile": round(roe_pct, 1),
+        "receivables_turnover_percentile": round(recv_pct, 1),
+    }
+
+
+def _calc_finance_proxy(m: CoreMetrics, all_metrics: list[CoreMetrics]) -> dict:
+    """代理口径（无三大报表样本）：利润率 / 营收增速 / 负债率 / 现金流健康度。"""
     margins = [_to_float(x.profit_margin) for x in all_metrics]
     yoys = [_to_float(x.revenue_yoy) for x in all_metrics]
     debts = [_to_float(x.debt_ratio) for x in all_metrics]
@@ -261,6 +406,7 @@ def _calc_finance(m: CoreMetrics, all_metrics: list[CoreMetrics]) -> dict:
         "score": score,
         "positive": positive,
         "negative": negative,
+        "engine": "proxy",
         "profit_margin_percentile": margin_pct,
         "revenue_yoy_percentile": yoy_pct,
         "debt_ratio_reverse_percentile": debt_rev_pct,
@@ -325,7 +471,7 @@ def _attribution_summary(
 
 
 def _build_dimension_details(
-    tax: float, auth: dict, industry: dict, legal: dict, fin: dict, weights: dict[str, float] | None = None
+    tax: float, auth: dict, inv: dict, industry: dict, legal: dict, fin: dict, weights: dict[str, float] | None = None
 ) -> dict:
     w = weights or DIMENSION_WEIGHTS
     def _extra(d: dict) -> dict:
@@ -343,6 +489,7 @@ def _build_dimension_details(
     return {
         "tax_health": {"score": round(tax, 2), "weight": w["tax_health"], "label": DIMENSION_LABELS["tax_health"]},
         "authenticity": {"score": round(auth["score"], 2), "weight": w["authenticity"], "label": DIMENSION_LABELS["authenticity"], **_extra(auth)},
+        "invoice": {"score": round(inv["score"], 2), "weight": w["invoice"], "label": DIMENSION_LABELS["invoice"], **_extra(inv)},
         "industry": {"score": round(industry["score"], 2), "weight": w["industry"], "label": DIMENSION_LABELS["industry"], **_extra(industry)},
         "legal": legal_detail,
         "finance": {"score": round(fin["score"], 2), "weight": w["finance"], "label": DIMENSION_LABELS["finance"], **_extra(fin)},
@@ -433,6 +580,7 @@ def _build_result(
 ) -> dict:
     tax, tax_pos, tax_neg = _calc_tax_health(m)
     auth = _calc_authenticity(m, all_metrics)
+    inv = _calc_invoice(m, all_metrics)
     industry = _calc_industry(m, all_metrics)
     legal = _calc_legal_score(m, legal_events or [])
     fin = _calc_finance(m, all_metrics)
@@ -442,6 +590,7 @@ def _build_result(
     dim_scores = {
         "tax_health": tax,
         "authenticity": auth["score"],
+        "invoice": inv["score"],
         "industry": industry["score"],
         "legal": legal["score"],
         "finance": fin["score"],
@@ -453,6 +602,7 @@ def _build_result(
     dim_attr = {
         "tax_health": {"positive": tax_pos, "negative": tax_neg},
         "authenticity": {"positive": auth["positive"], "negative": auth["negative"]},
+        "invoice": {"positive": inv["positive"], "negative": inv["negative"]},
         "industry": {"positive": industry["positive"], "negative": industry["negative"]},
         "legal": {"positive": legal["positive"], "negative": legal["negative"]},
         "finance": {"positive": fin["positive"], "negative": fin["negative"]},
@@ -490,7 +640,7 @@ def _build_result(
         "overall_score": round(overall, 2),
         "risk_level": _risk_level(overall),
         "dimensions": {k: round(v, 2) for k, v in dim_scores.items()},
-        "dimension_details": _build_dimension_details(tax, auth, industry, legal, fin, weights),
+        "dimension_details": _build_dimension_details(tax, auth, inv, industry, legal, fin, weights),
         "attribution": attribution,
         "warning_signals": _warning_signals(m, all_metrics, legal["score"]),
     }
@@ -651,6 +801,32 @@ async def get_slice_attribution(
     }
 
 
+# 行业画像对标：集中度/税负率标量（0=弃权，展示层 ×100）
+_PROFILE_FIELDS = [
+    ("customer_concentration", "客户集中度"),
+    ("supplier_concentration", "供应商集中度"),
+    ("category_concentration", "品目集中度"),
+    ("vat_burden", "增值税税负率"),
+    ("income_tax_burden", "所得税税负率"),
+]
+
+
+def _industry_profile_stats(all_metrics: list[CoreMetrics]) -> list[dict]:
+    """各行业画像标量均值（0=弃权剔除，避免把源缺失当成 0 拉低均值）。"""
+    groups: dict[str, list[CoreMetrics]] = {}
+    for m in all_metrics:
+        groups.setdefault(m.industry_l1 or "其他", []).append(m)
+    out: list[dict] = []
+    for ind, group in groups.items():
+        row: dict = {"industry_l1": ind, "n": len(group)}
+        for field, _label in _PROFILE_FIELDS:
+            vals = [_to_float(getattr(m, field)) for m in group if _to_float(getattr(m, field)) > 0]
+            row[field] = round(sum(vals) / len(vals), 4) if vals else None
+        out.append(row)
+    out.sort(key=lambda x: -x["n"])
+    return out
+
+
 async def get_dashboard_summary(db: AsyncSession) -> dict:
     """工作台聚合：样本数、风险分布、均分、预警数。"""
     all_metrics = await _ensure_cache(db)
@@ -662,6 +838,7 @@ async def get_dashboard_summary(db: AsyncSession) -> dict:
             "avg_score": 0.0,
             "warning_count": 0,
             "risk_distribution": {},
+            "industry_profiles": [],
         }
 
     dist: dict[str, int] = {}
@@ -681,6 +858,7 @@ async def get_dashboard_summary(db: AsyncSession) -> dict:
         "avg_score": round(total / len(items), 2),
         "warning_count": len(warnings),
         "risk_distribution": dist,
+        "industry_profiles": _industry_profile_stats(all_metrics),
         "enterprises": [
             {
                 "enterprise_id": it["enterprise_id"],

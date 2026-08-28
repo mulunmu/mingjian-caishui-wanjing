@@ -1,4 +1,6 @@
+import json
 import logging
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -7,12 +9,156 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user_optional
 from app.db.session import get_db
 from app.models.core_metrics import CoreMetrics
+from app.models.financials import EnterpriseFinancials
+from app.models.profiles import EnterpriseInvoiceProfile, EnterpriseTaxProfile
 from app.services import assessment, mock_data
-from app.services import fraud_engine, authenticity_engine
+from app.services import fraud_engine, authenticity_engine, insight_engine
+from app.services import financial_benchmarks
+from app.services import subscription_service
 from app.services.sync_runner import run_blocking
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/risk", tags=["risk"])
+
+
+def _f(v: Decimal | int | float | None) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _loads_json(raw: str | None) -> list:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
+def _serialize_invoice_profile(p: EnterpriseInvoiceProfile | None) -> dict | None:
+    if not p:
+        return None
+    return {
+        "sales_invoice_cnt": p.sales_invoice_cnt,
+        "purchase_invoice_cnt": p.purchase_invoice_cnt,
+        "sales_amount": _f(p.sales_amount),
+        "purchase_amount": _f(p.purchase_amount),
+        "red_invoice_cnt": p.red_invoice_cnt,
+        "void_invoice_cnt": p.void_invoice_cnt,
+        "abnormal_invoice_cnt": p.abnormal_invoice_cnt,
+        "category_count": p.category_count,
+        "top_category_name": p.top_category_name or "",
+        "top_category_share": _f(p.top_category_share),
+        "top_categories": _loads_json(p.top_categories_json),
+        "customer_count": p.customer_count,
+        "top_customer_name": p.top_customer_name or "",
+        "top_customer_share": _f(p.top_customer_share),
+        "customer_hhi": _f(p.customer_hhi),
+        "top_customers": _loads_json(p.top_customers_json),
+        "supplier_count": p.supplier_count,
+        "top_supplier_name": p.top_supplier_name or "",
+        "top_supplier_share": _f(p.top_supplier_share),
+        "supplier_hhi": _f(p.supplier_hhi),
+        "top_suppliers": _loads_json(p.top_suppliers_json),
+        "avg_unit_price": _f(p.avg_unit_price),
+        "max_unit_price": _f(p.max_unit_price),
+    }
+
+
+def _serialize_tax_profile(p: EnterpriseTaxProfile | None) -> dict | None:
+    if not p:
+        return None
+    return {
+        "vat_sales_amount": _f(p.vat_sales_amount),
+        "vat_payable": _f(p.vat_payable),
+        "vat_burden": _f(p.vat_burden),
+        "income_tax_payable": _f(p.income_tax_payable),
+        "income_tax_burden": _f(p.income_tax_burden),
+        "total_tax_paid": _f(p.total_tax_paid),
+        "tax_late_penalty_amount": _f(p.tax_late_penalty_amount),
+        "tax_late_penalty_cnt": p.tax_late_penalty_cnt,
+        "correction_times": p.correction_times,
+        "correction_records": p.correction_records,
+        "correction_levy_count": p.correction_levy_count,
+        "social_headcount": p.social_headcount,
+        "social_insured_count": p.social_insured_count,
+        "social_payment_base": _f(p.social_payment_base),
+        "social_monthly_payment": _f(p.social_monthly_payment),
+        "tax_loan_amount": _f(p.tax_loan_amount),
+        "tax_loan_balance": _f(p.tax_loan_balance),
+        "tax_loan_success_cnt": p.tax_loan_success_cnt,
+        "tax_loan_apply_cnt": p.tax_loan_apply_cnt,
+        "tax_loan_success_rate": _f(p.tax_loan_success_rate),
+        "tax_preference_amount": _f(p.tax_preference_amount),
+        "rd_expense": _f(p.rd_expense),
+        "is_high_tech": bool(p.is_high_tech),
+        "payroll_amount": _f(p.payroll_amount),
+        "investor_cnt": p.investor_cnt,
+        "top_investor_share": _f(p.top_investor_share),
+        "change_cnt": p.change_cnt,
+    }
+
+
+def _serialize_financial(f: EnterpriseFinancials | None) -> dict | None:
+    if not f:
+        return None
+    return {
+        "report_year": f.report_year or "",
+        "dupont": financial_benchmarks.dupont_breakdown(
+            net_margin=f.net_margin,
+            asset_turnover=f.asset_turnover,
+            total_assets=f.total_assets,
+            owner_equity=f.owner_equity,
+            roe=f.roe,
+        ),
+        "balance_sheet": {
+            "total_assets": _f(f.total_assets),
+            "total_liab": _f(f.total_liab),
+            "current_assets": _f(f.current_assets),
+            "current_liab": _f(f.current_liab),
+            "cash_equiv": _f(f.cash_equiv),
+            "inventory": _f(f.inventory),
+            "accounts_receivable": _f(f.accounts_receivable),
+            "fixed_assets": _f(f.fixed_assets),
+            "short_loan": _f(f.short_loan),
+            "owner_equity": _f(f.owner_equity),
+            "retained_earnings": _f(f.retained_earnings),
+        },
+        "income_statement": {
+            "revenue": _f(f.revenue),
+            "cost": _f(f.cost),
+            "tax_surcharge": _f(f.tax_surcharge),
+            "sell_expense": _f(f.sell_expense),
+            "admin_expense": _f(f.admin_expense),
+            "finance_expense": _f(f.finance_expense),
+            "operating_profit": _f(f.operating_profit),
+            "total_profit": _f(f.total_profit),
+            "income_tax": _f(f.income_tax),
+            "net_profit": _f(f.net_profit),
+        },
+        "cash_flow": {
+            "operating_cf": _f(f.operating_cf),
+            "investing_cf": _f(f.investing_cf),
+            "financing_cf": _f(f.financing_cf),
+        },
+        "ratios": {
+            "current_ratio": _f(f.current_ratio),
+            "quick_ratio": _f(f.quick_ratio),
+            "debt_ratio": _f(f.debt_ratio),
+            "receivables_turnover": _f(f.receivables_turnover),
+            "inventory_turnover": _f(f.inventory_turnover),
+            "asset_turnover": _f(f.asset_turnover),
+            "gross_margin": _f(f.gross_margin),
+            "net_margin": _f(f.net_margin),
+            "roe": _f(f.roe),
+            "roa": _f(f.roa),
+            "revenue_yoy": _f(f.revenue_yoy),
+            "profit_yoy": _f(f.profit_yoy),
+        },
+    }
 
 
 @router.get("/warnings")
@@ -104,15 +250,31 @@ async def get_enterprise_profile(
     db: AsyncSession = Depends(get_db),
     _user: dict | None = Depends(get_current_user_optional),
 ):
-    """个体画像：五维评估 + 同业基准定位（脱敏，无明文企业名）。"""
+    """个体画像：六维评估 + 同业基准定位 + 洞察研判 + 发票/税务画像（脱敏，无明文企业名）。"""
     try:
         profile = await assessment.calculate(db, enterprise_id)
         if not profile:
             raise HTTPException(status_code=404, detail="未找到该匿名样本。")
         benchmark = await assessment.peer_benchmark(db, enterprise_id)
+        metrics, features = await insight_engine.load_insight_inputs(db, enterprise_id)
+        insights = insight_engine.evaluate_insights(metrics, features) if metrics else []
+
+        invp = await db.get(EnterpriseInvoiceProfile, enterprise_id)
+        taxp = await db.get(EnterpriseTaxProfile, enterprise_id)
+        # 财务仅在确有完整三大报表时暴露（has_financial_statements=False 或缺失 → 弃权，不返回全零 stub）
+        cm = await db.get(CoreMetrics, enterprise_id)
+        fin = await db.get(EnterpriseFinancials, enterprise_id)
+        if not (cm and cm.has_financial_statements):
+            fin = None
+        anomaly_signals = await subscription_service.build_enterprise_signals(db, enterprise_id)
         return {
             "profile": profile,
             "peer_benchmark": benchmark,
+            "insights": insight_engine.insights_to_dict(insights),
+            "invoice_profile": _serialize_invoice_profile(invp),
+            "tax_profile": _serialize_tax_profile(taxp),
+            "financial": _serialize_financial(fin),
+            "anomaly_signals": anomaly_signals,
         }
     except HTTPException:
         raise

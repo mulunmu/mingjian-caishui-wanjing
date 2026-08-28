@@ -70,3 +70,75 @@ def test_token_with_bearer_prefix():
     payload = verify_token(f"Bearer {token}")
     assert payload is not None
     assert payload["sub"] == "b@t.com"
+
+
+def test_create_token_includes_plan():
+    token = create_access_token("p@t.com", "user", "subscriber")
+    payload = verify_token(token)
+    assert payload is not None
+    assert payload["plan"] == "subscriber"
+
+
+def test_create_token_default_plan_free():
+    token = create_access_token("p2@t.com", "user")
+    payload = verify_token(token)
+    assert payload["plan"] == "free"
+
+
+def test_register_with_plan_subscriber():
+    email = "subscriber-test@example.com"
+    pw = "secure123"
+    try:
+        register_user(email, pw, role="user", plan="subscriber")
+    except ValueError:
+        pass  # 可能已存在
+    user = authenticate_user(email, pw)
+    assert user is not None
+    assert user["plan"] == "subscriber"
+    assert user["role"] == "user"
+
+
+def test_require_plan_admin_bypass():
+    import asyncio
+
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    from app.api.deps import require_plan
+
+    token = create_access_token("admin@x.com", "admin", "free")
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    user = asyncio.run(require_plan("subscriber")(creds))
+    assert user is not None
+    assert user["role"] == "admin"
+
+
+def test_require_plan_subscriber_passes():
+    import asyncio
+
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    from app.api.deps import require_plan
+
+    token = create_access_token("sub@x.com", "user", "subscriber")
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    user = asyncio.run(require_plan("subscriber")(creds))
+    assert user is not None
+    assert user["plan"] == "subscriber"
+
+
+def test_require_plan_free_user_blocked():
+    import asyncio
+
+    from fastapi import HTTPException
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    from app.api.deps import require_plan
+
+    token = create_access_token("free@x.com", "user", "free")
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    raised = False
+    try:
+        asyncio.run(require_plan("subscriber")(creds))
+    except HTTPException as exc:
+        raised = exc.status_code == 403
+    assert raised

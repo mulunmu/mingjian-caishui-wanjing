@@ -47,25 +47,18 @@ def attribution_radar_chart(attribution: dict[str, Any], *, name: str = "全样�
 
 
 def enterprise_radar_chart(ent: dict[str, Any]) -> dict[str, Any]:
-    """单企业五维雷达（兼容旧 chat_router._radar_chart）。"""
+    """单企业多维雷达（兼容旧 chat_router._radar_chart，维度随 DIMENSION_WEIGHTS 扩展）。"""
     dims = ent.get("dimensions", {})
+    indicators: list[dict[str, Any]] = []
+    values: list[float] = []
+    for key in DIMENSION_WEIGHTS:
+        indicators.append({"name": DIMENSION_LABELS.get(key, key), "max": 100})
+        values.append(float(dims.get(key, 0) or 0))
     return {
         "type": "radar",
         "data": {
-            "indicators": [
-                {"name": "税务健康", "max": 100},
-                {"name": "经营真实性", "max": 100},
-                {"name": "行业地位", "max": 100},
-                {"name": "法律合规", "max": 100},
-                {"name": "财务健康", "max": 100},
-            ],
-            "values": [
-                dims.get("tax_health", 0),
-                dims.get("authenticity", 0),
-                dims.get("industry", 0),
-                dims.get("legal", 0),
-                dims.get("finance", 0),
-            ],
+            "indicators": indicators,
+            "values": values,
             "name": ent.get("enterprise_name", "") or ent.get("display_label", ""),
         },
     }

@@ -64,7 +64,7 @@ services:
   backend:
     build: ./backend
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://risk_user:${POSTGRES_PASSWORD:-risk_pass}@db:5432/risk_db
       REDIS_URL: redis://redis:6379/0
@@ -82,8 +82,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:-risk-assessment-dev-jwt-do-not-use-in-prod}
       AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
       ALLOW_SELF_REGISTER: ${ALLOW_SELF_REGISTER:-false}
+      DEMO_LOGIN_ENABLED: ${DEMO_LOGIN_ENABLED:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
-      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-admin@localhost}
+      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-admin@example.com}
       DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-change-me-now}
     depends_on:
       db:
@@ -98,7 +99,7 @@ services:
       # Dockerfile.prod 的 nginx 现监听 3000，与下方 ports 对齐，无需再改映射。
       dockerfile: ${FRONTEND_DOCKERFILE:-Dockerfile}
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       VITE_API_URL: http://backend:8000
     depends_on:

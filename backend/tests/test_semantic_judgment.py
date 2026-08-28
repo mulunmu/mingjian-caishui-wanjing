@@ -359,3 +359,33 @@ def test_pearson_pure():
     # 不足两个点 / 常量列 → 0
     assert _pearson([1], [1]) == 0.0
     assert _pearson([1, 1, 1], [1, 2, 3]) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_generic_simple_avg_customer_concentration_bar(monkeypatch):
+    from decimal import Decimal
+
+    from app.schemas.semantic_query import SemanticQuery
+    from app.services import judgment_service
+
+    async def fake_load(db, industry_l1=None, province=None):
+        return [
+            _row(industry_l1="制造", customer_concentration=Decimal("0.30")),
+            _row(industry_l1="制造", customer_concentration=Decimal("0.10")),
+            _row(industry_l1="服务", customer_concentration=Decimal("0.20")),
+        ]
+
+    monkeypatch.setattr(judgment_service, "_load_metrics", fake_load)
+
+    sq = SemanticQuery(
+        query_type="aggregation",
+        metrics=["customer_concentration"],
+        dimensions=["industry_l1"],
+    )
+    claims, meta = await judgment_service.build_aggregation_claims(None, sq)  # type: ignore[arg-type]
+
+    # 客户集中度属比率指标：0.30 → 30.0%
+    made = next(c for c in claims if c.value and c.value.metric == "customer_concentration")
+    assert made.value.number == pytest.approx(20.0)  # (30+10)/2
+    assert meta["charts"]["type"] == "bar"
+    assert len(meta["charts"]["data"]["labels"]) == 2

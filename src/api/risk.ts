@@ -145,7 +145,7 @@ export const riskApi = {
   getWarnings: (): Promise<WarningItem[] | { warnings: WarningItem[] }> =>
     client.get('/risk/warnings'),
 
-  /** 单企业画像（五维评分 + 同业基准） */
+  /** 单企业画像（六维评分 + 同业基准 + 发票/税务画像） */
   getEnterpriseProfile: (enterpriseId: string): Promise<EnterpriseProfileResponse> =>
     client.get(`/risk/enterprise/${enterpriseId}`),
 
