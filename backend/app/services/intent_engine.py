@@ -17,6 +17,7 @@ FUNCTIONS = (
     "trend",
     "report",
     "email_report",
+    "custom_report",
     "signal",
     "general",
 )
@@ -54,6 +55,8 @@ _INDUSTRY_KW: list[tuple[str, str]] = [
 
 _FUNC_PATTERNS: list[tuple[str, list[str]]] = [
     ("email_report", [r"发邮", r"邮件", r"email", r"发送报告", r"发到.*邮箱"]),
+    # 「定制报告/定制/自定义」优先于 report（report 的「报告」会抢走「定制报告」）
+    ("custom_report", [r"定制报告", r"定制", r"自定义报告", r"自定义", r"AI定制", r"帮我定制"]),
     ("report", [r"报告", r"出报告", r"生成报告", r"pdf", r"导出", r"评估报告", r"\breport\b"]),
     ("authenticity", [r"真伪", r"真实性", r"造假", r"虚开", r"benford", r"可信度", r"经营真实", r"authenticity", r"verification"]),
     ("fraud", [r"舞弊", r"欺诈", r"发票异常", r"红冲", r"集中度", r"异常检测", r"进销错配", r"\bfraud\b", r"anomaly", r"mismatch"]),
@@ -190,6 +193,15 @@ def industry_l1_options() -> list[str]:
     for _, ind in _INDUSTRY_KW:
         if ind not in seen:
             seen.append(ind)
+    return seen
+
+
+def province_options() -> list[str]:
+    """去重后的地区白名单（供 LLM 定制对话槽位约束）。"""
+    seen: list[str] = []
+    for _, prov in _PROVINCE_KW:
+        if prov not in seen:
+            seen.append(prov)
     return seen
 
 

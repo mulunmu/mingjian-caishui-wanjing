@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import useChatStore from '@/stores/chatStore';
 import CardGroup from '@/components/cards/CardGroup';
 import DimensionCard from '@/components/cards/DimensionCard';
@@ -63,6 +63,22 @@ export default function ResearchCenter() {
   const [inputValue, setInputValue] = useState('');
   const [assistantState, setAssistantState] = useState<'idle' | 'typing' | 'answering'>('idle');
 
+  // ?custom=1：来自报告中心/对话的「AI 定制报告」入口 → 自动发起定制对话
+  const [searchParams, setSearchParams] = useSearchParams();
+  const customParam = searchParams.get('custom');
+  const customSentRef = useRef(false);
+  useEffect(() => {
+    if (customParam === '1') {
+      if (!customSentRef.current && !isLoading) {
+        customSentRef.current = true;
+        sendMessage('我要定制一份风控报告');
+        setSearchParams({}, { replace: true });
+      }
+    } else {
+      customSentRef.current = false;
+    }
+  }, [customParam, isLoading, sendMessage, setSearchParams]);
+
   // 根据加载状态更新动画角色状态
   useEffect(() => {
     if (isLoading) {
@@ -105,7 +121,7 @@ export default function ResearchCenter() {
     [context.currentDimension, selectFunction]
   );
 
-  // 点击组合卡
+  // 点击组合卡：一键直达分析（组合已含维度+功能，直接发送，不再只填充输入框）
   const handleComboClick = useCallback(
     (combo: ComboItem) => {
       const dim = combo.dimension as DimensionType;
@@ -113,9 +129,10 @@ export default function ResearchCenter() {
       selectDimension(dim);
       selectFunction(func);
       const query = buildQueryText(dim, func);
-      setInputValue(query);
+      setInputValue('');
+      sendMessage(query);
     },
-    [selectDimension, selectFunction]
+    [selectDimension, selectFunction, sendMessage]
   );
 
   // 发送消息
@@ -144,7 +161,7 @@ export default function ResearchCenter() {
       <aside className="w-[300px] flex-shrink-0 border-l border-warm-200 bg-white overflow-y-auto flex flex-col">
         <div className="p-4 space-y-5 flex-1">
           <div>
-            <h2 className="text-base font-semibold text-warm-800 mb-1">风险评估助手</h2>
+            <h2 className="text-base font-semibold text-warm-800 mb-1">风险评估</h2>
             <p className="text-xs text-warm-400">选择维度和功能，开始分析</p>
           </div>
 
@@ -177,7 +194,7 @@ export default function ResearchCenter() {
           </CardGroup>
 
           {/* 组合卡 */}
-          <CardGroup title="AI 推荐组合">
+          <CardGroup title="推荐组合">
             <div className="flex flex-wrap gap-2">
               {comboItems.map((combo, i) => (
                 <ComboCard

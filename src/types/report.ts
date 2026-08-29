@@ -5,6 +5,13 @@ export interface ReportChapter {
   description: string;
   conclusion: string;
   evidence_chain: string[];
+  narration?: string;
+  // 企业报告合成章节的附加字段（可选）
+  points?: string[];
+  advantages?: string[];
+  advice?: string[];
+  risk_level?: string;
+  metrics?: Array<{ label: string; value: string; unit: string; rating?: string }>;
   chart?: {
     type: string;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -12,15 +19,26 @@ export interface ReportChapter {
   };
 }
 
+/** 封面 KPI 卡（含来源溯源） */
+export interface ReportKpi {
+  label: string;
+  value: string;
+  unit: string;
+  source?: string;
+  trace?: string;
+}
+
 /** 报告（前端展示用） */
 export interface Report {
   id: string;
   title: string;
   subtitle: string;
-  dimension: string;
-  function: string;
+  scenario?: string;
+  dimension?: string;
+  function?: string;
   generated_at: string;
   summary: string;
+  kpis: ReportKpi[];
   chapters: ReportChapter[];
 }
 
@@ -31,6 +49,7 @@ export interface ReportListItem {
   date: string;
   size: number;
   download_url: string;
+  enterprise_id?: string | null;
 }
 
 /** 后端报告列表响应 */
@@ -55,6 +74,8 @@ export interface ReportParams {
   scenario?: string;
   session_id?: string;
   query?: string;
+  industry_l1?: string;
+  province?: string;
 }
 
 /** 邮件发送参数（适配后端） */

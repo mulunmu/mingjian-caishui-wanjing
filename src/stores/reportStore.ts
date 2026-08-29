@@ -11,7 +11,7 @@ interface ReportStore {
 
   fetchReportList: () => Promise<void>;
   generateReport: (params: ReportParams) => Promise<string>;
-  generateSlice: (scenario: string) => Promise<string>;
+  generateSlice: (params: { scenario: string; industry_l1?: string; province?: string }) => Promise<string>;
   fetchReport: (id: string) => Promise<void>;
   downloadPdf: (id: string) => Promise<void>;
   sendEmail: (params: EmailReportParams) => Promise<boolean>;
@@ -51,10 +51,10 @@ const useReportStore = create<ReportStore>((set) => ({
     }
   },
 
-  generateSlice: async (scenario) => {
+  generateSlice: async (params) => {
     set({ isGenerating: true });
     try {
-      const res = await reportApi.slice({ scenario });
+      const res = await reportApi.slice(params);
       set({ isGenerating: false });
       return res.report_id;
     } catch {

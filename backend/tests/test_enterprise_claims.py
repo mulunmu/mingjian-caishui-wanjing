@@ -132,14 +132,26 @@ def test_build_enterprise_report_context(monkeypatch):
     assert ctx["scenario"] == "enterprise"
     assert "#abc12345" in ctx["title"]
     assert ctx["tier"] == "general"
-    titles = [ch["title"] for ch in ctx["chapters"]]
-    assert "个体画像" in titles
-    assert "同业基准定位" in titles
-    assert any("风险成因" in t for t in titles)
+    assert ctx["scenario_label"] == "企业财务分析报告"
+    # 企业基本信息
+    assert ctx["subject"]["short_id"] == "abc12345"
+    assert ctx["subject"]["industry_l1"] == "制造"
+    assert ctx["subject"]["province"] == "广东"
+    # 总体风险评估
+    assert ctx["overall"]["risk_level"] == "中等风险"
+    assert ctx["overall"]["overall_score"] == 61.5
+    assert ctx["overall"]["health"] == "中等"
+    assert ctx["overall"]["benchmark_groups"] is not None
+    # 分维度风险分析（业界顺序：资本结构→偿债→盈利→现金流→营运→成长）
+    dim_titles = [d["title"] for d in ctx["dimensions"]]
+    assert dim_titles == ["资本结构", "偿债能力", "盈利能力", "现金流", "营运能力", "成长能力"]
+    for d in ctx["dimensions"]:
+        assert d["risk_level"] in ("低", "中", "高")
+        assert all("rating" in m for m in d["metrics"])
+        assert {"level_review", "trend", "risks", "advice"} <= set(d["analysis"])
+    # 主要财务数据（三大报表）
+    assert {"income", "balance", "cashflow"} <= set(ctx["statements"])
     assert ctx["validation"]["ok"] is True
-    # 摘要 KPI 覆盖综合评分与风险等级
-    kpi_labels = [k["label"] for k in ctx["summary_kpis"]]
-    assert "综合评分" in kpi_labels and "风险等级" in kpi_labels
 
 
 def test_generate_enterprise_report_id_prefix():

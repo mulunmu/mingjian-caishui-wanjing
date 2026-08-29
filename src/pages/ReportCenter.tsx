@@ -1,31 +1,41 @@
 import { useState, useEffect, useCallback } from 'react';
-import { FileText, Download, Eye, FilePlus2, Search, RefreshCw, Loader2, X, AlertTriangle } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { FileText, Download, Eye, FilePlus2, Search, RefreshCw, Loader2, X, AlertTriangle, Sparkles } from 'lucide-react';
 import useReportStore from '@/stores/reportStore';
 import useAuthStore from '@/stores/authStore';
 import { needsUpgrade } from '@/utils/plan';
 import UpgradeModal from '@/components/ui/UpgradeModal';
-import GenerateReportModal from '@/components/report/GenerateReportModal';
+import ReportWizard, { type WizardPrefs } from '@/components/report/ReportWizard';
 import type { ReportScenarioDef } from '@/constants/reportScenarios';
 import type { ReportListItem } from '@/types/report';
-import client from '@/api/client';
+import { reportApi } from '@/api/report';
 
 export default function ReportCenter() {
   const { reportList, isLoadingList, listError, fetchReportList, downloadPdf, generateSlice } =
     useReportStore();
   const user = useAuthStore((s) => s.user);
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [viewingId, setViewingId] = useState<string | null>(null);
-  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
+  const [previewFailed, setPreviewFailed] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
   const [generatingScenario, setGeneratingScenario] = useState<string | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  const highlightId = searchParams.get('highlight');
+  const wizardParam = searchParams.get('wizard');
 
   useEffect(() => {
     void fetchReportList();
   }, [fetchReportList]);
+
+  // chat 引导跳转：?wizard=1 → 自动打开报告生成向导（完整定制流程入口）
+  useEffect(() => {
+    if (wizardParam === '1') setShowGenerate(true);
+  }, [wizardParam]);
 
   // 清理 blob URL
   useEffect(() => {
@@ -38,41 +48,37 @@ export default function ReportCenter() {
   const reports = reportList;
   const filteredReports = reports.filter((r) => r.title.includes(searchTerm));
 
-  /** 加载 HTML 预览 */
+  /** 加载预览：直接渲染已保存的 PDF 快照（与「下载」同一文件），不重算报告。
+   *  避免数据接入后重算导致预览与下载内容漂移（快照一致性）。 */
   const loadPreview = useCallback(async (report: ReportListItem) => {
     setPreviewLoading(true);
-    setPreviewHtml(null);
+    setPreviewFailed(false);
     if (previewBlobUrl) {
       URL.revokeObjectURL(previewBlobUrl);
       setPreviewBlobUrl(null);
     }
 
     try {
-      // 用 scenario 从 report_id 中提取（格式 slice_{scenario}_{date}_{time}[_{uuid8}]）
-      const scenarioMatch = report.report_id.match(/^slice_([a-zA-Z0-9_-]+)_\d{8}_\d{6}(?:_[a-f0-9]{8})?$/);
-      const scenario = scenarioMatch ? scenarioMatch[1] : 'general';
-
-      const res = await client.post('/report/preview', {
-        scenario,
-        query: '预览报告',
-      });
-
-      // res 已被 axios 拦截器解包，可能是 HTML 字符串
-      const html = typeof res === 'string' ? res : ((res.data as string) || String(res));
-      setPreviewHtml(html);
-
-      // 创建 blob URL 给 iframe
-      const blob = new Blob([html], { type: 'text/html; charset=utf-8' });
+      const blob = await reportApi.downloadPdf(report.report_id);
       const url = URL.createObjectURL(blob);
       setPreviewBlobUrl(url);
     } catch {
-      // preview 接口不可用时，用下载 URL 直接嵌入（部分浏览器支持 PDF iframe）
-      setPreviewHtml(null);
       setPreviewBlobUrl(null);
+      setPreviewFailed(true);
     } finally {
       setPreviewLoading(false);
     }
   }, [previewBlobUrl]);
+
+  // 个体页生成后跳转带 ?highlight=<reportId> → 自动选中并预览
+  useEffect(() => {
+    if (!highlightId || viewingId || isLoadingList) return;
+    const item = reportList.find((r) => r.report_id === highlightId);
+    if (item) {
+      setViewingId(item.report_id);
+      loadPreview(item);
+    }
+  }, [highlightId, viewingId, isLoadingList, reportList, loadPreview]);
 
   const handleView = (e: React.MouseEvent, report: ReportListItem) => {
     e.stopPropagation();
@@ -82,7 +88,7 @@ export default function ReportCenter() {
 
   const handleClosePreview = () => {
     setViewingId(null);
-    setPreviewHtml(null);
+    setPreviewFailed(false);
     if (previewBlobUrl) {
       URL.revokeObjectURL(previewBlobUrl);
       setPreviewBlobUrl(null);
@@ -98,16 +104,19 @@ export default function ReportCenter() {
     await downloadPdf(reportId);
   };
 
-  /** 选择报告模块生成切片报告；付费模块 / 非定制用户触发升级提示 */
-  const handleGenerate = async (scenario: ReportScenarioDef) => {
-    if (scenario.tier === 'premium' || needsUpgrade(user)) {
+  /** 向导完成 → 生成切片报告；付费模块 / 非定制用户触发升级提示 */
+  const handleWizardConfirm = async (scenario: ReportScenarioDef, prefs: WizardPrefs) => {
+    if (needsUpgrade(user)) {
       setShowUpgrade(true);
       return;
     }
     setGeneratingScenario(scenario.key);
     setGenerateError(null);
     try {
-      const reportId = await generateSlice(scenario.key);
+      const reportId = await generateSlice({
+        scenario: scenario.key,
+        industry_l1: prefs.industry_l1 || undefined,
+      });
       await fetchReportList();
       // 选中并预览新生成的报告
       const item = useReportStore.getState().reportList.find((r) => r.report_id === reportId);
@@ -149,6 +158,13 @@ export default function ReportCenter() {
           >
             <FilePlus2 className="w-3.5 h-3.5" />
             生成报告
+          </button>
+          <button
+            onClick={() => navigate('/?custom=1')}
+            className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-amber/30 text-amber text-xs hover:bg-amber-50 transition-colors"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            AI 定制报告
           </button>
           <button
             onClick={fetchReportList}
@@ -232,6 +248,16 @@ export default function ReportCenter() {
                         </div>
                       </div>
                       <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/report/${report.report_id}`);
+                        }}
+                        className="p-1 rounded hover:bg-warm-100 transition-colors flex-shrink-0"
+                        title="查看结构化详情"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-warm-400" />
+                      </button>
+                      <button
                         onClick={(e) => handleDownload(e, report.report_id)}
                         className="p-1 rounded hover:bg-warm-100 transition-colors flex-shrink-0"
                         title="下载"
@@ -243,9 +269,17 @@ export default function ReportCenter() {
                 );
               })
             ) : (
-              <div className="flex flex-col items-center py-16">
+              <div className="flex flex-col items-center py-16 px-6 text-center">
                 <FileText className="w-10 h-10 text-warm-300 mb-2" />
                 <p className="text-warm-400 text-sm">暂无报告</p>
+                {needsUpgrade(user) && (
+                  <button
+                    onClick={() => setShowUpgrade(true)}
+                    className="mt-3 h-8 px-3 rounded-lg border border-amber-300 text-xs text-amber-600 hover:bg-amber-50 transition-colors"
+                  >
+                    了解定制报告权限
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -299,16 +333,12 @@ export default function ReportCenter() {
                   src={previewBlobUrl}
                   className="w-full h-full border-0"
                   title="报告预览"
-                />
-              ) : previewHtml ? (
-                <div
-                  className="h-full overflow-auto p-6 bg-white"
-                  dangerouslySetInnerHTML={{ __html: previewHtml }}
+                  referrerPolicy="no-referrer"
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full">
                   <FileText className="w-12 h-12 text-warm-300 mb-3" />
-                  <p className="text-warm-400 text-sm">预览不可用</p>
+                  <p className="text-warm-400 text-sm">{previewFailed ? '预览加载失败' : '预览不可用'}</p>
                   <p className="text-warm-300 text-xs mt-1">请使用「新窗口打开」或下载查看</p>
                 </div>
               )}
@@ -317,11 +347,11 @@ export default function ReportCenter() {
         )}
       </div>
 
-      <GenerateReportModal
+      <ReportWizard
         open={showGenerate}
         onClose={() => setShowGenerate(false)}
-        onSelect={handleGenerate}
-        busyScenario={generatingScenario}
+        onConfirm={handleWizardConfirm}
+        busy={generatingScenario !== null}
         error={generateError}
       />
 

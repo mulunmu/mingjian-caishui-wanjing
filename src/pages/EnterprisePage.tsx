@@ -14,7 +14,7 @@ import { riskApi } from '@/api/risk';
 import { reportApi } from '@/api/report';
 import { subscriptionApi } from '@/api/subscription';
 import { translateSignal } from '@/api/overview';
-import { isSubscriber } from '@/utils/plan';
+import { isSubscriber, needsUpgrade } from '@/utils/plan';
 import type {
   AnomalySignal,
   EnterpriseProfileResponse,
@@ -26,6 +26,7 @@ import type {
 } from '@/types/risk';
 import Card from '@/components/ui/Card';
 import Badge from '@/components/ui/Badge';
+import UpgradeModal from '@/components/ui/UpgradeModal';
 import RadarChart from '@/components/charts/RadarChart';
 import BarChart from '@/components/charts/BarChart';
 import PieChart from '@/components/charts/PieChart';
@@ -521,6 +522,8 @@ export default function EnterprisePage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [subscribed, setSubscribed] = useState(false);
   const [subBusy, setSubBusy] = useState(false);
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  const [upgradeFeature, setUpgradeFeature] = useState('个体深度报告');
   const user = useAuthStore((s) => s.user);
   const canSubscribe = !user || isSubscriber(user);
 
@@ -568,6 +571,11 @@ export default function EnterprisePage() {
 
   const handleEnterpriseReport = async () => {
     if (!id) return;
+    if (needsUpgrade(user)) {
+      setUpgradeFeature('个体深度报告');
+      setShowUpgrade(true);
+      return;
+    }
     setReportBusy(true);
     setActionError(null);
     try {
@@ -738,8 +746,15 @@ export default function EnterprisePage() {
                 </button>
                 <button
                   type="button"
-                  disabled={subBusy || !canSubscribe}
-                  onClick={() => void handleToggleSubscribe()}
+                  disabled={subBusy}
+                  onClick={() => {
+                    if (!canSubscribe) {
+                      setUpgradeFeature('订阅异动推送');
+                      setShowUpgrade(true);
+                      return;
+                    }
+                    void handleToggleSubscribe();
+                  }}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
                     border transition-colors disabled:opacity-50 ${
                       subscribed
@@ -748,7 +763,13 @@ export default function EnterprisePage() {
                     }`}
                 >
                   <BellRing size={13} />
-                  {subBusy ? '处理中…' : subscribed ? '已订阅异动' : '订阅异动推送'}
+                  {subBusy
+                    ? '处理中…'
+                    : !canSubscribe
+                      ? '订阅异动（需升级）'
+                      : subscribed
+                        ? '已订阅异动'
+                        : '订阅异动推送'}
                 </button>
               </div>
             </div>
@@ -797,12 +818,15 @@ export default function EnterprisePage() {
         {taxProfile && <TaxProfileSection p={taxProfile} />}
         {financial && <FinancialProfileSection p={financial} />}
 
-        {/* ── 洞察研判（多指标联动） ── */}
+        {/* ── 风险洞察（多指标联动） ── */}
         {insights.length > 0 && (
           <Card>
             <div className="flex items-center gap-2 mb-4">
               <Shield size={16} className="text-amber-500" />
-              <h3 className="text-sm font-semibold text-warm-700">洞察研判</h3>
+              <h3 className="text-sm font-semibold text-warm-700">风险洞察</h3>
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-medium bg-warm-100 text-warm-600 border-warm-200">
+                风险识别 · 规则引擎
+              </span>
               <span className="text-xs text-warm-400">多指标联动 · 共 {insights.length} 条</span>
             </div>
             <div className="space-y-2">
@@ -912,6 +936,12 @@ export default function EnterprisePage() {
           </Card>
         )}
       </div>
+
+      <UpgradeModal
+        open={showUpgrade}
+        onClose={() => setShowUpgrade(false)}
+        feature={upgradeFeature}
+      />
     </div>
   );
 }

@@ -1,6 +1,8 @@
 import { motion } from 'framer-motion';
-import type { ChartConfig } from '@/types/chat';
+import { ArrowRight } from 'lucide-react';
+import type { ChartConfig, ChatAction } from '@/types/chat';
 import FollowUpButtons from './FollowUpButtons';
+import JudgmentSourceBadge from './JudgmentSourceBadge';
 import BarChart from '@/components/charts/BarChart';
 import LineChart from '@/components/charts/LineChart';
 import PieChart from '@/components/charts/PieChart';
@@ -12,7 +14,12 @@ interface ConclusionCardProps {
   conclusion: string;
   chart?: ChartConfig;
   followups: string[];
+  actions?: ChatAction[];
   onFollowUp: (q: string) => void;
+  onAction?: (target: string) => void;
+  replySource?: string;
+  analysisMode?: string;
+  parseSource?: string;
 }
 
 function ChartRenderer({ chart }: { chart: ChartConfig }) {
@@ -40,7 +47,12 @@ export default function ConclusionCard({
   conclusion,
   chart,
   followups,
+  actions,
   onFollowUp,
+  onAction,
+  replySource,
+  analysisMode = 'rule',
+  parseSource,
 }: ConclusionCardProps) {
   return (
     <motion.div
@@ -49,14 +61,17 @@ export default function ConclusionCard({
       transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
       className="bg-white rounded-lg border border-warm-200 shadow-warm-sm overflow-hidden"
     >
-      {/* 左侧琥珀金竖线 */}
       <div className="flex">
         <div className="w-[3px] bg-amber flex-shrink-0" />
         <div className="flex-1 p-4">
-          {/* 结论文字 */}
+          <JudgmentSourceBadge
+            analysisMode={analysisMode}
+            replySource={replySource}
+            parseSource={parseSource}
+            className="mb-2"
+          />
           <p className="text-warm-800 text-sm leading-relaxed">{conclusion}</p>
 
-          {/* 图表（延迟渲染） */}
           {chart && (
             <motion.div
               initial={{ opacity: 0, y: 8 }}
@@ -68,7 +83,27 @@ export default function ConclusionCard({
             </motion.div>
           )}
 
-          {/* 追问按钮 */}
+          {actions && actions.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-3">
+              {actions.map((a) => (
+                <motion.button
+                  key={`${a.label}-${a.target}`}
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.25 }}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => onAction?.(a.target)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-amber hover:bg-amber-dark
+                    rounded-full transition-colors duration-150 cursor-pointer select-none"
+                >
+                  {a.label}
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </motion.button>
+              ))}
+            </div>
+          )}
+
           {followups.length > 0 && (
             <FollowUpButtons questions={followups} onClick={onFollowUp} />
           )}

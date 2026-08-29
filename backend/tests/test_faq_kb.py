@@ -36,6 +36,19 @@ def test_build_faq_claims_has_no_numeric_value():
     assert claims[0].trace.table == "faq_kb"
 
 
+def test_match_faq_import_intent_has_action():
+    """「我想导入数据」这类祈使句要命中 data 条目并带引导动作（而非 fallback）。"""
+    entry = match_faq("我想导入数据")
+    assert entry is not None
+    assert entry["id"] == "data"
+    claims, meta = build_faq_claims("我想导入数据")
+    assert meta["faq_id"] == "data"
+    assert meta["actions"][0]["target"] == "/ingest"
+    # 报告条目带「打开报告中心」动作
+    _, report_meta = build_faq_claims("报告怎么生成")
+    assert report_meta["actions"][0]["target"] == "/report"
+
+
 def test_build_faq_fallback_no_value():
     claims, meta = build_faq_claims("zzz无关问题")
     assert claims[0].value is None

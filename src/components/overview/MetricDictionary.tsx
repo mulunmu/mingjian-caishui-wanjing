@@ -13,12 +13,12 @@ const demoMetrics: MetricDefinition[] = [
   {
     metric_key: 'score_overall',
     name: '综合评分',
-    description: '基于五维指标体系的加权综合评分，反映企业整体税务健康状况',
+    description: '基于六维指标体系的加权综合评分，反映企业整体税务健康状况',
     metric_type: 'score',
-    formula: '0.25×税务健康 + 0.20×经营真实性 + 0.20×财务稳健 + 0.20×信用评级 + 0.15×风险敞口',
+    formula: '税务健康×0.20 + 经营真实性×0.20 + 发票健康×0.15 + 行业地位×0.15 + 法律合规×0.15 + 财务健康×0.15',
     unit: '分',
     grain: '企业级',
-    source_fields: ['tax_health', 'authenticity', 'financial', 'credit', 'risk'],
+    source_fields: ['tax_health', 'authenticity', 'invoice', 'industry', 'legal', 'finance'],
     dimensions: ['行业', '地区', '时间'],
   },
   {
@@ -79,15 +79,29 @@ const demoMetrics: MetricDefinition[] = [
 ];
 
 const typeLabels: Record<string, { label: string; level: 'high' | 'medium' | 'low' | 'info' }> = {
+  // 演示/旧标签
   score: { label: '评分指标', level: 'info' },
   risk_signal: { label: '风险信号', level: 'high' },
   financial: { label: '财务指标', level: 'medium' },
   operational: { label: '经营指标', level: 'low' },
+  // 真实字典口径（后端 metric_type）
+  derived: { label: '衍生指标', level: 'info' },
+  computed: { label: '计算指标', level: 'info' },
+  ratio: { label: '比率指标', level: 'medium' },
+  simple: { label: '基础指标', level: 'low' },
+};
+
+const grainLabels: Record<string, string> = {
+  enterprise: '企业级',
+  industry: '行业级',
+  region: '地区级',
+  time: '时间级',
 };
 
 export default function MetricDictionary() {
   const [metrics, setMetrics] = useState<MetricDefinition[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDemo, setIsDemo] = useState(false);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -96,9 +110,19 @@ export default function MetricDictionary() {
       setIsLoading(true);
       try {
         const res = await metricsApi.getDictionary();
-        setMetrics(Array.isArray(res) && res.length > 0 ? res : demoMetrics);
+        // 后端返回对象 { metrics, source_fields, dimensions }，取 metrics 数组；
+        // 兼容旧扁平数组返回。取不到真实口径才回退演示数据。
+        const list = Array.isArray(res) ? res : (res?.metrics ?? []);
+        if (list.length > 0) {
+          setMetrics(list);
+          setIsDemo(false);
+        } else {
+          setMetrics(demoMetrics);
+          setIsDemo(true);
+        }
       } catch {
         setMetrics(demoMetrics);
+        setIsDemo(true);
       } finally {
         setIsLoading(false);
       }
@@ -141,6 +165,11 @@ export default function MetricDictionary() {
           <BookOpen className="w-4 h-4 text-amber" />
           <h3 className="text-sm font-semibold text-warm-700">指标字典</h3>
           <span className="text-xs text-warm-400">共 {metrics.length} 项指标</span>
+          {isDemo && (
+            <span className="text-[10px] text-amber bg-amber/10 px-1.5 py-0.5 rounded">
+              演示示例（字典服务未接入）
+            </span>
+          )}
         </div>
       </div>
 
@@ -237,7 +266,7 @@ export default function MetricDictionary() {
                         {metric.grain && (
                           <div>
                             <span className="text-[10px] text-warm-400">粒度</span>
-                            <span className="text-xs text-warm-700 ml-1">{metric.grain}</span>
+                            <span className="text-xs text-warm-700 ml-1">{grainLabels[metric.grain] ?? metric.grain}</span>
                           </div>
                         )}
                         {metric.source_fields && metric.source_fields.length > 0 && (

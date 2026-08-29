@@ -26,6 +26,6 @@ export interface RegisterResponse {
 /** 当前用户信息 */
 export interface UserInfo {
   email: string;
-  role?: string;
-  plan?: string;
+  role: string;
+  plan: string;
 }

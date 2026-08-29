@@ -106,6 +106,34 @@ def assess_financial_ratio(field: str, value: Any) -> str:
     return "达标"
 
 
+def FINANCIAL_THRESHOLD_TABLE() -> list[dict[str, str]]:
+    """披露四能力判定阈值（铁律：客观评级阈值必须可回溯、非黑盒）。
+
+    每条：{label, group, rule, threshold}。仅披露有明确评级方向的比率
+    （warn_dir 非 None），纯展示项（roa/asset_turnover 等）不进表。
+    """
+    rows: list[dict[str, str]] = []
+    for field, cfg in FINANCIAL_RATIOS.items():
+        warn_dir = cfg.get("warn_dir")
+        threshold = cfg.get("warn_threshold")
+        if warn_dir is None or threshold is None:
+            continue
+        if cfg.get("is_pct"):
+            thr = f"{threshold * 100:.0f}%"
+        else:
+            thr = f"{threshold:g}"
+        rule = f"{'高于' if warn_dir == 'gt' else '低于'} {thr} 判预警"
+        rows.append(
+            {
+                "label": cfg["label"],
+                "group": cfg["group"],
+                "rule": rule,
+                "threshold": thr,
+            }
+        )
+    return rows
+
+
 def format_financial_ratio(field: str, value: Any) -> str:
     """展示值：is_pct 比率 ×100，倍数保留 2 位；0=「无数据」。"""
     cfg = FINANCIAL_RATIOS.get(field)

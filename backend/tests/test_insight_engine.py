@@ -108,6 +108,17 @@ def test_tax_rules():
     assert "T-04" in _ids(ins)
 
 
+def test_zero_sentinel_abstains():
+    """缺失比率（0 哨兵）不得触发 T-04 / F-03 / F-01。"""
+    assert "T-04" not in _ids(evaluate_insights(_metrics(tax_on_time_rate=Decimal("0")), None))
+    assert "F-03" not in _ids(
+        evaluate_insights(_metrics(revenue_yoy=Decimal("0.20"), profit_margin=Decimal("0")), None)
+    )
+    assert "F-01" not in _ids(evaluate_insights(_metrics(debt_ratio=Decimal("0")), None))
+    # 0.75 介于旧扣分阈值 0.85 与评级阈值 0.7 之间，统一后应预警
+    assert "F-01" in _ids(evaluate_insights(_metrics(debt_ratio=Decimal("0.75")), None))
+
+
 def test_fraud_rules_use_signals():
     ins = evaluate_insights(_metrics(), _features(fraud_signals='["scbm_mismatch"]', scbm_mismatch_score=Decimal("80")))
     assert "I-01" in _ids(ins)

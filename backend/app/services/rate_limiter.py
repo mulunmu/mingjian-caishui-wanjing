@@ -2,9 +2,11 @@
 
 设置 REDIS_URL 后跨进程共享；未设置则进程内内存（单测/单实例演示）。
 客户端键优先：user_id / IP，避免单用户耗尽全员额度。
+中间件通过 set_request_client_key 写入 ContextVar，llm_reply 默认按请求键计数。
 """
 from __future__ import annotations
 
+import contextvars
 import logging
 import os
 import time
@@ -21,6 +23,18 @@ _llm_counters: dict[str, int] = {}
 _request_timestamps: dict[str, list[float]] = {}
 _redis = None
 _redis_checked = False
+_request_client_key: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "rate_limit_client_key", default=None
+)
+
+
+def set_request_client_key(client_key: str | None) -> None:
+    """由 RateLimitMiddleware 在每个请求设置；LLM 配额默认读此键。"""
+    _request_client_key.set(client_key)
+
+
+def current_client_key() -> str | None:
+    return _request_client_key.get()
 
 
 def _get_redis():
@@ -49,7 +63,7 @@ def _today_key() -> str:
 
 
 def _safe_key(client_key: str | None) -> str:
-    raw = (client_key or "anon").strip()[:128] or "anon"
+    raw = (client_key if client_key is not None else current_client_key() or "anon").strip()[:128] or "anon"
     return "".join(c if c.isalnum() or c in "._-:@" else "_" for c in raw)
 
 

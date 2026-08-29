@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 # 目标源字段词汇表（供字典导出 + 四层字段映射引擎共用）。
-# field 必须与 core_metrics 列名一致，category 对应五维 + 身份。
+# field 必须与 core_metrics 列名一致，category 对应六维 + 身份。
 SOURCE_FIELDS: list[dict] = [
     # 身份
     {"field": "industry_l1", "description": "行业大类", "unit": "", "category": "identity"},
@@ -42,7 +42,7 @@ SOURCE_FIELDS: list[dict] = [
     {"field": "invoice_revenue", "description": "发票口径营收", "unit": "元", "category": "authenticity"},
     {"field": "finance_revenue", "description": "财务口径营收", "unit": "元", "category": "authenticity"},
     {"field": "revenue_deviation", "description": "营收口径偏差（三口径离散度）", "unit": "", "category": "authenticity"},
-    {"field": "invoice_monthly_avg", "description": "月均开票额", "unit": "元", "category": "authenticity"},
+    {"field": "invoice_monthly_avg", "description": "月均开票张数", "unit": "张", "category": "authenticity"},
     {"field": "invoice_cnt", "description": "开票张数", "unit": "张", "category": "authenticity"},
     {"field": "red_invoice_cnt", "description": "红字发票张数", "unit": "张", "category": "authenticity"},
     {"field": "customer_concentration", "description": "客户 TOP1 金额占比", "unit": "%", "category": "invoice"},
@@ -88,7 +88,7 @@ CANONICAL_METRICS: list[dict] = [
         ],
         "dimensions": ["industry_l1", "province", "scale_label", "time"],
         "default_filters": {},
-        "edge_cases": "得分下限 -50（见 assessment._calc_tax_health）。",
+        "edge_cases": "得分下限 -50；tax_on_time_rate=0 为弃权哨兵，不计准时率贡献（与洞察 T-04 对齐，见 assessment._calc_tax_health）。",
     },
     {
         "metric_key": "authenticity_score",
@@ -148,6 +148,22 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "非上市口径：无 ROE/Z 值，用利润边际与现金流水平替代。",
+    },
+    {
+        "metric_key": "invoice_score",
+        "name": "发票健康得分",
+        "description": "进销/品目分散度分位与作废、单价异常扣分合成的发票健康度。",
+        "metric_type": "computed",
+        "formula": "分散度分位加权 - 作废/单价扣分（见 assessment._calc_invoice）",
+        "unit": "分",
+        "grain": "enterprise",
+        "source_fields": [
+            "customer_concentration", "supplier_concentration", "category_concentration",
+            "void_invoice_cnt", "unit_price_ratio", "invoice_cnt",
+        ],
+        "dimensions": ["industry_l1", "province", "time"],
+        "default_filters": {},
+        "edge_cases": "集中度 0=弃权；三字段全弃权返回中性分 50。",
     },
     {
         "metric_key": "revenue_yoy",
@@ -471,7 +487,7 @@ RUNTIME_METRIC_LABELS: dict[str, str] = {
     "dim_legal": "法律合规均分",
     "dim_finance": "财务健康均分",
     "avg_composite": "舞弊综合均分",
-    "signal_count": "信号次数",
+    "signal_count": "信号主体数",
     "low_credit_industry_count": "低信用主体数",
     "risk_factor": "风险成因扣分",
     "warning_signal_count": "预警信号项数",

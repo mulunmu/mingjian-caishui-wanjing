@@ -47,3 +47,31 @@ async def test_build_fraud_claims_precompute_miss_message():
     assert "预计算" in claims[0].claim
     assert "0/0" not in claims[0].claim
     assert meta.get("coverage") == "precompute_missing"
+
+
+@pytest.mark.asyncio
+async def test_build_fraud_claims_signal_uses_subject_unit():
+    """舞弊信号表述：signal_counts 是去重主体数，文案「命中 N 家主体」而非「出现 N 次」。"""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.services.judgment_service import build_fraud_claims
+
+    db = AsyncMock()
+    result = MagicMock()
+    result.all.return_value = [("e1", "样本1", "制造")]
+    db.execute = AsyncMock(return_value=result)
+
+    out = {
+        "industry_l1": "制造",
+        "sample_count": 1,
+        "flagged_count": 0,
+        "signal_counts": {"scbm_mismatch": 1},
+        "avg_composite": 60.0,
+    }
+    with patch("app.services.judgment_service.run_blocking", new_callable=AsyncMock) as rb:
+        rb.return_value = out
+        claims, meta = await build_fraud_claims(db, "制造")
+    sig = next(c for c in claims if c.value and c.value.metric == "signal_count")
+    assert "命中 1 家主体" in sig.claim
+    assert sig.value.unit == "家"
+    assert "出现" not in sig.claim

@@ -19,16 +19,65 @@ from app.services import (
     semantic_query,
     session_store,
 )
-from app.services.intent_engine import IntentResult
+from app.services.intent_engine import IntentResult, industry_l1_options
 from app.services.judgment_service import without_synthesis_claims
-from app.services.report_templates import PremiumReportLocked, resolve_scenario
+from app.services.report_templates import (
+    PremiumReportLocked,
+    has_scenario_keyword,
+    resolve_scenario,
+    scenario_path_prompts,
+)
 from app.services.sync_runner import run_blocking
 
 logger = logging.getLogger(__name__)
 
 
+def _owner_email(user: dict | None) -> str | None:
+    if not user:
+        return None
+    return ((user.get("sub") or user.get("email") or "").strip() or None)
+
+
+def _scoped_scenario_prompts() -> list[str]:
+    """范围化场景快捷：给出「{行业}的{场景}报告」组合，引导定制（非罗列空场景）。"""
+    inds = industry_l1_options()[:2]
+    if not inds:
+        return scenario_path_prompts()
+    return [
+        f"生成{ind}的{title}"
+        for ind in inds
+        for title in ("财务健康体检报告", "税务合规体检报告", "发票舞弊排查报告")
+    ]
+
+
+def _user_has_subscriber_access(user: dict | None) -> bool:
+    """与 require_plan('subscriber') 对齐：须登录且 admin 或 subscriber。"""
+    if not user:
+        return False
+    role = user.get("role") or "user"
+    plan = user.get("plan") or "free"
+    return role == "admin" or plan == "subscriber"
+
+
+def _subscription_denied_claim(user: dict | None) -> Claim | None:
+    if _user_has_subscriber_access(user):
+        return None
+    detail = (
+        "需要登录后使用定制功能。"
+        if not user
+        else "该功能为定制用户专享，请升级后使用。"
+    )
+    return Claim(
+        claim=detail,
+        value=ClaimValue(metric="subscription_required", number=None, unit=""),
+        trace=ClaimTrace(table="auth", field="plan", query_id="Q_subscription_gate"),
+        confidence="computed",
+        evidence_chain=["require_plan=subscriber"],
+    )
+
+
 async def _route_enterprise(
-    db: AsyncSession, query: str, enterprise_id: str
+    db: AsyncSession, query: str, enterprise_id: str, *, user: dict | None = None
 ) -> dict:
     """个体下钻：画像风控分析；「生成个体深度报告」时产出个体 PDF（脱敏：仅哈希 id）。"""
     out: dict = {
@@ -44,10 +93,18 @@ async def _route_enterprise(
     }
     intent_result = intent_engine.recognize(query)
     if intent_result.function in ("report", "email_report"):
+        denied = _subscription_denied_claim(user)
+        if denied:
+            out["claims"] = [denied]
+            out["followups"] = ["升级定制后生成个体报告", "继续查看个体画像"]
+            out["meta"] = {"enterprise_id": enterprise_id, "subscription_required": True}
+            return out
         try:
             from app.services.slice_report import generate_enterprise_report
 
-            report_id, _pdf_path, ctx = await generate_enterprise_report(db, enterprise_id)
+            report_id, _pdf_path, ctx = await generate_enterprise_report(
+                db, enterprise_id, owner=_owner_email(user)
+            )
             out["claims"] = [
                 Claim(
                     claim=f"已生成《{ctx.get('title')}》，报告编号 {report_id}。",
@@ -100,11 +157,184 @@ async def _route_enterprise(
     return out
 
 
+def _custom_report_response(
+    sid: str,
+    *,
+    reply: str,
+    reply_source: str,
+    followups: list[str],
+    meta: dict,
+    report_meta: dict | None,
+    custom_state: dict,
+    industry_l1: str | None,
+    province: str | None,
+) -> dict:
+    """把一轮定制对话封装成与 route_chat 一致的响应形状（前端零改动即可渲染）。"""
+    data = {
+        "function": "custom_report",
+        "dimension": "overall",
+        "query_type": None,
+        "semantic_query": None,
+        "industry_l1": industry_l1,
+        "province": province,
+        "enterprise_id": None,
+        "claims": [],
+        "followups": followups,
+        "conclusion_id": None,
+        "evidence_hidden": True,
+        "coverage": [],
+        "report_hint": None,
+        "actions": meta.get("actions", []),
+        "slice": {k: v for k, v in meta.items() if k not in ("actions", "charts")},
+        "custom_stage": custom_state.get("stage"),
+    }
+    if report_meta:
+        data["report"] = report_meta
+    return {
+        "reply": reply,
+        "reply_source": reply_source,
+        "analysis_mode": "rule",
+        "parse_source": "llm" if reply_source == "llm" else "rule",
+        "judgment_modes": {
+            "analysis": "rule",
+            "parse": "llm" if reply_source == "llm" else "rule",
+            "narration": "llm" if reply_source == "llm" else "rule",
+        },
+        "intent": "custom_report_overall",
+        "function": "custom_report",
+        "dimension": "overall",
+        "query_type": None,
+        "enterprise_id": None,
+        "enterprise_label": None,
+        "data": data,
+        "charts": None,
+        "session_id": sid,
+        "conclusion_id": None,
+    }
+
+
+async def _route_custom_report(
+    db: AsyncSession,
+    query: str,
+    sid: str,
+    *,
+    user: dict | None,
+    session_context: dict,
+) -> dict:
+    """AI 主导的定制报告对话（asking → propose → 确认生成）。
+
+    状态机推进见 app.services.custom_report；此处只做路由 + 响应封装 + 会话态持久化。
+    AI 只决定「章节子集 + 范围 + 标题 + 语气」，不产生任何数字（铁律）。
+    """
+    from app.schemas.custom_report import CustomReportSpec
+    from app.services import custom_report as cr
+
+    state = dict(session_context.get("custom_report") or {})
+    if not state:
+        state = cr.new_state()
+    state["active"] = True
+
+    reply = ""
+    followups: list[str] = []
+    meta: dict = {}
+    report_meta: dict | None = None
+    industry_l1: str | None = None
+    province: str | None = None
+    reply_source = "rule"
+
+    q = (query or "").strip()
+
+    if cr.is_exit(q):
+        state["active"] = False
+        reply = "已退出定制。你可以继续选固定报告，或随时再说「我要定制报告」。"
+        followups = ["我要定制报告", *scenario_path_prompts()[:3]]
+        meta["actions"] = [
+            {"label": "直接生成固定报告（6 套模板）", "target": "/report?wizard=1"},
+            {"label": "重新开始 AI 定制", "target": "/?custom=1"},
+        ]
+    elif (state.get("stage") or "asking") == "propose" and cr.is_confirm(q):
+        spec = state.get("spec")
+        spec_obj = CustomReportSpec.model_validate(spec) if spec else None
+        if spec_obj is None or not spec_obj.chapters:
+            state["stage"] = "asking"
+            reply = "方案章节还不完整，请再告诉我你关注哪些风险（财务/税务/发票舞弊/真实性/评分/对标/趋势/信号）。"
+            followups = list(cr.ASKING_FOLLOWUPS)
+        else:
+            try:
+                from app.services.slice_report import generate_custom_report
+
+                report_id, _pdf, ctx = await generate_custom_report(
+                    db,
+                    spec=spec_obj,
+                    session_id=sid,
+                    owner=_owner_email(user),
+                    industry_l1=spec_obj.industry_l1,
+                    province=spec_obj.province,
+                )
+                industry_l1 = spec_obj.industry_l1
+                province = spec_obj.province
+                report_meta = {
+                    "report_id": report_id,
+                    "download_url": f"/api/v1/report/{report_id}/download",
+                    "title": ctx.get("title"),
+                    "validation": ctx.get("validation"),
+                }
+                reply = f"已按你的方案生成《{ctx.get('title')}》，报告编号 {report_id}。可在报告中心查看、下载。"
+                followups = ["再定制一份", "换成固定报告"]
+                meta["actions"] = [
+                    {"label": "查看并下载报告", "target": f"/report?highlight={report_id}"},
+                    {"label": "再定制一份", "target": "/?custom=1"},
+                ]
+                meta["report_id"] = report_id
+                state["active"] = False
+            except Exception as exc:
+                logger.warning("custom report generation failed: %s", exc)
+                reply = f"定制报告生成失败：{exc}。请调整范围后重试，或改用固定报告。"
+                followups = ["重新开始定制", "打开报告生成向导"]
+                meta["actions"] = [{"label": "打开报告生成向导", "target": "/report?wizard=1"}]
+                meta["report_error"] = str(exc)
+    else:
+        # asking 阶段，或 propose 阶段的非确认输入（含「调整范围」「换个章节组合」）→ 推进一轮
+        result = await cr.next_turn(state, q)
+        reply = result["reply"]
+        followups = list(result["followups"])
+        reply_source = "llm" if result.get("llm") else "rule"
+        state["stage"] = result.get("stage") or state.get("stage") or "asking"
+        if result.get("spec") is not None:
+            state["spec"] = result["spec"].model_dump()
+        meta = dict(result.get("meta") or {})
+
+    await run_blocking(
+        session_store.store_session,
+        sid,
+        intent="custom_report_overall",
+        function="custom_report",
+        dimension="overall",
+        industry_l1=industry_l1,
+        province=province,
+        query=query,
+        custom_report=state,
+    )
+
+    return _custom_report_response(
+        sid,
+        reply=reply,
+        reply_source=reply_source,
+        followups=followups,
+        meta=meta,
+        report_meta=report_meta,
+        custom_state=state,
+        industry_l1=industry_l1,
+        province=province,
+    )
+
+
 async def route_chat(
     db: AsyncSession,
     query: str,
     session_id: str | None = None,
     enterprise_id: str | None = None,
+    user: dict | None = None,
 ) -> dict:
     sid = await run_blocking(session_store.ensure_session_id, session_id)
     session_context = (await run_blocking(session_store.get_session, sid)) or {}
@@ -116,7 +346,7 @@ async def route_chat(
     sq: SemanticQuery | None = None
 
     if enterprise_id:
-        branch = await _route_enterprise(db, query, enterprise_id)
+        branch = await _route_enterprise(db, query, enterprise_id, user=user)
         claims = branch["claims"]
         followups = branch["followups"]
         meta = branch["meta"]
@@ -133,6 +363,11 @@ async def route_chat(
         intent = intent_result.intent
         industry_l1 = intent_result.industry_l1
         province = intent_result.province
+
+        # 定制报告：显式「定制」意图，或会话处于定制对话中 → AI 定制状态机（先于 FAQ/报告分支）
+        custom_state = session_context.get("custom_report")
+        if (custom_state and custom_state.get("active")) or function == "custom_report":
+            return await _route_custom_report(db, query, sid, user=user, session_context=session_context)
 
         # FAQ/口径前置（规则层，先于「报告*」关键词）：产品说明/口径问句走 FAQ/方法论，
         # 避免「报告怎么生成」被 report 意图劫持成真报告生成。
@@ -203,10 +438,38 @@ async def route_chat(
                 followups = judgment_service.DEFAULT_FOLLOWUPS["general"]
                 meta = {"error": str(exc)}
 
-    # 报告意图（切片）：直接产出切片 PDF（保留覆盖度 claims）
+    # 报告意图（切片）：须订阅鉴权；直接产出切片 PDF（保留覆盖度 claims）
     if function in ("report", "email_report"):
-        coverage_claims = list(claims)
-        try:
+        denied = _subscription_denied_claim(user)
+        if denied:
+            claims = [denied]
+            followups = ["升级定制后生成报告", "改问行业趋势或风险摘要"]
+            meta = {**(meta if isinstance(meta, dict) else {}), "subscription_required": True}
+        elif function == "report" and not has_scenario_keyword(query):
+          # 通用「生成报告」且未指定场景：二选一入口（固定模板 vs AI 定制），不自动生成
+          coverage_claims = list(claims)
+          claims = coverage_claims + [
+              Claim(
+                  claim="你想用哪类服务？① 直接生成固定报告（财务/税务/发票舞弊/尽调/画像/总览 6 套模板）；② AI 定制报告（对话式，AI 判断风控场景并自由组合章节后自动生成）。",
+                  value=ClaimValue(metric="report_paths", number=None, unit=""),
+                  trace=ClaimTrace(
+                      table="report_templates",
+                      field="scenario",
+                      query_id="Q_report_paths",
+                  ),
+                  confidence="computed",
+                  evidence_chain=["scenario_selector=True", "custom_available=True"],
+              )
+          ]
+          followups = ["我要定制报告", *_scoped_scenario_prompts()]
+          meta["scenario_selector"] = True
+          meta["actions"] = [
+              {"label": "直接生成固定报告（6 套模板）", "target": "/report?wizard=1"},
+              {"label": "AI 定制报告（对话式自由组合）", "target": "/?custom=1"},
+          ]
+        else:
+          coverage_claims = list(claims)
+          try:
             from app.services.slice_report import generate_slice_report
 
             scenario_key = resolve_scenario(query=query)
@@ -215,6 +478,9 @@ async def route_chat(
                 scenario=scenario_key,
                 session_id=sid,
                 query=query,
+                owner=_owner_email(user),
+                industry_l1=industry_l1,
+                province=province,
             )
             report_claims = [
                 Claim(
@@ -234,8 +500,25 @@ async def route_chat(
                 )
             ]
             if function == "email_report":
-                recipient = intent_result.recipient
-                if recipient and email_service.is_configured():
+                recipient = intent_result.recipient if intent_result else None
+                user_email = (
+                    ((user or {}).get("email") or (user or {}).get("sub") or "")
+                ).strip().lower()
+                if recipient and recipient.strip().lower() != user_email:
+                    report_claims.append(
+                        Claim(
+                            claim="邮件仅可发送至当前登录账号邮箱，请使用报告中心的邮件功能。",
+                            value=ClaimValue(metric="email_denied", number=None, unit=""),
+                            trace=ClaimTrace(
+                                table="auth",
+                                field="email",
+                                query_id="Q_email_report_denied",
+                            ),
+                            confidence="computed",
+                            evidence_chain=["recipient_must_match_login"],
+                        )
+                    )
+                elif recipient and email_service.is_configured():
                     try:
                         await run_blocking(
                             email_service.send_slice_report,
@@ -310,7 +593,7 @@ async def route_chat(
             }
             followups = ["下载后核对附录数据说明", "切换欺诈场景再出一份", "继续追问行业趋势"]
             meta.update(report_meta)
-        except PremiumReportLocked:
+          except PremiumReportLocked:
             claims = coverage_claims + [
                 Claim(
                     claim="定制报告为付费功能，开发期已隔离，当前仅提供通用模板。可说「生成行业趋势风控报告」获取通用版。",
@@ -325,7 +608,7 @@ async def route_chat(
             ]
             meta["report_locked"] = True
             followups = ["生成行业趋势风控报告", "查看报告覆盖度", "分析行业趋势"]
-        except Exception as exc:
+          except Exception as exc:
             logger.warning("slice report failed: %s", exc)
             meta["report_error"] = str(exc)
 
@@ -397,6 +680,7 @@ async def route_chat(
         "evidence_hidden": True,
         "coverage": sorted(await run_blocking(conclusion_store.covered_functions, sid)),
         "report_hint": report_hint,
+        "actions": (meta or {}).get("actions", []),
         "slice": {k: v for k, v in meta.items() if k != "charts"},
     }
     if report_meta:
@@ -413,6 +697,14 @@ async def route_chat(
     return {
         "reply": reply,
         "reply_source": reply_source,
+        # 双轨来源：数字/研判始终规则引擎；表述可为 LLM 润色；意图解析可为 LLM
+        "analysis_mode": "rule",
+        "parse_source": (sq.source if sq else "rule"),
+        "judgment_modes": {
+            "analysis": "rule",
+            "parse": (sq.source if sq else "rule"),
+            "narration": "llm" if reply_source == "llm" else "rule",
+        },
         "intent": intent,
         "function": function,
         "dimension": dimension,

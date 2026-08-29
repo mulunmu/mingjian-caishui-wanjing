@@ -28,6 +28,25 @@ def _f(v: Decimal | int | float | None) -> float:
         return 0.0
 
 
+def _ratio_or_none(v: Decimal | int | float | None) -> float | None:
+    """比率 0=弃权 → JSON null，禁止前端展示成「0%」。"""
+    try:
+        x = float(v) if v is not None else 0.0
+    except (TypeError, ValueError):
+        return None
+    return None if x == 0.0 else x
+
+
+def _amt_or_none(v: Decimal | int | float | None) -> float | None:
+    """金额字段：仅 None 弃权；真实 0 元保留为 0.0。"""
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _loads_json(raw: str | None) -> list:
     if not raw:
         return []
@@ -74,9 +93,9 @@ def _serialize_tax_profile(p: EnterpriseTaxProfile | None) -> dict | None:
     return {
         "vat_sales_amount": _f(p.vat_sales_amount),
         "vat_payable": _f(p.vat_payable),
-        "vat_burden": _f(p.vat_burden),
+        "vat_burden": _ratio_or_none(p.vat_burden),
         "income_tax_payable": _f(p.income_tax_payable),
-        "income_tax_burden": _f(p.income_tax_burden),
+        "income_tax_burden": _ratio_or_none(p.income_tax_burden),
         "total_tax_paid": _f(p.total_tax_paid),
         "tax_late_penalty_amount": _f(p.tax_late_penalty_amount),
         "tax_late_penalty_cnt": p.tax_late_penalty_cnt,
@@ -91,13 +110,13 @@ def _serialize_tax_profile(p: EnterpriseTaxProfile | None) -> dict | None:
         "tax_loan_balance": _f(p.tax_loan_balance),
         "tax_loan_success_cnt": p.tax_loan_success_cnt,
         "tax_loan_apply_cnt": p.tax_loan_apply_cnt,
-        "tax_loan_success_rate": _f(p.tax_loan_success_rate),
+        "tax_loan_success_rate": _ratio_or_none(p.tax_loan_success_rate),
         "tax_preference_amount": _f(p.tax_preference_amount),
         "rd_expense": _f(p.rd_expense),
         "is_high_tech": bool(p.is_high_tech),
         "payroll_amount": _f(p.payroll_amount),
         "investor_cnt": p.investor_cnt,
-        "top_investor_share": _f(p.top_investor_share),
+        "top_investor_share": _ratio_or_none(p.top_investor_share),
         "change_cnt": p.change_cnt,
     }
 
@@ -115,48 +134,48 @@ def _serialize_financial(f: EnterpriseFinancials | None) -> dict | None:
             roe=f.roe,
         ),
         "balance_sheet": {
-            "total_assets": _f(f.total_assets),
-            "total_liab": _f(f.total_liab),
-            "current_assets": _f(f.current_assets),
-            "current_liab": _f(f.current_liab),
-            "cash_equiv": _f(f.cash_equiv),
-            "inventory": _f(f.inventory),
-            "accounts_receivable": _f(f.accounts_receivable),
-            "fixed_assets": _f(f.fixed_assets),
-            "short_loan": _f(f.short_loan),
-            "owner_equity": _f(f.owner_equity),
-            "retained_earnings": _f(f.retained_earnings),
+            "total_assets": _amt_or_none(f.total_assets),
+            "total_liab": _amt_or_none(f.total_liab),
+            "current_assets": _amt_or_none(f.current_assets),
+            "current_liab": _amt_or_none(f.current_liab),
+            "cash_equiv": _amt_or_none(f.cash_equiv),
+            "inventory": _amt_or_none(f.inventory),
+            "accounts_receivable": _amt_or_none(f.accounts_receivable),
+            "fixed_assets": _amt_or_none(f.fixed_assets),
+            "short_loan": _amt_or_none(f.short_loan),
+            "owner_equity": _amt_or_none(f.owner_equity),
+            "retained_earnings": _amt_or_none(f.retained_earnings),
         },
         "income_statement": {
-            "revenue": _f(f.revenue),
-            "cost": _f(f.cost),
-            "tax_surcharge": _f(f.tax_surcharge),
-            "sell_expense": _f(f.sell_expense),
-            "admin_expense": _f(f.admin_expense),
-            "finance_expense": _f(f.finance_expense),
-            "operating_profit": _f(f.operating_profit),
-            "total_profit": _f(f.total_profit),
-            "income_tax": _f(f.income_tax),
-            "net_profit": _f(f.net_profit),
+            "revenue": _amt_or_none(f.revenue),
+            "cost": _amt_or_none(f.cost),
+            "tax_surcharge": _amt_or_none(f.tax_surcharge),
+            "sell_expense": _amt_or_none(f.sell_expense),
+            "admin_expense": _amt_or_none(f.admin_expense),
+            "finance_expense": _amt_or_none(f.finance_expense),
+            "operating_profit": _amt_or_none(f.operating_profit),
+            "total_profit": _amt_or_none(f.total_profit),
+            "income_tax": _amt_or_none(f.income_tax),
+            "net_profit": _amt_or_none(f.net_profit),
         },
         "cash_flow": {
-            "operating_cf": _f(f.operating_cf),
-            "investing_cf": _f(f.investing_cf),
-            "financing_cf": _f(f.financing_cf),
+            "operating_cf": _amt_or_none(f.operating_cf),
+            "investing_cf": _amt_or_none(f.investing_cf),
+            "financing_cf": _amt_or_none(f.financing_cf),
         },
         "ratios": {
-            "current_ratio": _f(f.current_ratio),
-            "quick_ratio": _f(f.quick_ratio),
-            "debt_ratio": _f(f.debt_ratio),
-            "receivables_turnover": _f(f.receivables_turnover),
-            "inventory_turnover": _f(f.inventory_turnover),
-            "asset_turnover": _f(f.asset_turnover),
-            "gross_margin": _f(f.gross_margin),
-            "net_margin": _f(f.net_margin),
-            "roe": _f(f.roe),
-            "roa": _f(f.roa),
-            "revenue_yoy": _f(f.revenue_yoy),
-            "profit_yoy": _f(f.profit_yoy),
+            "current_ratio": _ratio_or_none(f.current_ratio),
+            "quick_ratio": _ratio_or_none(f.quick_ratio),
+            "debt_ratio": _ratio_or_none(f.debt_ratio),
+            "receivables_turnover": _ratio_or_none(f.receivables_turnover),
+            "inventory_turnover": _ratio_or_none(f.inventory_turnover),
+            "asset_turnover": _ratio_or_none(f.asset_turnover),
+            "gross_margin": _ratio_or_none(f.gross_margin),
+            "net_margin": _ratio_or_none(f.net_margin),
+            "roe": _ratio_or_none(f.roe),
+            "roa": _ratio_or_none(f.roa),
+            "revenue_yoy": _ratio_or_none(f.revenue_yoy),
+            "profit_yoy": _ratio_or_none(f.profit_yoy),
         },
     }
 
@@ -194,6 +213,24 @@ async def dashboard_summary(
             status_code=503,
             detail="风控数据暂不可用，请稍后重试。演示数据不会在服务端伪造返回。",
         ) from exc
+
+
+@router.get("/industries")
+async def list_industries(
+    db: AsyncSession = Depends(get_db),
+    _user: dict | None = Depends(get_current_user_optional),
+):
+    """行业大类列表（含样本计数），供报告向导范围选择。"""
+    try:
+        rows = (await db.execute(select(CoreMetrics.industry_l1))).scalars().all()
+    except Exception as exc:
+        logger.warning("industries unavailable: %s", exc)
+        rows = []
+    counts: dict[str, int] = {}
+    for r in rows:
+        if r:
+            counts[r] = counts.get(r, 0) + 1
+    return {"items": [{"industry_l1": k, "n": v} for k, v in sorted(counts.items())]}
 
 
 @router.get("/fraud")

@@ -17,6 +17,7 @@ import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import Divider from '@/components/ui/Divider';
 import Skeleton from '@/components/ui/Skeleton';
+import useOverviewStore from '@/stores/overviewStore';
 
 /* ── 类型 ── */
 interface MappingItem {
@@ -73,6 +74,8 @@ export default function DataIngestPage() {
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [ingestResult, setIngestResult] = useState<Record<string, unknown> | null>(null);
+  const [mode, setMode] = useState<'temporary' | 'permanent'>('temporary');
+  const [identityField, setIdentityField] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /* ── 解析 CSV 表头 ── */
@@ -155,7 +158,8 @@ export default function DataIngestPage() {
       if (data.session_id) setSessionId(data.session_id as string);
       setCurrentStep(1);
     } catch {
-      // 失败时用列名生成初始映射供用户手动选择
+      // 自动映射不可用 → 降级为手动映射，但明确告知，不静默放行
+      setError('自动字段映射暂不可用，已切换为手动配置，请逐列选择目标字段。');
       setMappings(
         columns.map((col) => ({
           source_column: col,
@@ -185,13 +189,13 @@ export default function DataIngestPage() {
         source_column: m.source_column,
         target_field: m.target_field,
       }));
-      const res = await ingestApi.commit(commitMappings, 'temporary', sessionId);
+      const res = await ingestApi.commit(commitMappings, mode, sessionId);
       const data = res as Record<string, unknown>;
       if (data.session_id) setSessionId(data.session_id as string);
       setCurrentStep(2);
     } catch {
-      // 即使 commit 失败也允许继续到确认步骤
-      setCurrentStep(2);
+      // commit 失败不再静默放行：明确报错，留在本步供重试
+      setError('映射提交失败，请检查字段选择后重试。');
     } finally {
       setIsLoading(false);
     }
@@ -203,6 +207,13 @@ export default function DataIngestPage() {
     setError(null);
     setSuccessMsg(null);
     try {
+      // 身份字段（唯一键）必填：后端据此派生 MD5 enterprise_id，明文不落库
+      if (!identityField) {
+        setError('请先选择身份字段（税号/企业名/统一编号），用于生成匿名样本编号');
+        setIsLoading(false);
+        return;
+      }
+
       // 从原始输入解析行数据
       const lines = rawInput.split('\n').filter((l) => l.trim());
       if (lines.length < 2) {
@@ -228,9 +239,10 @@ export default function DataIngestPage() {
 
       const res = await ingestApi.ingestRows({
         session_id: sessionId,
+        identity_field: identityField,
         mappings: commitMappings,
         rows,
-        mode: 'temporary',
+        mode,
       });
 
       const ingested =
@@ -238,9 +250,16 @@ export default function DataIngestPage() {
           ? res.ingested
           : typeof res.rows_processed === 'number'
             ? res.rows_processed
-            : rows.length;
+            : null;
+      if (ingested == null) {
+        setError('导入结果未返回成功行数，请核对服务端响应后再确认。');
+        setIngestResult(res as Record<string, unknown>);
+        return;
+      }
       setIngestResult(res as Record<string, unknown>);
       setSuccessMsg(`成功导入 ${ingested} 行数据`);
+      // 数据接入状态同步：永久导入会写入 core_metrics，刷新总览使 Header/Footer/看板样本数一致
+      void useOverviewStore.getState().fetchOverview();
     } catch (e) {
       setSuccessMsg(null);
       setIngestResult(null);
@@ -260,6 +279,8 @@ export default function DataIngestPage() {
     setError(null);
     setSuccessMsg(null);
     setIngestResult(null);
+    setMode('temporary');
+    setIdentityField(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -269,7 +290,9 @@ export default function DataIngestPage() {
       <div className="bg-white border-b border-warm-200 px-6 py-4 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-warm-800">数据接入</h1>
-          <p className="text-sm text-warm-500 mt-1">上传企业数据文件，自动映射字段并导入系统</p>
+          <p className="text-sm text-warm-500 mt-1">
+            上传 CSV/Excel 做字段映射与导入演示；完整财税票 ETL 与引擎重算需走后端管道，本页不替代全量入库。
+          </p>
         </div>
         <button
           onClick={handleReset}
@@ -523,6 +546,65 @@ export default function DataIngestPage() {
                   )}
                 </Card>
 
+                {/* 导入配置：身份字段 + 模式 */}
+                <Card index={1} className="p-6">
+                  <h3 className="text-sm font-semibold text-warm-700 mb-4">导入配置</h3>
+
+                  <div className="mb-4">
+                    <label className="block text-xs text-warm-500 mb-1.5">
+                      身份字段（唯一键）
+                    </label>
+                    <select
+                      value={identityField || ''}
+                      onChange={(e) => setIdentityField(e.target.value || null)}
+                      className="w-full h-9 px-2 rounded-md border border-warm-200 bg-white text-sm text-warm-700 focus:outline-none focus:border-amber"
+                    >
+                      <option value="">-- 请选择唯一标识列 --</option>
+                      {columns.map((col) => (
+                        <option key={col} value={col}>
+                          {col}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-warm-400 mt-1">
+                      用于派生匿名样本编号（MD5），明文身份不落库
+                    </p>
+                  </div>
+
+                  <div>
+                    <span className="block text-xs text-warm-500 mb-1.5">导入模式</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setMode('temporary')}
+                        className={`flex-1 h-9 rounded-md border text-sm transition-colors ${
+                          mode === 'temporary'
+                            ? 'border-amber bg-amber/5 text-amber'
+                            : 'border-warm-200 text-warm-600 hover:bg-warm-100'
+                        }`}
+                      >
+                        会话内预览
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMode('permanent')}
+                        className={`flex-1 h-9 rounded-md border text-sm transition-colors ${
+                          mode === 'permanent'
+                            ? 'border-sage bg-sage/5 text-sage'
+                            : 'border-warm-200 text-warm-600 hover:bg-warm-100'
+                        }`}
+                      >
+                        永久写入
+                      </button>
+                    </div>
+                    <p className="text-xs text-warm-400 mt-1">
+                      {mode === 'permanent'
+                        ? '写入正式库，导入后全局样本数与报告随之更新'
+                        : '仅本次会话内可用，不改变正式库数据'}
+                    </p>
+                  </div>
+                </Card>
+
                 {/* 操作按钮 */}
                 <div className="flex items-center justify-between">
                   <Button
@@ -590,6 +672,19 @@ export default function DataIngestPage() {
                       <span className="text-xs text-warm-400">已映射字段</span>
                       <p className="text-lg font-bold text-warm-800">
                         {mappings.filter((m) => m.target_field).length}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 mt-4">
+                    <div>
+                      <span className="text-xs text-warm-400">身份字段</span>
+                      <p className="text-sm font-medium text-warm-800">{identityField || '未选择'}</p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-warm-400">导入模式</span>
+                      <p className="text-sm font-medium text-warm-800">
+                        {mode === 'permanent' ? '永久写入' : '会话内预览'}
                       </p>
                     </div>
                   </div>

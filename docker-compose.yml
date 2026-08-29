@@ -78,14 +78,15 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
       LLM_FALLBACK_MODEL: ${LLM_FALLBACK_MODEL:-deepseek-v4-flash}
       LLM_DAILY_LIMIT: ${LLM_DAILY_LIMIT:-1000}
-      # 本地 .env 可设 AUTH_REQUIRED=false；未设置时默认 true（生产 fail-closed）
-      JWT_SECRET: ${JWT_SECRET:-risk-assessment-dev-jwt-do-not-use-in-prod}
+      # JWT_SECRET 无代码兜底：必须由 .env 提供（≥32 随机）；AUTH 默认 true（fail-closed）
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
       AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
       ALLOW_SELF_REGISTER: ${ALLOW_SELF_REGISTER:-false}
       DEMO_LOGIN_ENABLED: ${DEMO_LOGIN_ENABLED:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-admin@example.com}
       DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-change-me-now}
+      PREMIUM_REPORT_ENABLED: ${PREMIUM_REPORT_ENABLED:-false}
     depends_on:
       db:
         condition: service_healthy

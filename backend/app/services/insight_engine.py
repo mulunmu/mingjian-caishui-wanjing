@@ -43,6 +43,11 @@ def _f(v: Any) -> float:
         return 0.0
 
 
+def _present(v: Any) -> bool:
+    """比率/占比字段：0 为弃权哨兵（与 financial_benchmarks 一致），不得当真实 0 参与判定。"""
+    return _f(v) != 0.0
+
+
 @dataclass
 class Evidence:
     """单条证据：锚定表字段的可溯源数字。value 存原始量纲（比率 0-1、金额为元）。"""
@@ -116,16 +121,22 @@ def _score(label: str, value: Any, field: str) -> Evidence:
 
 
 def _r_f01_debt(m: CoreMetrics, feats: EnterpriseEngineFeatures | None) -> Insight | None:
-    if _f(m.debt_ratio) <= 0.7:
+    from app.services.financial_benchmarks import FINANCIAL_RATIOS
+
+    if not _present(m.debt_ratio):
+        return None
+    thr = float(FINANCIAL_RATIOS["debt_ratio"]["warn_threshold"])
+    if _f(m.debt_ratio) <= thr:
         return None
     return Insight(
         "F-01", "财务", "偿债承压", "预警",
         [_pct("资产负债率", m.debt_ratio, "debt_ratio")],
-        "资产负债率高于 70%，偿债压力偏大，建议授信时关注其负债结构与再融资能力。",
+        f"资产负债率高于 {thr * 100:.0f}%，偿债压力偏大，建议授信时关注其负债结构与再融资能力。",
     )
 
 
 def _r_f02_cashflow(m: CoreMetrics, feats: EnterpriseEngineFeatures | None) -> Insight | None:
+    # 现金流净额允许真实 0；仅 None 不可达（列 default=0）。负值才预警。
     if _f(m.cash_flow_net) >= 0:
         return None
     return Insight(
@@ -136,6 +147,8 @@ def _r_f02_cashflow(m: CoreMetrics, feats: EnterpriseEngineFeatures | None) -> I
 
 
 def _r_f03_revenue_not_profit(m: CoreMetrics, feats: EnterpriseEngineFeatures | None) -> Insight | None:
+    if not (_present(m.revenue_yoy) and _present(m.profit_margin)):
+        return None
     if not (_f(m.revenue_yoy) > 0.1 and _f(m.profit_margin) < 0.05):
         return None
     return Insight(
@@ -146,6 +159,8 @@ def _r_f03_revenue_not_profit(m: CoreMetrics, feats: EnterpriseEngineFeatures | 
 
 
 def _r_f04_revenue_slump(m: CoreMetrics, feats: EnterpriseEngineFeatures | None) -> Insight | None:
+    if not _present(m.revenue_yoy):
+        return None
     if _f(m.revenue_yoy) >= -0.2:
         return None
     return Insight(
@@ -272,6 +287,8 @@ def _r_t03_credit(m: CoreMetrics, feats: EnterpriseEngineFeatures | None) -> Ins
 
 
 def _r_t04_on_time(m: CoreMetrics, feats: EnterpriseEngineFeatures | None) -> Insight | None:
+    if not _present(m.tax_on_time_rate):
+        return None
     if _f(m.tax_on_time_rate) >= 0.8:
         return None
     return Insight(
@@ -471,12 +488,15 @@ def _r_i11_unit_price_dispersion(m: CoreMetrics, feats: EnterpriseEngineFeatures
 
 
 def _r_a01_deviation(m: CoreMetrics, feats: EnterpriseEngineFeatures | None) -> Insight | None:
-    if _f(m.revenue_deviation) <= 0.25:
+    if not _present(m.revenue_deviation):
+        return None
+    # 与 assessment._warning_signals 统一阈值 0.3
+    if _f(m.revenue_deviation) <= 0.3:
         return None
     return Insight(
         "A-01", "真实性", "多源营收口径背离", "预警",
         [_pct("营收偏差", m.revenue_deviation, "revenue_deviation")],
-        "多源营收口径背离，数据真实性存疑，建议交叉核对申报口径。",
+        "多源营收口径背离超过 30%，数据真实性存疑，建议交叉核对申报口径。",
     )
 
 

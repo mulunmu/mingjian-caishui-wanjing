@@ -1,7 +1,8 @@
-import { Routes, Route, useLocation, Navigate } from 'react-router-dom';
+import { Routes, Route, useLocation, Navigate, Link } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect } from 'react';
 import Header from './components/layout/Header';
+import Footer from './components/layout/Footer';
 import ResearchCenter from './pages/ResearchCenter';
 import ReportPage from './pages/ReportPage';
 import OverviewPage from './pages/OverviewPage';
@@ -13,6 +14,7 @@ import AuthenticityPage from './pages/AuthenticityPage';
 import EnterprisePage from './pages/EnterprisePage';
 import DataIngestPage from './pages/DataIngestPage';
 import useAuthStore from './stores/authStore';
+import useOverviewStore from './stores/overviewStore';
 
 // 受保护的路由包装器
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -25,14 +27,37 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// 404 兜底：未匹配路由给出明确反馈，不白屏
+function NotFound() {
+  return (
+    <div className="h-full flex flex-col items-center justify-center p-6 text-center">
+      <p className="text-4xl font-bold text-warm-300">404</p>
+      <p className="text-warm-500 mt-2 text-sm">页面不存在或已移动</p>
+      <Link to="/overview" className="mt-4 text-amber hover:underline text-sm">
+        返回风险态势
+      </Link>
+    </div>
+  );
+}
+
 export default function App() {
   const location = useLocation();
   const { isLoggedIn, checkAuth } = useAuthStore();
+  const kpi = useOverviewStore((s) => s.kpi);
+  const fetchOverview = useOverviewStore((s) => s.fetchOverview);
   const isAuthPage = location.pathname === '/login' || location.pathname === '/register';
 
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
+
+  // 登录后全局拉取一次总览，供 Header/Footer 显示「数据样本 N 家」。
+  // 后续由 DataIngestPage 在导入成功后触发 fetchOverview 同步（见 #55）。
+  useEffect(() => {
+    if (isLoggedIn && !kpi) {
+      void fetchOverview();
+    }
+  }, [isLoggedIn, kpi, fetchOverview]);
 
   return (
     <div className="flex flex-col h-full bg-warm-50">
@@ -114,10 +139,19 @@ export default function App() {
                   </ProtectedRoute>
                 }
               />
+              <Route
+                path="*"
+                element={
+                  <ProtectedRoute>
+                    <NotFound />
+                  </ProtectedRoute>
+                }
+              />
             </Routes>
           </motion.div>
         </AnimatePresence>
       </main>
+      {!isAuthPage && isLoggedIn && <Footer />}
     </div>
   );
 }

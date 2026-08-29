@@ -54,6 +54,13 @@ describe('normalizeAuthenticityRows', () => {
     expect(rows[0].cross_suspicious).toBe(true);
     expect(rows[0].authenticity_score).toBe(42);
   });
+
+  it('does not default missing cross_suspicious to true', () => {
+    const rows = normalizeAuthenticityRows({
+      top_suspicious: [{ enterprise_id: 'a1', authenticity_score: 40 }],
+    });
+    expect(rows[0].cross_suspicious).toBeUndefined();
+  });
 });
 
 describe('normalizeFraudBatch KPI', () => {

@@ -5,6 +5,7 @@ import type {
   AuthenticityItem,
   WarningItem,
   MetricDefinition,
+  MetricDictionaryResponse,
 } from '@/types/risk';
 
 /** 后端 fraud/authenticity 返回批次对象，不是数组；在此归一化为行列表。 */
@@ -25,12 +26,14 @@ export interface AuthenticityBatchResponse {
   [key: string]: unknown;
 }
 
-function mapRiskLevel(raw: unknown): string {
-  const s = String(raw || '');
+function mapRiskLevel(raw: unknown): string | undefined {
+  const s = String(raw || '').trim();
+  if (!s) return undefined;
   if (s === 'high' || s.includes('高')) return 'high';
   if (s === 'medium' || s.includes('中')) return 'medium';
   if (s === 'low' || s.includes('低')) return 'low';
-  return 'medium';
+  // 未知等级弃权，禁止默认「中风险」误报
+  return undefined;
 }
 
 /** 将 /risk/fraud 批次响应当成表格行（top_flags）。失败由调用方处理，不伪造行。 */
@@ -40,12 +43,13 @@ export function normalizeFraudRows(res: unknown): FraudAnalysisItem[] {
   const batch = res as FraudBatchResponse;
   const flags = Array.isArray(batch.top_flags) ? batch.top_flags : [];
   return flags.map((f, i) => {
-    const score = Number(f.fraud_composite_score ?? f.composite_score ?? 0);
+    const rawScore = f.fraud_composite_score ?? f.composite_score;
+    const score = rawScore != null && rawScore !== '' ? Number(rawScore) : NaN;
     return {
       enterprise_id: String(f.enterprise_id || `flag-${i}`),
       display_label: (f.display_label as string) || undefined,
       industry_l1: (f.industry_l1 as string) || undefined,
-      fraud_composite_score: score,
+      fraud_composite_score: Number.isFinite(score) ? score : undefined,
       fraud_risk_level: mapRiskLevel(f.fraud_risk_level ?? f.risk_level),
       scbm_mismatch_score: f.scbm_mismatch_score != null ? Number(f.scbm_mismatch_score) : undefined,
       red_invoice_score: f.red_invoice_score != null ? Number(f.red_invoice_score) : undefined,
@@ -76,8 +80,8 @@ export function normalizeFraudBatch(res: unknown): FraudBatchView {
   if (Array.isArray(res) || !res || typeof res !== 'object') {
     return {
       rows,
-      sample_count: rows.length,
-      flagged_count: rows.length,
+      sample_count: 0,
+      flagged_count: 0,
       avg_composite: null,
     };
   }
@@ -87,8 +91,8 @@ export function normalizeFraudBatch(res: unknown): FraudBatchView {
   const avg = batch.avg_composite != null ? Number(batch.avg_composite) : NaN;
   return {
     rows,
-    sample_count: Number.isFinite(sample) ? sample : rows.length,
-    flagged_count: Number.isFinite(flagged) ? flagged : rows.length,
+    sample_count: Number.isFinite(sample) ? sample : 0,
+    flagged_count: Number.isFinite(flagged) ? flagged : 0,
     avg_composite: Number.isFinite(avg) ? avg : null,
   };
 }
@@ -110,7 +114,10 @@ export function normalizeAuthenticityRows(res: unknown): AuthenticityItem[] {
         : r.avg_deviation != null
           ? Number(r.avg_deviation)
           : undefined,
-    cross_suspicious: r.cross_suspicious !== false,
+    cross_suspicious:
+      typeof r.cross_suspicious === 'boolean'
+        ? r.cross_suspicious
+        : undefined, // 缺失弃权，禁止默认 true 反向误报
   }));
 }
 
@@ -119,8 +126,8 @@ export function normalizeAuthenticityBatch(res: unknown): AuthenticityBatchView 
   if (Array.isArray(res) || !res || typeof res !== 'object') {
     return {
       rows,
-      sample_count: rows.length,
-      suspicious_count: rows.filter((r) => r.cross_suspicious).length,
+      sample_count: 0,
+      suspicious_count: 0,
       avg_authenticity_score: null,
     };
   }
@@ -130,16 +137,28 @@ export function normalizeAuthenticityBatch(res: unknown): AuthenticityBatchView 
   const avg = batch.avg_authenticity_score != null ? Number(batch.avg_authenticity_score) : NaN;
   return {
     rows,
-    sample_count: Number.isFinite(sample) ? sample : rows.length,
-    suspicious_count: Number.isFinite(susp) ? susp : rows.filter((r) => r.cross_suspicious).length,
+    sample_count: Number.isFinite(sample) ? sample : 0,
+    suspicious_count: Number.isFinite(susp) ? susp : 0,
     avg_authenticity_score: Number.isFinite(avg) ? avg : null,
   };
+}
+
+/** 行业大类（含样本计数），供报告向导范围选择 */
+export interface IndustryItem {
+  industry_l1: string;
+  n: number;
 }
 
 export const riskApi = {
   /** Dashboard KPI + 风险等级分布 */
   getSummary: (): Promise<Record<string, unknown>> =>
     client.get('/risk/summary'),
+
+  /** 行业大类列表（含样本计数） */
+  getIndustries: async (): Promise<IndustryItem[]> => {
+    const res = (await client.get('/risk/industries')) as { items?: IndustryItem[] };
+    return Array.isArray(res?.items) ? res.items : [];
+  },
 
   /** 预警清单 */
   getWarnings: (): Promise<WarningItem[] | { warnings: WarningItem[] }> =>
@@ -180,7 +199,7 @@ export const riskApi = {
 
 /** 指标字典 API */
 export const metricsApi = {
-  getDictionary: (): Promise<MetricDefinition[]> =>
+  getDictionary: (): Promise<MetricDictionaryResponse> =>
     client.get('/metrics/dictionary'),
 };
 

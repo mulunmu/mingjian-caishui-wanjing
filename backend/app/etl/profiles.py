@@ -121,8 +121,8 @@ def load_invoice_profile() -> dict[str, dict]:
         SELECT taxpayer_id,
                SUM(CASE WHEN {U('sign')} LIKE '%%销%%' THEN 1 ELSE 0 END) AS sales_cnt,
                SUM(CASE WHEN {U('sign')} LIKE '%%进%%' THEN 1 ELSE 0 END) AS purchase_cnt,
-               SUM(CASE WHEN {U('sign')} LIKE '%%销%%' THEN COALESCE(jshj,0) ELSE 0 END) AS sales_amt,
-               SUM(CASE WHEN {U('sign')} LIKE '%%进%%' THEN COALESCE(jshj,0) ELSE 0 END) AS purchase_amt,
+               SUM(CASE WHEN {U('sign')} LIKE '%%销%%' THEN COALESCE(CAST(NULLIF(hjje,'') AS DECIMAL(20,4)),0) ELSE 0 END) AS sales_amt,
+               SUM(CASE WHEN {U('sign')} LIKE '%%进%%' THEN COALESCE(CAST(NULLIF(hjje,'') AS DECIMAL(20,4)),0) ELSE 0 END) AS purchase_amt,
                SUM(CASE WHEN state = 2 THEN 1 ELSE 0 END) AS red_cnt,
                SUM(CASE WHEN state = 1 THEN 1 ELSE 0 END) AS void_cnt,
                SUM(CASE WHEN {U('risk_level')} LIKE '%%异常%%' THEN 1 ELSE 0 END) AS abnormal_cnt
@@ -137,7 +137,7 @@ def load_invoice_profile() -> dict[str, dict]:
     cust_rows = fetch_all(
         f"""
         SELECT taxpayer_id, {U('gfmc')} AS gfmc, {U('gfsh')} AS gfsh,
-               SUM(COALESCE(jshj,0)) AS amt
+               SUM(COALESCE(CAST(NULLIF(hjje,'') AS DECIMAL(20,4)),0)) AS amt
         FROM syx_invoice
         WHERE taxpayer_id IS NOT NULL AND taxpayer_id <> ''
           AND {U('sign')} LIKE '%%销%%'
@@ -153,7 +153,7 @@ def load_invoice_profile() -> dict[str, dict]:
     supp_rows = fetch_all(
         f"""
         SELECT taxpayer_id, {U('xfmc')} AS xfmc, {U('xfsh')} AS xfsh,
-               SUM(COALESCE(jshj,0)) AS amt
+               SUM(COALESCE(CAST(NULLIF(hjje,'') AS DECIMAL(20,4)),0)) AS amt
         FROM syx_invoice
         WHERE taxpayer_id IS NOT NULL AND taxpayer_id <> ''
           AND {U('sign')} LIKE '%%进%%'
@@ -470,7 +470,7 @@ def load_tax_profile() -> dict[str, dict]:
             "total_tax_paid": pd.get("total_paid", 0.0),
             "tax_late_penalty_amount": pd.get("late_amt", 0.0),
             "tax_late_penalty_cnt": pd.get("late_cnt", 0),
-            "correction_times": max(cr.get("sum_times", 0), cr.get("rec_cnt", 0)),
+            "correction_times": int(cr.get("sum_times", 0)),  # 口径=各申报 already_change_times 求和
             "correction_records": cr.get("rec_cnt", 0),
             "correction_levy_count": len(cr.get("levy", set())),
             "social_headcount": int(_f(soc.get("headcount"))),
@@ -487,7 +487,7 @@ def load_tax_profile() -> dict[str, dict]:
             "is_high_tech": eid in hightech,
             "payroll_amount": payroll.get(eid, 0.0),
             "investor_cnt": int(_f(iv.get("cnt"))),
-            "top_investor_share": _f(iv.get("top_share")) / 100.0,  # tzbl 为百分比
+            "top_investor_share": min(1.0, max(0.0, _f(iv.get("top_share")) / 100.0)),  # tzbl 百分比 → 0-1
             "change_cnt": change.get(eid, 0),
         }
     return out

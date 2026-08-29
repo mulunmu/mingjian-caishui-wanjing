@@ -34,6 +34,11 @@ FAQ_ENTRIES: list[dict] = [
             "数据怎么导入",
             "怎么导入",
             "如何导入",
+            "导入数据",
+            "上传数据",
+            "接入数据",
+            "导数据",
+            "传数据",
             "数据接入",
             "上传excel",
             "excel上传",
@@ -42,10 +47,11 @@ FAQ_ENTRIES: list[dict] = [
             "怎么上传数据",
         ],
         "answer": (
-            "数据接入支持 Excel 上传、数据库导入、API 或直接在对话框提。"
+            "数据接入支持 Excel 上传、数据库导入、API 三种方式。"
             "系统会做分层字段映射（已保存→精确→模糊→LLM 语义），并统一到指标语义层口径；"
             "你可选择这份数据会话内临时使用或写入库作为分析材料。"
         ),
+        "action": {"label": "打开数据接入", "target": "/ingest"},
     },
     {
         "id": "report",
@@ -63,6 +69,7 @@ FAQ_ENTRIES: list[dict] = [
             "报告是本系统最大卖点，可解释/可追问/可行动。"
             "在对话里说「生成报告」产出组合风险报告；个体画像页说「生成个体深度报告」产出个体 PDF。"
         ),
+        "action": {"label": "打开报告中心", "target": "/report"},
     },
     {
         "id": "privacy",
@@ -112,7 +119,13 @@ def build_faq_claims(query: str) -> tuple[list[Claim], dict]:
                     confidence="inferred",
                 )
             ],
-            {"faq_id": "fallback"},
+            {
+                "faq_id": "fallback",
+                "actions": [
+                    {"label": "打开数据接入", "target": "/ingest"},
+                    {"label": "打开报告中心", "target": "/report"},
+                ],
+            },
         )
     claim = Claim(
         claim=entry["answer"],
@@ -121,7 +134,10 @@ def build_faq_claims(query: str) -> tuple[list[Claim], dict]:
         confidence="inferred",
         evidence_chain=[f"faq_id={entry['id']}"],
     )
-    return [claim], {"faq_id": entry["id"]}
+    meta = {"faq_id": entry["id"]}
+    if entry.get("action"):
+        meta["actions"] = [entry["action"]]
+    return [claim], meta
 
 
 def build_methodology_claims(metrics: list[str] | None = None) -> tuple[list[Claim], dict]:

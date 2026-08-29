@@ -14,12 +14,31 @@ def test_api_limit_allows_requests():
 
 
 def test_llm_daily_limit():
-    from app.services.rate_limiter import LLM_DAILY_LIMIT, check_llm_limit, increment_llm, get_llm_usage
+    from app.services.rate_limiter import (
+        LLM_DAILY_LIMIT_PER_KEY,
+        check_llm_limit,
+        increment_llm,
+        get_llm_usage,
+        set_request_client_key,
+    )
+
+    set_request_client_key("test-client-a")
     assert check_llm_limit()
     usage = get_llm_usage()
     assert "used" in usage
-    # 上限来自环境变量（默认 100，dev compose 为 1000），测试不应硬编码
-    assert usage["limit"] == LLM_DAILY_LIMIT
+    assert usage["limit"] == LLM_DAILY_LIMIT_PER_KEY
+    assert usage.get("key") == "test-client-a"
+
+
+def test_llm_quota_isolated_per_client():
+    from app.services.rate_limiter import check_llm_limit, increment_llm, set_request_client_key
+
+    set_request_client_key("client-x")
+    for _ in range(3):
+        increment_llm()
+    set_request_client_key("client-y")
+    # 另一客户端不应被 client-x 的计数拖垮（在未达上限时仍可用）
+    assert check_llm_limit()
 
 
 def test_get_llm_usage_structure():

@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>{{ title }}</title>
+<style>
+  {% include "_brand_tokens.css" %}
+
+  @page {
+    size: A4;
+    margin: 22mm 18mm 20mm 18mm;
+    @bottom-center {
+      content: "第 " counter(page) " 页 / 共 " counter(pages) " 页";
+      font-size: 8pt;
+      color: #94a3b8;
+      font-family: var(--font-sans);
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-sans);
+    font-size: 10.5pt;
+    color: var(--ink-soft);
+    line-height: 1.7;
+  }
+
+  /* 封面 */
+  .cover {
+    page-break-after: always;
+    background: var(--brand);
+    color: #ffffff;
+    height: 100%;
+    display: block;
+    padding: 90px 30px 40px;
+    text-align: center;
+  }
+  .cover .brand {
+    font-size: 12pt;
+    letter-spacing: 4px;
+    color: var(--brand-steel);
+    margin-bottom: 60px;
+  }
+  .cover h1 {
+    font-size: 30pt;
+    font-weight: bold;
+    letter-spacing: 6px;
+    margin-bottom: 24px;
+    color: #ffffff;
+  }
+  .cover .rule {
+    width: 120px;
+    height: 2px;
+    background: var(--gold);
+    margin: 0 auto 40px;
+  }
+  .cover .meta {
+    font-size: 13pt;
+    color: var(--brand-ice);
+    margin-top: 60px;
+    line-height: 2.2;
+  }
+  .cover .meta span { color: var(--brand-steel); }
+
+  /* 章节标题 */
+  .chapter {
+    font-size: 16pt;
+    font-weight: bold;
+    color: var(--brand);
+    border-bottom: 2px solid var(--brand);
+    padding-bottom: 8px;
+    margin: 28px 0 16px;
+    bookmark-level: 1;
+    bookmark-label: content(text);
+  }
+  .subchapter {
+    font-size: 13pt;
+    font-weight: bold;
+    color: var(--brand);
+    margin: 20px 0 10px;
+  }
+
+  /* 基本信息表 / 结论摘要 KPI */
+  table.info, table.kpi {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0 16px;
+  }
+  table.info td, table.kpi td {
+    border: 1px solid var(--line);
+    padding: 7px 10px;
+    font-size: 10.5pt;
+  }
+  table.info td.key, table.kpi td.key {
+    background: var(--bg-soft);
+    color: var(--brand);
+    font-weight: bold;
+    width: 22%;
+  }
+
+  /* 分析正文 */
+  .analysis {
+    color: var(--ink-soft);
+    margin: 8px 0 12px;
+    text-align: justify;
+  }
+  .lead {
+    background: var(--bg);
+    border-left: 3px solid var(--brand);
+    padding: 10px 14px;
+    margin: 12px 0;
+    color: var(--ink-soft);
+  }
+
+  /* 列表 */
+  ul.items { margin: 6px 0 12px 18px; }
+  ul.items li { margin: 4px 0; }
+
+  /* 优势 vs 风险二栏 */
+  table.twocol {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0 16px;
+    table-layout: fixed;
+  }
+  table.twocol td.col {
+    width: 50%;
+    vertical-align: top;
+    border: 1px solid var(--line);
+    padding: 10px 14px;
+  }
+  table.twocol td.col .subchapter { margin-top: 0; }
+  table.twocol td.col.adv { border-right: none; }
+  table.twocol ul.items { margin: 6px 0 0 16px; }
+  table.twocol ul.items li { font-size: 10pt; }
+
+  /* 指标表 */
+  table.metrics, table.stmt {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0 18px;
+    font-size: 10pt;
+  }
+  table.metrics th, table.metrics td,
+  table.stmt th, table.stmt td {
+    border: 1px solid var(--line);
+    padding: 6px 10px;
+    text-align: center;
+  }
+  table.metrics th, table.stmt th {
+    background: var(--brand);
+    color: #ffffff;
+    font-weight: bold;
+  }
+  table.metrics td.label, table.stmt td.label {
+    text-align: left;
+    color: var(--ink-soft);
+  }
+  table.metrics td.unit, table.stmt td.amount { text-align: right; }
+
+  /* 评级着色 */
+  .ok { color: var(--ok); font-weight: bold; }
+  .warn { color: var(--bad); font-weight: bold; }
+  .mid { color: var(--warn); font-weight: bold; }
+  .nodata { color: var(--nodata); }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 3px;
+    color: #ffffff;
+    font-size: 10pt;
+    font-weight: bold;
+  }
+
+  .radar-wrap { text-align: center; margin: 12px 0 18px; }
+  .radar-wrap img { max-width: 62%; }
+
+  /* 免责声明 */
+  .disclaimer {
+    color: var(--ink-faint);
+    font-size: 9pt;
+    border-top: 1px solid var(--line);
+    margin-top: 30px;
+    padding-top: 14px;
+    line-height: 1.8;
+  }
+  .page-break { page-break-after: always; }
+</style>
+</head>
+<body>
+
+<!-- 封面 -->
+<div class="cover">
+  <div class="brand">明鉴 · 财税票 · 万景</div>
+  <h1>{{ scenario_label }}</h1>
+  <div class="rule"></div>
+  <div class="meta">
+    样本编号：<span>#{{ subject.short_id }}</span><br />
+    风险等级：<span>{{ overall.risk_level }}</span><br />
+    评级展望：<span>{{ overall.outlook }}</span><br />
+    综合评分：<span>{{ "%.1f"|format(overall.overall_score) }} 分</span>
+  </div>
+  <div class="meta" style="margin-top:120px; font-size:10pt; color:var(--brand-steel);">
+    报告日期：{{ report_date }}<br />
+    报告编号：{{ report_id }}
+  </div>
+</div>
+
+<!-- 评级摘要（结论前置：等级 + 展望 + 优势/风险二栏 + 成段理由） -->
+<div class="chapter">评级摘要</div>
+<table class="kpi">
+  <tr>
+    <td class="key">风险等级</td>
+    <td><span class="badge" style="background: {{ overall.health_color }};">{{ overall.risk_level }}</span></td>
+    <td class="key">评级展望</td>
+    <td><span class="badge" style="background: {{ overall.outlook_color }};">{{ overall.outlook }}</span></td>
+  </tr>
+  <tr>
+    <td class="key">综合评分</td>
+    <td>{{ "%.1f"|format(overall.overall_score) }} 分</td>
+    <td class="key">健康状况</td>
+    <td><span class="badge" style="background: {{ overall.health_color }};">{{ overall.health }}</span></td>
+  </tr>
+</table>
+
+<div class="lead">{{ overall.reason }}</div>
+
+<table class="twocol">
+  <tr>
+    <td class="col adv">
+      <div class="subchapter">主要优势</div>
+      {% if overall.advantages %}
+      <ul class="items">
+        {% for a in overall.advantages %}<li>{{ a }}</li>{% endfor %}
+      </ul>
+      {% else %}
+      <p class="analysis nodata">无数据（弃权）。</p>
+      {% endif %}
+    </td>
+    <td class="col">
+      <div class="subchapter">主要风险</div>
+      {% if overall.risk_points %}
+      <ul class="items">
+        {% for p in overall.risk_points %}<li>{{ p }}</li>{% endfor %}
+      </ul>
+      {% else %}
+      <p class="analysis nodata">无数据（弃权）。</p>
+      {% endif %}
+    </td>
+  </tr>
+</table>
+
+{% if overall.advice %}
+<div class="subchapter">主要建议</div>
+<ul class="items">
+  {% for a in overall.advice %}<li>{{ a }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+{% if radar_chart_data_uri %}
+<div class="radar-wrap">
+  <img src="{{ radar_chart_data_uri }}" alt="六维风险画像" />
+</div>
+{% endif %}
+
+<!-- 一、企业基本信息 -->
+<div class="chapter page-break">一、企业基本信息</div>
+<table class="info">
+  <tr><td class="key">样本编号</td><td>#{{ subject.short_id }}</td></tr>
+  <tr><td class="key">所属行业</td><td>{{ subject.industry_l1 }} / {{ subject.industry_l2 }}</td></tr>
+  <tr><td class="key">所属地区</td><td>{{ subject.province }}</td></tr>
+  <tr><td class="key">报告年度</td><td>{{ subject.report_year }}</td></tr>
+</table>
+
+<!-- 二、分维度风险分析 -->
+<div class="chapter page-break">二、分维度风险分析</div>
+
+{% for d in dimensions %}
+<div class="subchapter">2.{{ loop.index }} {{ d.title }}</div>
+<table class="info">
+  <tr>
+    <td class="key">风险等级</td>
+    <td><span class="badge" style="background: {{ d.risk_color }};">{{ d.risk_level }}</span></td>
+  </tr>
+</table>
+<table class="metrics">
+  <tr><th style="width:34%;">指标</th><th style="width:18%;">数值</th><th style="width:20%;">参考标准</th><th style="width:28%;">评级</th></tr>
+  {% for m in d.metrics %}
+  <tr>
+    <td class="label">{{ m.label }}</td>
+    <td class="unit">{{ m.value }}{{ m.unit }}</td>
+    <td>{{ m.standard }}</td>
+    <td>
+      {% if m.rating == "达标" %}<span class="ok">达标</span>
+      {% elif m.rating == "预警" %}<span class="warn">预警</span>
+      {% elif m.rating == "无数据" %}<span class="nodata">无数据</span>
+      {% else %}<span class="nodata">{{ m.rating }}</span>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<div class="analysis">
+  <p>{{ d.analysis.level_review }}</p>
+  <p>{{ d.analysis.trend }}</p>
+  <p>{{ d.analysis.risks }}</p>
+</div>
+{% if d.analysis.advice %}<p class="analysis"><strong>建议：</strong>{{ d.analysis.advice }}</p>{% endif %}
+{% endfor %}
+
+<!-- 三、主要财务数据 -->
+<div class="chapter page-break">三、主要财务数据</div>
+<p class="analysis">以下财务数据取自三大报表，单位：万元。</p>
+
+{% for st in ["income", "balance", "cashflow"] %}
+{% set s = statements[st] %}
+<div class="subchapter">3.{{ loop.index }} {{ s.title }}</div>
+<table class="stmt">
+  <tr><th style="width:50%;">项目</th><th style="width:50%;">金额（万元）</th></tr>
+  {% for row in s.rows %}
+  <tr><td class="label">{{ row[0] }}</td><td class="amount">{{ row[1] }}</td></tr>
+  {% endfor %}
+</table>
+{% endfor %}
+
+{% if dupont %}
+<div class="subchapter">3.4 杜邦分解</div>
+<p class="analysis">{{ dupont.formula }}。分解如下：</p>
+<table class="metrics">
+  <tr><th style="width:34%;">因子</th><th style="width:26%;">方向</th><th style="width:40%;">数值</th></tr>
+  {% for f in dupont.factors %}
+  <tr>
+    <td class="label">{{ f.label }}</td>
+    <td>{{ f.dir }}</td>
+    <td class="unit">{{ f.disp if f.disp else "无数据" }}</td>
+  </tr>
+  {% endfor %}
+  <tr>
+    <td class="label">净资产收益率（ROE）</td>
+    <td>综合</td>
+    <td class="unit">{{ dupont.roe_disp if dupont.roe_disp else "无数据" }}</td>
+  </tr>
+</table>
+{% if dupont.complete %}
+<p class="analysis">ROE {{ dupont.roe_disp }} = 净利率 {{ dupont.factors[0].disp }} × 总资产周转率 {{ dupont.factors[1].disp }} × 权益乘数 {{ dupont.factors[2].disp }}。</p>
+{% else %}
+<p class="analysis">部分因子无数据/未覆盖（弃权），本期不做完整杜邦分解。</p>
+{% endif %}
+{% endif %}
+
+{% if benchmark_chart_data_uri %}
+<div class="subchapter">3.5 同业对标</div>
+<p class="analysis">本样本关键比率 vs 同行业均值（单位：%）。</p>
+<div class="radar-wrap">
+  <img src="{{ benchmark_chart_data_uri }}" alt="同业对标柱状图" />
+</div>
+{% endif %}
+
+<!-- 四、免责声明与附录 -->
+<div class="chapter page-break">四、免责声明与附录</div>
+<div class="analysis">
+  <p><strong>数据说明</strong></p>
+  <ul class="items">
+    {% for s in appendix.data %}<li>{{ s }}</li>{% endfor %}
+  </ul>
+  <p style="margin-top:10px;"><strong>方法说明</strong></p>
+  <ul class="items">
+    {% for s in appendix.methods %}<li>{{ s }}</li>{% endfor %}
+  </ul>
+</div>
+<div class="disclaimer">
+  本报告由明鉴・财税票・万景自动生成。正文数字均可回溯至表字段；风险评级由统一阈值决定，无数据处弃权、不编造。本报告仅供内部风控参考，不构成任何投资、授信或法律意见。
+</div>
+
+</body>
+</html>

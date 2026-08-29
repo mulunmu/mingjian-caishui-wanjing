@@ -48,6 +48,8 @@ def _persist(entry: dict[str, Any]) -> None:
             rec.enterprise_id = entry.get("enterprise_id")
             rec.covered_functions_json = json.dumps(entry.get("covered_functions") or [], ensure_ascii=False)
             rec.history_json = json.dumps(entry.get("history") or [], ensure_ascii=False)
+            custom = entry.get("custom_report")
+            rec.custom_state_json = json.dumps(custom, ensure_ascii=False) if custom is not None else None
             rec.updated_at = ts
             session.merge(rec)
             session.commit()
@@ -90,6 +92,7 @@ def _load_from_pg(session_id: str) -> dict[str, Any] | None:
                 "history": history,
                 "last_semantic_query": last_semantic,
                 "last_query_type": last_query_type,
+                "custom_report": json.loads(rec.custom_state_json) if rec.custom_state_json else None,
                 "updated_at": updated,
             }
     except Exception:
@@ -154,6 +157,7 @@ def store_session(
     enterprise_id: str | None = None,
     conclusion_id: str | None = None,
     semantic_query: dict | None = None,
+    custom_report: dict | None = None,
 ) -> None:
     _cleanup_expired()
     entry = store.get(session_id)
@@ -207,6 +211,9 @@ def store_session(
         entry["last_query_type"] = semantic_query.get("query_type")
         entry["last_metrics"] = semantic_query.get("metrics") or []
         entry["last_filters"] = semantic_query.get("filters") or {}
+
+    if custom_report is not None:
+        entry["custom_report"] = custom_report
 
     entry["history"].append(
         {

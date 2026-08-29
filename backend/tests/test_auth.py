@@ -142,3 +142,34 @@ def test_require_plan_free_user_blocked():
     except HTTPException as exc:
         raised = exc.status_code == 403
     assert raised
+
+
+def test_require_plan_unauthenticated_denied():
+    """deny-by-default：未登录不得静默放行订阅端点。"""
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from app.api.deps import require_plan
+
+    raised = False
+    try:
+        asyncio.run(require_plan("subscriber")(None))
+    except HTTPException as exc:
+        raised = exc.status_code == 401
+    assert raised
+
+
+def test_require_roles_unauthenticated_denied():
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from app.api.deps import require_roles
+
+    raised = False
+    try:
+        asyncio.run(require_roles("admin")(None))
+    except HTTPException as exc:
+        raised = exc.status_code == 401
+    assert raised

@@ -294,3 +294,11 @@ export interface MetricDefinition {
   dimensions?: string[];
   [key: string]: unknown;
 }
+
+/** 指标字典接口响应：后端返回对象（metrics 为真实口径数组），而非扁平数组 */
+export interface MetricDictionaryResponse {
+  version: string;
+  metrics: MetricDefinition[];
+  source_fields?: unknown[];
+  dimensions?: unknown[];
+}

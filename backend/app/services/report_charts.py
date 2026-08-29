@@ -40,7 +40,14 @@ def _bar_colors(n: int) -> list[str]:
     return [palette[i % len(palette)] for i in range(n)]
 
 
-def render_bar_chart_png(chart: dict[str, Any], output_path: Path, *, title: str = "") -> bool:
+def _fmt_title(title: str = "", subtitle: str = "") -> str | None:
+    """图表标题 + 副标题（分母/口径说明），副标题换行附于标题下方。"""
+    if title and subtitle:
+        return f"{title}\n{subtitle}"
+    return title or subtitle or None
+
+
+def render_bar_chart_png(chart: dict[str, Any], output_path: Path, *, title: str = "", subtitle: str = "") -> bool:
     """将 judgment charts 结构渲染为 PNG。失败时返回 False（报告仍可无图输出）。"""
     if chart.get("type") != "bar":
         return False
@@ -87,8 +94,9 @@ def render_bar_chart_png(chart: dict[str, Any], output_path: Path, *, title: str
     ax.set_ylabel(ylabel, fontsize=10)
     if len(series) > 1:
         ax.legend(fontsize=9, loc="upper right")
-    if title:
-        ax.set_title(title, fontsize=12, pad=8)
+    t = _fmt_title(title, subtitle)
+    if t:
+        ax.set_title(t, fontsize=12, pad=8)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(axis="y", linestyle="--", alpha=0.35)
@@ -98,7 +106,7 @@ def render_bar_chart_png(chart: dict[str, Any], output_path: Path, *, title: str
     return output_path.exists()
 
 
-def render_line_chart_png(chart: dict[str, Any], output_path: Path, *, title: str = "") -> bool:
+def render_line_chart_png(chart: dict[str, Any], output_path: Path, *, title: str = "", subtitle: str = "") -> bool:
     """趋势折线图（line）。"""
     if chart.get("type") != "line":
         return False
@@ -140,8 +148,9 @@ def render_line_chart_png(chart: dict[str, Any], output_path: Path, *, title: st
     ax.axhline(0, color="#cbd5e1", linewidth=0.8)
     if len(series) > 1:
         ax.legend(fontsize=9, loc="best")
-    if title:
-        ax.set_title(title, fontsize=12, pad=8)
+    t = _fmt_title(title, subtitle)
+    if t:
+        ax.set_title(t, fontsize=12, pad=8)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(axis="y", linestyle="--", alpha=0.35)
@@ -151,7 +160,7 @@ def render_line_chart_png(chart: dict[str, Any], output_path: Path, *, title: st
     return output_path.exists()
 
 
-def render_pie_chart_png(chart: dict[str, Any], output_path: Path, *, title: str = "") -> bool:
+def render_pie_chart_png(chart: dict[str, Any], output_path: Path, *, title: str = "", subtitle: str = "") -> bool:
     """占比饼图（pie），过滤 0 值扇区。"""
     if chart.get("type") != "pie":
         return False
@@ -192,8 +201,9 @@ def render_pie_chart_png(chart: dict[str, Any], output_path: Path, *, title: str
         textprops={"fontsize": 10},
         wedgeprops={"edgecolor": "white", "linewidth": 1.5},
     )
-    if title:
-        ax.set_title(title, fontsize=12, pad=8)
+    t = _fmt_title(title, subtitle)
+    if t:
+        ax.set_title(t, fontsize=12, pad=8)
     ax.axis("equal")
     fig.tight_layout()
     fig.savefig(output_path, bbox_inches="tight", facecolor="white")
@@ -202,7 +212,7 @@ def render_pie_chart_png(chart: dict[str, Any], output_path: Path, *, title: str
 
 
 def render_dimension_attribution_png(attribution: dict[str, Any], output_path: Path) -> bool:
-    """五维加权贡献水平条形图 + 归因摘要配套。"""
+    """六维加权贡献水平条形图 + 归因摘要配套。"""
     dims = attribution.get("dimensions") or {}
     if not dims:
         return False
@@ -239,7 +249,7 @@ def render_dimension_attribution_png(attribution: dict[str, Any], output_path: P
     ax.set_yticks(list(y_pos))
     ax.set_yticklabels(labels, fontsize=10)
     ax.set_xlabel("加权贡献（分）", fontsize=10)
-    ax.set_title("五维归因 · 加权贡献", fontsize=12, pad=8)
+    ax.set_title("六维归因 · 加权贡献", fontsize=12, pad=8)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(axis="x", linestyle="--", alpha=0.35)
@@ -249,8 +259,8 @@ def render_dimension_attribution_png(attribution: dict[str, Any], output_path: P
     return output_path.exists()
 
 
-def render_radar_chart_png(chart: dict[str, Any], output_path: Path, *, title: str = "") -> bool:
-    """五维雷达图（radar）。"""
+def render_radar_chart_png(chart: dict[str, Any], output_path: Path, *, title: str = "", subtitle: str = "") -> bool:
+    """六维雷达图（radar）。"""
     if chart.get("type") != "radar":
         return False
     data = chart.get("data") or {}
@@ -286,15 +296,16 @@ def render_radar_chart_png(chart: dict[str, Any], output_path: Path, *, title: s
     ax.set_ylim(0, max_val)
     ax.set_yticks([max_val * 0.25, max_val * 0.5, max_val * 0.75, max_val])
     ax.grid(color="#cbd5e1", linestyle="--", alpha=0.6)
-    if title:
-        ax.set_title(title, fontsize=12, pad=16)
+    t = _fmt_title(title, subtitle)
+    if t:
+        ax.set_title(t, fontsize=12, pad=16)
     fig.tight_layout()
     fig.savefig(output_path, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     return output_path.exists()
 
 
-def render_heatmap_chart_png(chart: dict[str, Any], output_path: Path, *, title: str = "") -> bool:
+def render_heatmap_chart_png(chart: dict[str, Any], output_path: Path, *, title: str = "", subtitle: str = "") -> bool:
     """行业×信号热力图（heatmap）。"""
     if chart.get("type") != "heatmap":
         return False
@@ -326,7 +337,12 @@ def render_heatmap_chart_png(chart: dict[str, Any], output_path: Path, *, title:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(7.2, max(3.0, len(y_labels) * 0.45 + 1.5)), dpi=120)
-    im = ax.imshow(matrix, aspect="auto", cmap="Blues", vmin=0)
+    # 「Blues」单色序（仅蓝色、明度渐变）：对所有常见色觉缺陷（红/绿/蓝盲）均可区分。
+    vmax = float(matrix.max()) if matrix.size else 0.0
+    if vmax <= 0:
+        vmax = 1.0
+    cmap = plt.get_cmap("Blues")
+    im = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=vmax)
     ax.set_xticks(range(len(x_labels)))
     ax.set_xticklabels(x_labels, fontsize=9, rotation=18, ha="right")
     ax.set_yticks(range(len(y_labels)))
@@ -335,17 +351,21 @@ def render_heatmap_chart_png(chart: dict[str, Any], output_path: Path, *, title:
         for xi in range(len(x_labels)):
             val = matrix[yi, xi]
             if val:
-                ax.text(xi, yi, int(val), ha="center", va="center", color="#0f172a", fontsize=9)
+                rgba = cmap(float(val) / vmax)
+                lum = 0.299 * rgba[0] + 0.587 * rgba[1] + 0.114 * rgba[2]
+                text_color = "#ffffff" if lum < 0.5 else "#0f172a"
+                ax.text(xi, yi, int(val), ha="center", va="center", color=text_color, fontsize=9)
     fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
-    if title:
-        ax.set_title(title, fontsize=12, pad=8)
+    t = _fmt_title(title, subtitle)
+    if t:
+        ax.set_title(t, fontsize=12, pad=8)
     fig.tight_layout()
     fig.savefig(output_path, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     return output_path.exists()
 
 
-def render_funnel_chart_png(chart: dict[str, Any], output_path: Path, *, title: str = "") -> bool:
+def render_funnel_chart_png(chart: dict[str, Any], output_path: Path, *, title: str = "", subtitle: str = "") -> bool:
     """风险筛查漏斗图（funnel）。"""
     if chart.get("type") != "funnel":
         return False
@@ -386,8 +406,9 @@ def render_funnel_chart_png(chart: dict[str, Any], output_path: Path, *, title: 
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(axis="x", linestyle="--", alpha=0.35)
-    if title:
-        ax.set_title(title, fontsize=12, pad=8)
+    t = _fmt_title(title, subtitle)
+    if t:
+        ax.set_title(t, fontsize=12, pad=8)
     fig.tight_layout()
     fig.savefig(output_path, bbox_inches="tight", facecolor="white")
     plt.close(fig)

@@ -71,6 +71,7 @@ class ChatSessionRecord(Base):
     enterprise_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     covered_functions_json: Mapped[str] = mapped_column(Text, default="[]")
     history_json: Mapped[str] = mapped_column(Text, default="[]")
+    custom_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

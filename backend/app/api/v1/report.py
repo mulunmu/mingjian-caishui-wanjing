@@ -10,11 +10,14 @@ from app.db.session import get_db
 from app.services import auth_service, email_service, slice_report
 from app.services.report_templates import PremiumReportLocked, get_scenario_label
 from app.services.slice_report import (
+    build_report_detail,
     can_access_report,
     cleanup_legacy_reports,
     generate_slice_report,
     get_report_path,
+    preview_enterprise_report_html,
     preview_slice_report_html,
+    read_report_snapshot,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,12 +36,16 @@ class GenerateReportRequest(BaseModel):
     scenario: str = "general"
     session_id: str | None = None
     query: str | None = None
+    industry_l1: str | None = None
+    province: str | None = None
 
 
 class GenerateSliceReportRequest(BaseModel):
     scenario: str | None = None
     session_id: str | None = None
     query: str | None = None
+    industry_l1: str | None = None
+    province: str | None = None
 
 
 class GenerateEnterpriseReportRequest(BaseModel):
@@ -85,21 +92,27 @@ async def list_reports(_user: dict | None = Depends(get_current_user_optional)):
                 _d, _t = tm.group(2), tm.group(3)
                 kind = "个体" if stem.lower().startswith("ent_") else get_scenario_label(tm.group(1))
                 title = f"{kind} · {_d[:4]}-{_d[4:6]}-{_d[6:8]} {_t[:2]}:{_t[2:4]}"
+                # 定制报告：用快照里的真实标题（AI 判定的章节组合），而非泛化场景标签
+                if tm.group(1) == "custom":
+                    snap = slice_report.read_report_snapshot(stem) or {}
+                    title = snap.get("title") or title
             else:
                 title = stem
             mtime = f.stat().st_mtime
             from datetime import datetime
 
             dt = datetime.fromtimestamp(mtime)
-            reports.append(
-                {
-                    "report_id": stem,
-                    "title": title,
-                    "date": dt.strftime("%Y-%m-%d"),
-                    "size": f.stat().st_size,
-                    "download_url": f"/api/v1/report/{stem}/download",
-                }
-            )
+            item = {
+                "report_id": stem,
+                "title": title,
+                "date": dt.strftime("%Y-%m-%d"),
+                "size": f.stat().st_size,
+                "download_url": f"/api/v1/report/{stem}/download",
+            }
+            if stem.lower().startswith("ent_"):
+                meta = slice_report.read_report_meta(stem) or {}
+                item["enterprise_id"] = meta.get("enterprise_id")
+            reports.append(item)
     return {"items": reports, "total": len(reports), "source": "slice+ent"}
 
 @router.post("/generate")
@@ -121,6 +134,8 @@ async def generate_report(
             session_id=body.session_id,
             query=body.query,
             owner=_owner_email(_user),
+            industry_l1=body.industry_l1,
+            province=body.province,
         )
     except PremiumReportLocked:
         raise _premium_locked()
@@ -151,6 +166,8 @@ async def generate_slice(
             session_id=body.session_id,
             query=body.query or "生成行业趋势风控报告",
             owner=_owner_email(_user),
+            industry_l1=body.industry_l1,
+            province=body.province,
         )
     except PremiumReportLocked:
         raise _premium_locked()
@@ -183,26 +200,34 @@ async def email_report(
             "message": "匿名模式不支持按企业发邮，请先生成切片报告后手动发送。",
         }
 
+    login_email = (_owner_email(_user) or "").strip().lower()
+    recipient = str(body.recipient).strip().lower()
+    if not login_email or recipient != login_email:
+        raise HTTPException(
+            status_code=403,
+            detail="邮件仅可发送至当前登录账号邮箱。",
+        )
+
     try:
         report_id, pdf_path, ctx = await generate_slice_report(
             db,
             scenario=body.scenario,
             session_id=body.session_id,
             query="邮件发送风控报告",
-            owner=_owner_email(_user),
+            owner=login_email,
         )
         title = str(ctx.get("title") or "风控报告")
         from app.services.sync_runner import run_blocking
 
         await run_blocking(
             email_service.send_slice_report,
-            body.recipient,
+            recipient,
             title,
             pdf_path,
         )
         return {
             "success": True,
-            "message": f"报告已发送至 {body.recipient}",
+            "message": f"报告已发送至 {recipient}",
             "report_id": report_id,
         }
     except HTTPException:
@@ -240,13 +265,29 @@ async def generate_enterprise(
     }
 
 
+@router.post("/enterprise/preview")
+async def preview_enterprise_report(
+    body: GenerateEnterpriseReportRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: dict | None = Depends(require_plan("subscriber")),
+):
+    """个体财务分析报告 HTML 预览（与下载 PDF 同源模板）。需订阅鉴权。"""
+    try:
+        html = await preview_enterprise_report_html(db, enterprise_id=body.enterprise_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"个体报告预览失败: {exc}") from exc
+    return HTMLResponse(html)
+
+
 @router.post("/preview")
 async def preview_slice_report(
     body: GenerateSliceReportRequest,
     db: AsyncSession = Depends(get_db),
-    _user: dict | None = Depends(get_current_user_optional),
+    _user: dict = Depends(require_plan("subscriber")),
 ):
-    """HTML 预览（WeasyPrint 同源模板，不生成 PDF 文件）。"""
+    """HTML 预览（WeasyPrint 同源模板，不生成 PDF 文件）。需订阅鉴权。"""
     try:
         html = await preview_slice_report_html(
             db,
@@ -259,6 +300,17 @@ async def preview_slice_report(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"报告预览失败: {exc}") from exc
     return HTMLResponse(html)
+
+
+@router.get("/{report_id}")
+async def get_report_detail(report_id: str, _user: dict | None = Depends(require_plan("subscriber"))):
+    """报告结构化详情（与下载 PDF 同源快照回读）。无快照/无权限 → 404/403。"""
+    if not can_access_report(report_id, _user, auth_required=auth_service.AUTH_REQUIRED):
+        raise HTTPException(status_code=403, detail="无权访问该报告")
+    snap = read_report_snapshot(report_id)
+    if snap is None:
+        raise HTTPException(status_code=404, detail="报告不存在或未生成快照")
+    return build_report_detail(report_id, snap)
 
 
 @router.get("/{report_id}/download")

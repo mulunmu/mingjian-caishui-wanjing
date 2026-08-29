@@ -28,7 +28,11 @@ async def chat(body: ChatRequest, db: AsyncSession = Depends(get_db), _user: dic
 
     try:
         result = await route_chat(
-            db, body.query, session_id=body.session_id, enterprise_id=body.enterprise_id
+            db,
+            body.query,
+            session_id=body.session_id,
+            enterprise_id=body.enterprise_id,
+            user=_user,
         )
     except Exception as exc:
         logger.warning("chat route failed: %s", exc)

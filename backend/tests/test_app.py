@@ -93,7 +93,24 @@ def test_risk_endpoints_no_mock_fallback_on_db_error(monkeypatch):
 
 
 def test_report_preview_html_structure():
-    """报告预览 API 返回含封面/KPI/章节的 HTML（结构回归）"""
+    """报告预览 API 返回含封面/KPI/章节的 HTML（结构回归）；须订阅鉴权。"""
+    from app.main import app
+    from app.services.auth_service import create_access_token
+
+    client = TestClient(app)
+    token = create_access_token("preview@example.com", "admin", "subscriber")
+    resp = client.post(
+        "/api/v1/report/preview",
+        json={"scenario": "general", "query": "生成行业趋势风控报告"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    html = resp.text
+    assert "行业" in html or "报告" in html
+    assert "抗幻觉" in html or "validation" in html.lower() or "claims" in html.lower()
+
+
+def test_report_preview_requires_auth():
     from app.main import app
 
     client = TestClient(app)
@@ -101,10 +118,7 @@ def test_report_preview_html_structure():
         "/api/v1/report/preview",
         json={"scenario": "general", "query": "生成行业趋势风控报告"},
     )
-    assert resp.status_code == 200
-    html = resp.text
-    assert "行业" in html or "报告" in html
-    assert "抗幻觉" in html or "validation" in html.lower() or "claims" in html.lower()
+    assert resp.status_code == 401
 
 
 def test_chat_returns_chart_payload():

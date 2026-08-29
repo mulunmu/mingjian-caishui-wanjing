@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <title>{{ title }}</title>
   <style>
+    {% include "_brand_tokens.css" %}
+    :root { --accent: {{ cover.accent }}; }
+
     @page {
       size: A4;
       margin: 18mm 16mm 22mm 16mm;
@@ -25,9 +28,9 @@
 
     * { box-sizing: border-box; }
     body {
-      font-family: "WenQuanYi Micro Hei", "Microsoft YaHei", "PingFang SC", sans-serif;
+      font-family: var(--font-sans);
       font-size: 10.5pt;
-      color: #0f172a;
+      color: var(--ink);
       line-height: 1.55;
       margin: 0;
     }
@@ -37,38 +40,65 @@
     /* 封面 */
     .cover {
       text-align: center;
-      padding: 48px 24px 32px;
+      padding: 40px 24px 32px;
       min-height: 240mm;
       display: flex;
       flex-direction: column;
       align-items: center;
+      position: relative;
+    }
+    .cover-accent-bar {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 6px;
+      background: var(--accent);
+    }
+    .cover-motif {
+      width: 96px;
+      height: 96px;
+      margin: 18px 0 8px;
     }
     .cover-badge {
       display: inline-block;
       padding: 4px 14px;
-      border: 1px solid #2563eb;
-      color: #2563eb;
-      border-radius: 999px;
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      border-radius: var(--radius-pill);
       font-size: 9pt;
-      margin-bottom: 20px;
+      margin-bottom: 18px;
     }
     .cover h1 {
       font-size: 22pt;
-      margin: 0 0 10px;
-      color: #0f172a;
+      margin: 0 0 6px;
+      color: var(--brand);
+    }
+    .cover .subtitle {
+      font-size: 12pt;
+      color: var(--accent);
+      letter-spacing: 2px;
+      margin: 0 0 14px;
     }
     .cover .story {
-      color: #475569;
+      color: var(--ink-muted);
       max-width: 420px;
-      margin: 0 auto 28px;
+      margin: 0 auto 20px;
+    }
+    .cover-focus { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 0 0 26px; }
+    .focus-chip {
+      font-size: 8.5pt;
+      color: var(--ink-muted);
+      background: var(--bg-soft);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-pill);
+      padding: 2px 10px;
     }
     .narration {
-      background: #f0f6ff;
-      border: 1px solid #dbeafe;
-      border-radius: 6px;
+      background: var(--brand-tint);
+      border: 1px solid var(--brand-tint-line);
+      border-radius: var(--radius-sm);
       padding: 8px 12px;
       margin: 0 0 12px;
-      color: #334155;
+      color: var(--ink-soft);
       font-size: 9.5pt;
     }
     .kpi-grid {
@@ -83,22 +113,23 @@
     .kpi-card {
       flex: 1 1 22%;
       min-width: 100px;
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
       padding: 12px 8px;
       text-align: center;
     }
-    .kpi-card .label { font-size: 8.5pt; color: #64748b; }
+    .kpi-card .label { font-size: 8.5pt; color: var(--ink-faint); }
     .kpi-card .value {
       font-size: 14pt;
       font-weight: 700;
-      color: #0f172a;
+      color: var(--accent);
       margin-top: 4px;
     }
-    .kpi-card .unit { font-size: 8pt; color: #94a3b8; }
+    .kpi-card .unit { font-size: 8pt; color: var(--ink-ghost); }
+    .kpi-card .src { font-size: 7pt; color: var(--ink-ghost); margin-top: 3px; }
     .cover-meta {
-      color: #64748b;
+      color: var(--ink-faint);
       font-size: 9.5pt;
       margin: 4px 0;
     }
@@ -106,23 +137,26 @@
       display: inline-block;
       margin-top: 16px;
       padding: 6px 14px;
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       font-size: 9pt;
-      background: {% if validation_ok %}#ecfdf5{% else %}#fef2f2{% endif %};
-      color: {% if validation_ok %}#059669{% else %}#dc2626{% endif %};
-      border: 1px solid {% if validation_ok %}#a7f3d0{% else %}#fecaca{% endif %};
+      background: {% if validation_ok %}var(--ok-bg){% else %}var(--bad-bg){% endif %};
+      color: {% if validation_ok %}var(--ok){% else %}var(--bad){% endif %};
+      border: 1px solid {% if validation_ok %}var(--ok-line){% else %}var(--bad-line){% endif %};
     }
 
     h2 {
       font-size: 14pt;
-      color: #0f172a;
-      border-bottom: 2px solid #2563eb;
+      color: var(--brand);
+      border-bottom: 2px solid var(--accent);
       padding-bottom: 6px;
       margin: 0 0 14px;
+      /* PDF 书签大纲：每个一级小节进入目录 */
+      bookmark-level: 1;
+      bookmark-label: content(text);
     }
     h3 {
       font-size: 11pt;
-      color: #334155;
+      color: var(--ink-soft);
       margin: 18px 0 8px;
     }
     p { margin: 0 0 8px; }
@@ -134,13 +168,13 @@
       font-size: 9.5pt;
     }
     th, td {
-      border: 1px solid #e2e8f0;
+      border: 1px solid var(--line);
       padding: 7px 10px;
       text-align: left;
     }
     th {
-      background: #f1f5f9;
-      color: #475569;
+      background: var(--bg-soft);
+      color: var(--ink-muted);
       font-weight: 600;
     }
 
@@ -148,8 +182,8 @@
       display: block;
       max-width: 100%;
       margin: 12px auto;
-      border: 1px solid #e2e8f0;
-      border-radius: 6px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
     }
 
     ul.claims {
@@ -157,29 +191,55 @@
       padding-left: 18px;
     }
     ul.claims li { margin-bottom: 6px; }
-    .inferred { color: #64748b; font-style: italic; }
+    .inferred { color: var(--ink-faint); font-style: italic; }
 
     .trace-block {
       margin: 6px 0 10px;
       padding: 8px 10px;
-      background: #f8fafc;
-      border-left: 3px solid #cbd5e1;
-      font-family: "JetBrains Mono", ui-monospace, monospace;
+      background: var(--bg);
+      border-left: 3px solid var(--line-soft);
+      font-family: var(--font-mono);
       font-size: 8.5pt;
-      color: #475569;
+      color: var(--ink-muted);
     }
     .trace-block .evidence {
       margin-left: 12px;
-      color: #94a3b8;
+      color: var(--ink-ghost);
     }
 
     .drag-list { margin: 8px 0; padding-left: 18px; }
+
+    /* 执行摘要：结论 + 主要优势/风险二栏（结论前置） */
+    .summary-conclusion {
+      font-size: 11pt;
+      font-weight: 600;
+      color: var(--ink);
+      background: var(--bg);
+      border-left: 3px solid var(--accent);
+      padding: 8px 12px;
+      margin: 0 0 12px;
+    }
+    table.twocol {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0 16px;
+      table-layout: fixed;
+    }
+    table.twocol td.col {
+      width: 50%;
+      vertical-align: top;
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+    }
+    table.twocol td.col.adv { border-right: none; }
+    .col-head { color: var(--brand); margin-top: 0; }
+    .nodata { color: var(--ink-ghost); }
     .footer-note {
       margin-top: 24px;
       padding-top: 12px;
-      border-top: 1px solid #e2e8f0;
+      border-top: 1px solid var(--line);
       font-size: 8.5pt;
-      color: #94a3b8;
+      color: var(--ink-ghost);
     }
   </style>
 </head>
@@ -187,9 +247,56 @@
 
   <!-- 封面 -->
   <section class="cover page-break">
+    <div class="cover-accent-bar"></div>
+    <div class="cover-motif">
+      {% if cover.motif == 'ledger' %}
+      <svg viewBox="0 0 120 120" width="96" height="96" xmlns="http://www.w3.org/2000/svg">
+        <g fill="{{ cover.accent }}">
+          <rect x="16" y="70" width="18" height="30" rx="3"/>
+          <rect x="51" y="50" width="18" height="50" rx="3"/>
+          <rect x="86" y="30" width="18" height="70" rx="3"/>
+        </g>
+        <line x1="10" y1="106" x2="110" y2="106" stroke="{{ cover.accent }}" stroke-width="3"/>
+      </svg>
+      {% elif cover.motif == 'seal' %}
+      <svg viewBox="0 0 120 120" width="96" height="96" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="60" cy="60" r="44" fill="none" stroke="{{ cover.accent }}" stroke-width="5"/>
+        <circle cx="60" cy="60" r="34" fill="none" stroke="{{ cover.accent }}" stroke-width="1.5" opacity="0.5"/>
+        <path d="M44 62 L56 74 L78 48" fill="none" stroke="{{ cover.accent }}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      {% elif cover.motif == 'magnifier' %}
+      <svg viewBox="0 0 120 120" width="96" height="96" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="52" cy="52" r="30" fill="none" stroke="{{ cover.accent }}" stroke-width="6"/>
+        <circle cx="52" cy="52" r="8" fill="{{ cover.accent }}"/>
+        <line x1="74" y1="74" x2="100" y2="100" stroke="{{ cover.accent }}" stroke-width="8" stroke-linecap="round"/>
+      </svg>
+      {% elif cover.motif == 'badge' %}
+      <svg viewBox="0 0 120 120" width="96" height="96" xmlns="http://www.w3.org/2000/svg">
+        <rect x="18" y="24" width="84" height="72" rx="8" fill="none" stroke="{{ cover.accent }}" stroke-width="4"/>
+        <circle cx="44" cy="52" r="12" fill="{{ cover.accent }}"/>
+        <rect x="64" y="42" width="26" height="5" rx="2.5" fill="{{ cover.accent }}" opacity="0.7"/>
+        <rect x="64" y="52" width="18" height="5" rx="2.5" fill="{{ cover.accent }}" opacity="0.45"/>
+        <rect x="26" y="76" width="68" height="4" rx="2" fill="{{ cover.accent }}" opacity="0.35"/>
+      </svg>
+      {% else %}
+      <svg viewBox="0 0 120 120" width="96" height="96" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="60" cy="60" r="46" fill="none" stroke="{{ cover.accent }}" stroke-width="3"/>
+        <polygon points="60,22 70,60 60,98 50,60" fill="{{ cover.accent }}"/>
+        <polygon points="22,60 60,50 98,60 60,70" fill="{{ cover.accent }}" opacity="0.45"/>
+        <circle cx="60" cy="60" r="6" fill="#ffffff"/>
+      </svg>
+      {% endif %}
+    </div>
     <span class="cover-badge">匿名切片风控报告</span>
     <h1>{{ title }}</h1>
+    {% if subtitle %}<p class="subtitle">{{ subtitle }}</p>{% endif %}
     <p class="story">{{ story }}</p>
+
+    {% if data_focus %}
+    <div class="cover-focus">
+      {% for d in data_focus %}<span class="focus-chip">{{ d }}</span>{% endfor %}
+    </div>
+    {% endif %}
 
     {% if summary_kpis %}
     <div class="kpi-grid">
@@ -197,6 +304,7 @@
       <div class="kpi-card">
         <div class="label">{{ k.label }}</div>
         <div class="value">{{ k.value }}<span class="unit">{{ k.unit }}</span></div>
+        <div class="src">{{ k.source }}</div>
       </div>
       {% endfor %}
     </div>
@@ -206,21 +314,54 @@
     <p class="cover-meta">报告编号：{{ report_id }}</p>
     <p class="cover-meta">场景：{{ scenario_label or scenario }}</p>
     <p class="cover-meta">报告层级：{{ tier_label or '通用模板' }}</p>
+    <p class="cover-meta">本报告为聚合切片，各模块统计子集不同，详见各章节标注。</p>
     <span class="validation-pill">
       抗幻觉校验：{% if validation_ok %}通过{% else %}有告警{% endif %}（{{ validation_detail }}）
     </span>
   </section>
 
-  <!-- 执行摘要 -->
-  {% if executive_summary %}
+  <!-- 执行摘要（结论前置：结论 + 主要优势/风险二栏 + 成段理由） -->
+  {% if executive_summary or summary_conclusion or summary_strengths or summary_risks %}
   <section class="page-break">
     <h2>执行摘要</h2>
+
+    {% if summary_conclusion %}
+    <p class="summary-conclusion">{{ summary_conclusion }}</p>
+    {% endif %}
+
+    <table class="twocol">
+      <tr>
+        <td class="col adv">
+          <h3 class="col-head">主要优势</h3>
+          {% if summary_strengths %}
+          <ul class="claims">
+            {% for s in summary_strengths %}<li>{{ s }}</li>{% endfor %}
+          </ul>
+          {% else %}
+          <p class="nodata">无数据（弃权）。</p>
+          {% endif %}
+        </td>
+        <td class="col">
+          <h3 class="col-head">主要风险</h3>
+          {% if summary_risks %}
+          <ul class="claims">
+            {% for r in summary_risks %}<li>{{ r }}</li>{% endfor %}
+          </ul>
+          {% else %}
+          <p class="nodata">无数据（弃权）。</p>
+          {% endif %}
+        </td>
+      </tr>
+    </table>
+
+    {% if executive_summary %}
     <p>{{ executive_summary }}</p>
+    {% endif %}
   </section>
   {% endif %}
 
-  <!-- 归因 -->
-  {% if attribution and attribution.summary %}
+  <!-- 归因（仅综合尽调前置；专项场景不复读全样本六维归因） -->
+  {% if scenario == 'due_diligence' and attribution and attribution.summary %}
   <section class="page-break">
     <h2>维度归因 · 为什么</h2>
     <p>{{ attribution.summary }}</p>
@@ -235,8 +376,8 @@
     {% endif %}
 
     {% if attribution_chart_data_uri %}
-    <h3>五维加权贡献</h3>
-    <img class="chart-img" src="{{ attribution_chart_data_uri }}" alt="五维归因图">
+    <h3>六维加权贡献</h3>
+    <img class="chart-img" src="{{ attribution_chart_data_uri }}" alt="六维归因图">
     {% endif %}
 
     {% if attribution_dimensions %}
@@ -264,7 +405,8 @@
   {% for ch in chapters %}
   <section class="{% if not loop.last %}page-break{% endif %}">
     <h2>{{ loop.index }}. {{ ch.title }}</h2>
-    <p style="color:#64748b; font-size:9.5pt;">{{ ch.purpose }}</p>
+    <p style="color:var(--ink-faint); font-size:9.5pt;">{{ ch.purpose }}</p>
+    {% if ch.sample_note %}<p style="color:var(--accent); font-size:9pt; font-weight:600;">{{ ch.sample_note }}</p>{% endif %}
 
     {% if ch.narration %}
     <p class="narration">{{ ch.narration }}</p>
@@ -333,6 +475,51 @@
       <li>{{ s }}</li>
       {% endfor %}
     </ul>
+    {% if appendix.thresholds %}
+    <h2>附录：四能力判定阈值</h2>
+    <table>
+      <thead>
+        <tr><th>能力</th><th>指标</th><th>判定规则</th></tr>
+      </thead>
+      <tbody>
+        {% for t in appendix.thresholds %}
+        <tr>
+          <td>{{ t.group }}</td>
+          <td>{{ t.label }}</td>
+          <td>{{ t.rule }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if appendix.time_window %}
+    <h2>附录：数据时间窗口</h2>
+    <p>{{ appendix.time_window }}</p>
+    {% endif %}
+
+    {% if appendix.high_risk_ids %}
+    <h2>附录：重点关注主体清单（匿名编号）</h2>
+    <p>以下主体在信号/舞弊/真实性任一维度被标记，建议优先复核（仅匿名编号，不含明文身份）。</p>
+    <p class="trace-block">{{ appendix.high_risk_ids | join('、') }}</p>
+    {% endif %}
+
+    {% if appendix.glossary %}
+    <h2>附录：术语词典</h2>
+    <table>
+      <thead>
+        <tr><th>术语</th><th>含义</th></tr>
+      </thead>
+      <tbody>
+        {% for g in appendix.glossary %}
+        <tr>
+          <td>{{ g.term }}</td>
+          <td>{{ g.def }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
     <p class="footer-note">
       本报告由明鉴・财税票・万景自动生成（WeasyPrint 渲染）。正文数字均可回溯至表字段；LLM 仅组织语言，不产生新数字。
     </p>

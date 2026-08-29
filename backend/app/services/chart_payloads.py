@@ -10,7 +10,7 @@ SIGNAL_BUCKET_KEYS = ("tax", "dev", "credit")
 
 
 def attribution_radar_chart(attribution: dict[str, Any], *, name: str = "全样本") -> dict[str, Any] | None:
-    """样本五维均分雷达图（来自 get_slice_attribution）。"""
+    """样本六维均分雷达图（来自 get_slice_attribution）。"""
     dims = attribution.get("dimensions") or {}
     if not dims:
         return None

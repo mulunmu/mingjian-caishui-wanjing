@@ -28,8 +28,15 @@ def test_canonical_metrics_complete():
             assert f in valid_fields, f"{m['metric_key']} 引用未知源字段 {f}"
 
 
-def test_canonical_metrics_cover_five_dimensions():
-    dims = {"tax_health_score", "authenticity_score", "industry_score", "legal_score", "finance_score"}
+def test_canonical_metrics_cover_six_dimensions():
+    dims = {
+        "tax_health_score",
+        "authenticity_score",
+        "invoice_score",
+        "industry_score",
+        "legal_score",
+        "finance_score",
+    }
     keys = {m["metric_key"] for m in CANONICAL_METRICS}
     assert dims <= keys
 

@@ -81,6 +81,27 @@ def _to_float(v: Decimal | int | float | None) -> float:
     return float(v)
 
 
+def _present(v: Decimal | int | float | None) -> bool:
+    """比率字段 0=弃权哨兵，不得混入分位总体或扣分阈值。"""
+    return _to_float(v) != 0.0
+
+
+def _peer_vals(peers: list[CoreMetrics], attr: str) -> list[float]:
+    return [_to_float(getattr(x, attr)) for x in peers if _present(getattr(x, attr, None))]
+
+
+def _pct_or_neutral(value: float, population: list[float], *, present: bool) -> float:
+    if not present or not population:
+        return 50.0
+    return _percentile(value, population)
+
+
+def _debt_warn_threshold() -> float:
+    from app.services.financial_benchmarks import FINANCIAL_RATIOS
+
+    return float(FINANCIAL_RATIOS["debt_ratio"]["warn_threshold"])
+
+
 def _risk_level(score: float) -> str:
     for threshold, label in RISK_LEVELS:
         if score >= threshold:
@@ -115,8 +136,13 @@ def _calc_tax_health(m: CoreMetrics) -> tuple[float, list[dict], list[dict]]:
     negative: list[dict] = []
     credit_contrib = _to_float(m.credit_score) * 0.4
     positive.append({"item": "纳税信用", "contribution": round(credit_contrib, 2)})
-    tax_rate_contrib = _to_float(m.tax_on_time_rate) * 100 * 0.3
-    positive.append({"item": "纳税准时率", "contribution": round(tax_rate_contrib, 2)})
+    # 0=弃权哨兵：与洞察 T-04 / _present 对齐，不把「无缴款记录」当成准时率 0 扣分
+    on_time_present = _present(m.tax_on_time_rate)
+    tax_rate_contrib = (_to_float(m.tax_on_time_rate) * 100 * 0.3) if on_time_present else 0.0
+    if on_time_present:
+        positive.append({"item": "纳税准时率", "contribution": round(tax_rate_contrib, 2)})
+    else:
+        positive.append({"item": "纳税准时率（数据弃权）", "contribution": 0.0})
 
     if m.tax_arrears_cnt:
         d = m.tax_arrears_cnt * 10
@@ -314,31 +340,46 @@ def _calc_finance_ratios(m: CoreMetrics, peers: list[CoreMetrics]) -> dict:
     """四能力比率分位：偿债 30% / 盈利 30% / 营运 20% / 成长 20%。
 
     每项比率在同业（有报表样本）内取分位，越高越好（资产负债率取逆向分位）。
-    弃权项（比率=0，源缺失）自然落在低分位，不影响整体可比性。
+    弃权项（比率=0）排除出分位总体；主体弃权时该分量取中性 50。
     """
-    curr = [_to_float(x.current_ratio) for x in peers]
-    quick = [_to_float(x.quick_ratio) for x in peers]
-    debts = [_to_float(x.debt_ratio) for x in peers]
-    gross = [_to_float(x.gross_margin) for x in peers]
-    netm = [_to_float(x.net_margin) for x in peers]
-    roes = [_to_float(x.roe) for x in peers]
-    recv = [_to_float(x.receivables_turnover) for x in peers]
-    inv = [_to_float(x.inventory_turnover) for x in peers]
-    asset = [_to_float(x.asset_turnover) for x in peers]
-    yoys = [_to_float(x.revenue_yoy) for x in peers]
-    pyoys = [_to_float(x.profit_yoy) for x in peers]
+    curr = _peer_vals(peers, "current_ratio")
+    quick = _peer_vals(peers, "quick_ratio")
+    debts = _peer_vals(peers, "debt_ratio")
+    gross = _peer_vals(peers, "gross_margin")
+    netm = _peer_vals(peers, "net_margin")
+    roes = _peer_vals(peers, "roe")
+    recv = _peer_vals(peers, "receivables_turnover")
+    inv = _peer_vals(peers, "inventory_turnover")
+    asset = _peer_vals(peers, "asset_turnover")
+    yoys = _peer_vals(peers, "revenue_yoy")
+    pyoys = _peer_vals(peers, "profit_yoy")
 
-    curr_pct = _percentile(_to_float(m.current_ratio), curr)
-    quick_pct = _percentile(_to_float(m.quick_ratio), quick)
-    debt_rev = 100 - _percentile(_to_float(m.debt_ratio), debts)
-    gross_pct = _percentile(_to_float(m.gross_margin), gross)
-    netm_pct = _percentile(_to_float(m.net_margin), netm)
-    roe_pct = _percentile(_to_float(m.roe), roes)
-    recv_pct = _percentile(_to_float(m.receivables_turnover), recv)
-    inv_pct = _percentile(_to_float(m.inventory_turnover), inv)
-    asset_pct = _percentile(_to_float(m.asset_turnover), asset)
-    yoy_pct = _percentile(_to_float(m.revenue_yoy), yoys)
-    pyoy_pct = _percentile(_to_float(m.profit_yoy), pyoys)
+    mv = {
+        "current_ratio": _to_float(m.current_ratio),
+        "quick_ratio": _to_float(m.quick_ratio),
+        "debt_ratio": _to_float(m.debt_ratio),
+        "gross_margin": _to_float(m.gross_margin),
+        "net_margin": _to_float(m.net_margin),
+        "roe": _to_float(m.roe),
+        "receivables_turnover": _to_float(m.receivables_turnover),
+        "inventory_turnover": _to_float(m.inventory_turnover),
+        "asset_turnover": _to_float(m.asset_turnover),
+        "revenue_yoy": _to_float(m.revenue_yoy),
+        "profit_yoy": _to_float(m.profit_yoy),
+    }
+
+    curr_pct = _pct_or_neutral(mv["current_ratio"], curr, present=_present(m.current_ratio))
+    quick_pct = _pct_or_neutral(mv["quick_ratio"], quick, present=_present(m.quick_ratio))
+    debt_base = _pct_or_neutral(mv["debt_ratio"], debts, present=_present(m.debt_ratio))
+    debt_rev = 100 - debt_base if _present(m.debt_ratio) else 50.0
+    gross_pct = _pct_or_neutral(mv["gross_margin"], gross, present=_present(m.gross_margin))
+    netm_pct = _pct_or_neutral(mv["net_margin"], netm, present=_present(m.net_margin))
+    roe_pct = _pct_or_neutral(mv["roe"], roes, present=_present(m.roe))
+    recv_pct = _pct_or_neutral(mv["receivables_turnover"], recv, present=_present(m.receivables_turnover))
+    inv_pct = _pct_or_neutral(mv["inventory_turnover"], inv, present=_present(m.inventory_turnover))
+    asset_pct = _pct_or_neutral(mv["asset_turnover"], asset, present=_present(m.asset_turnover))
+    yoy_pct = _pct_or_neutral(mv["revenue_yoy"], yoys, present=_present(m.revenue_yoy))
+    pyoy_pct = _pct_or_neutral(mv["profit_yoy"], pyoys, present=_present(m.profit_yoy))
 
     solvency = curr_pct * 0.4 + quick_pct * 0.3 + debt_rev * 0.3
     profitability = gross_pct * 0.35 + netm_pct * 0.35 + roe_pct * 0.3
@@ -356,9 +397,10 @@ def _calc_finance_ratios(m: CoreMetrics, peers: list[CoreMetrics]) -> dict:
     negative: list[dict] = []
     if 0 < _to_float(m.current_ratio) < 1.0:
         negative.append({"item": "流动比率<1", "deduction": 10})
-    if _to_float(m.debt_ratio) > 0.85:
+    debt_thr = _debt_warn_threshold()
+    if _present(m.debt_ratio) and _to_float(m.debt_ratio) > debt_thr:
         negative.append({"item": "资产负债率过高", "deduction": 10})
-    if _to_float(m.roe) < 0:
+    if _present(m.roe) and _to_float(m.roe) < 0:
         negative.append({"item": "净资产收益率为负", "deduction": 10})
 
     return {
@@ -380,12 +422,13 @@ def _calc_finance_ratios(m: CoreMetrics, peers: list[CoreMetrics]) -> dict:
 
 def _calc_finance_proxy(m: CoreMetrics, all_metrics: list[CoreMetrics]) -> dict:
     """代理口径（无三大报表样本）：利润率 / 营收增速 / 负债率 / 现金流健康度。"""
-    margins = [_to_float(x.profit_margin) for x in all_metrics]
-    yoys = [_to_float(x.revenue_yoy) for x in all_metrics]
-    debts = [_to_float(x.debt_ratio) for x in all_metrics]
-    margin_pct = _percentile(_to_float(m.profit_margin), margins)
-    yoy_pct = _percentile(_to_float(m.revenue_yoy), yoys)
-    debt_rev_pct = 100 - _percentile(_to_float(m.debt_ratio), debts)
+    margins = _peer_vals(all_metrics, "profit_margin")
+    yoys = _peer_vals(all_metrics, "revenue_yoy")
+    debts = _peer_vals(all_metrics, "debt_ratio")
+    margin_pct = _pct_or_neutral(_to_float(m.profit_margin), margins, present=_present(m.profit_margin))
+    yoy_pct = _pct_or_neutral(_to_float(m.revenue_yoy), yoys, present=_present(m.revenue_yoy))
+    debt_base = _pct_or_neutral(_to_float(m.debt_ratio), debts, present=_present(m.debt_ratio))
+    debt_rev_pct = 100 - debt_base if _present(m.debt_ratio) else 50.0
     cf_level = getattr(m, "cash_flow_level", None) or m.z_score_level
     cf_score = {"健康": 80, "一般": 50, "承压": 20, "安全": 80, "灰色": 50, "困境": 20}.get(cf_level, 50)
     score = margin_pct * 0.3 + yoy_pct * 0.25 + debt_rev_pct * 0.2 + cf_score * 0.25
@@ -397,7 +440,8 @@ def _calc_finance_proxy(m: CoreMetrics, all_metrics: list[CoreMetrics]) -> dict:
         {"item": "现金流健康", "contribution": round(cf_score * 0.25, 2)},
     ]
     negative: list[dict] = []
-    if _to_float(m.debt_ratio) > 0.85:
+    debt_thr = _debt_warn_threshold()
+    if _present(m.debt_ratio) and _to_float(m.debt_ratio) > debt_thr:
         negative.append({"item": "资产负债率过高", "deduction": 15})
     if cf_level in ("承压", "困境"):
         negative.append({"item": "经营现金流承压", "deduction": 20})
@@ -416,9 +460,9 @@ def _calc_finance_proxy(m: CoreMetrics, all_metrics: list[CoreMetrics]) -> dict:
 
 def _warning_signals(m: CoreMetrics, all_metrics: list[CoreMetrics], legal_score: float) -> list[str]:
     signals: list[str] = []
-    if _to_float(m.tax_on_time_rate) < 0.8:
+    if _present(m.tax_on_time_rate) and _to_float(m.tax_on_time_rate) < 0.8:
         signals.append("tax_on_time_rate_low")
-    medians = sorted(_to_float(x.invoice_monthly_avg) for x in all_metrics)
+    medians = sorted(_to_float(x.invoice_monthly_avg) for x in all_metrics if _to_float(x.invoice_monthly_avg) > 0)
     median_inv = medians[len(medians) // 2] if medians else 0
     if median_inv > 0 and _to_float(m.invoice_monthly_avg) < median_inv * 0.5:
         signals.append("invoice_monthly_avg_drop")
@@ -426,7 +470,8 @@ def _warning_signals(m: CoreMetrics, all_metrics: list[CoreMetrics], legal_score
         signals.append("credit_level_risk")
     if m.social_trend == "缩减":
         signals.append("social_trend_shrink")
-    if _to_float(m.revenue_deviation) > 0.3:
+    # 与洞察 A-01 统一阈值 0.3
+    if _present(m.revenue_deviation) and _to_float(m.revenue_deviation) > 0.3:
         signals.append("revenue_deviation_high")
     if legal_score < 50:
         signals.append("legal_compliance_risk")
@@ -629,7 +674,9 @@ def _build_result(
         "enterprise_name": display,  # 匿名标签，兼容旧 API 字段名
         "display_label": display,
         "credit_level": m.credit_level,
-        "tax_on_time_rate": round(_to_float(m.tax_on_time_rate), 4),
+        "tax_on_time_rate": (
+            round(_to_float(m.tax_on_time_rate), 4) if _present(m.tax_on_time_rate) else None
+        ),
         "invoice_monthly_avg": m.invoice_monthly_avg,
         "revenue_deviation": round(_to_float(m.revenue_deviation), 4),
         "social_trend": m.social_trend,
@@ -693,7 +740,7 @@ async def get_legal_events(db: AsyncSession, enterprise_id: str) -> list[dict]:
             "enterprise_id": ev.enterprise_id,
             "event_type": ev.event_type,
             "severity": ev.severity,
-            "amount_involved": float(ev.amount_involved) if ev.amount_involved else 0,
+            "amount_involved": float(ev.amount_involved) if ev.amount_involved is not None else None,
             "event_date": ev.event_date.isoformat() if ev.event_date else None,
             "description": ev.description,
             "source": ev.source,

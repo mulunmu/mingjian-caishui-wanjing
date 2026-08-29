@@ -1,103 +1,78 @@
-"""个体报告「财务分析」章：三大报表 + 四能力比率（弃权优先，评级对齐洞察引擎）"""
+"""个体报告「财务深度分析」：杜邦分解 + 同业对标柱状图（弃权优先，评级对齐洞察引擎）"""
 import sys
 import os
 from decimal import Decimal
 
-import pytest
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.models.core_metrics import CoreMetrics, IndustryBenchmark
+from app.models.core_metrics import IndustryBenchmark
 from app.models.financials import EnterpriseFinancials
-from app.services.slice_report import _financial_chapter
-
-
-def _cm(has_statements: bool, industry: str = "制造") -> CoreMetrics:
-    return CoreMetrics(
-        enterprise_id="e1",
-        display_label="广东·制造·小微",
-        industry_l1=industry,
-        industry_l2="其他",
-        province="广东",
-        city="深圳",
-        has_financial_statements=has_statements,
-    )
+from app.services.slice_report import _build_benchmark_chart, _build_dupont
 
 
 def _fin(**overrides) -> EnterpriseFinancials:
     return EnterpriseFinancials(enterprise_id="e1", **overrides)
 
 
-class _FakeDb:
-    def __init__(self, fin=None, cm=None, bench=None):
-        self._fin = fin
-        self._cm = cm
-        self._bench = bench
+def test_dupont_builds_when_statements_present():
+    fin = _fin(
+        net_margin=Decimal("0.05"),
+        asset_turnover=Decimal("2.0"),
+        total_assets=Decimal("1000"),
+        owner_equity=Decimal("500"),
+        roe=Decimal("0.20"),
+    )
+    d = _build_dupont(fin, True)
+    assert d is not None
+    assert d["complete"] is True
+    assert d["roe_disp"] == "20.0%"
+    # 三因子 traceable：净利率 / 总资产周转率 / 权益乘数
+    vals = {f["field"]: f["value"] for f in d["factors"]}
+    assert vals["net_margin"] == 0.05
+    assert vals["asset_turnover"] == 2.0
+    assert vals["equity_multiplier"] == 2.0
 
-    async def get(self, model, key):
-        if model is EnterpriseFinancials:
-            return self._fin
-        if model is CoreMetrics:
-            return self._cm
-        if model is IndustryBenchmark:
-            return self._bench
-        return None
+
+def test_dupont_none_without_statements():
+    # 无报表 / has_financial_statements=False → 弃权，不硬凑
+    assert _build_dupont(None, False) is None
+    assert _build_dupont(_fin(), False) is None
 
 
-@pytest.mark.asyncio
-async def test_financial_chapter_builds_when_statements_present():
+def test_benchmark_chart_builds():
     fin = _fin(
         debt_ratio=Decimal("0.78"),
-        current_ratio=Decimal("1.8"),
         gross_margin=Decimal("0.25"),
-        revenue=Decimal("1000000"),
-        net_profit=Decimal("100000"),
+        net_margin=Decimal("0.10"),
+        roe=Decimal("0.15"),
+        roa=Decimal("0.08"),
     )
-    cm = _cm(True)
     bench = IndustryBenchmark(
         industry_l1="制造",
         avg_debt_ratio=Decimal("0.6"),
         avg_gross_margin=Decimal("0.2"),
+        avg_net_margin=Decimal("0.08"),
+        avg_roe=Decimal("0.12"),
+        avg_roa=Decimal("0.06"),
     )
-    result = await _financial_chapter(_FakeDb(fin, cm, bench), enterprise_id="e1")
-
-    assert result is not None
-    chapter, _claims = result
-    assert chapter["title"] == "财务分析"
-    # 客观评级：资产负债率 78% → 预警
-    assert chapter["meta"]["ratio_ratings"]["debt_ratio"] == "预警"
-    assert chapter["meta"]["ratio_ratings"]["gross_margin"] == "达标"
-    # 三大报表 numeric_rows 覆盖资产/利润/现金流
-    labels = [r[0] for r in chapter["numeric_rows"]]
-    assert "资产总计" in labels
-    assert "净利润" in labels
-    assert "经营活动现金流量净额" in labels
-    # 每条结论 traceable 到 enterprise_financials
-    for c in chapter["claims"]:
-        assert c["trace"]["table"] == "enterprise_financials"
-    # 对标柱状图（本样本 vs 行业均值）
-    assert chapter["charts"]["type"] == "bar"
-    assert "本样本" in [s["name"] for s in chapter["charts"]["data"]["series"]]
+    chart = _build_benchmark_chart(fin, True, bench)
+    assert chart is not None
+    assert chart["type"] == "bar"
+    assert "资产负债率" in chart["data"]["labels"]
+    assert [s["name"] for s in chart["data"]["series"]] == ["行业均值", "本样本"]
+    # 本样本值 ×100（0.78 → 78.0）
+    own_series = next(s for s in chart["data"]["series"] if s["name"] == "本样本")
+    assert own_series["values"][0] == 78.0
 
 
-@pytest.mark.asyncio
-async def test_financial_chapter_none_without_statements():
-    fin = _fin()
-    cm = _cm(False)  # has_financial_statements=False → 弃权
-    assert await _financial_chapter(_FakeDb(fin, cm, None), enterprise_id="e1") is None
-    # 无 financials 记录 → 弃权
-    assert await _financial_chapter(_FakeDb(None, cm, None), enterprise_id="e1") is None
-
-
-@pytest.mark.asyncio
-async def test_financial_chapter_ratio_zero_is_abstain():
-    fin = _fin(debt_ratio=Decimal("0"))  # 0=弃权
-    result = await _financial_chapter(_FakeDb(fin, _cm(True), None), enterprise_id="e1")
-    chapter, _claims = result
-    assert chapter["meta"]["ratio_ratings"]["debt_ratio"] == "无数据"
-    debt_claim = next(c for c in chapter["claims"] if "资产负债率" in c["claim"])
-    assert "无数据" in debt_claim["claim"]
-    assert debt_claim["value"] is None  # 弃权不伪造数字
+def test_benchmark_chart_abstain_without_bench_or_zero():
+    fin = _fin(debt_ratio=Decimal("0.78"), gross_margin=Decimal("0.25"))
+    # 无行业基准 → 弃权
+    assert _build_benchmark_chart(fin, True, None) is None
+    # 无报表 → 弃权
+    assert _build_benchmark_chart(None, False, IndustryBenchmark(industry_l1="制造")) is None
+    # 比率全 0 → 弃权（不伪造对标）
+    assert _build_benchmark_chart(_fin(), True, IndustryBenchmark(industry_l1="制造")) is None
 
 
 def test_financial_benchmarks_assess_and_format():

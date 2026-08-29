@@ -13,7 +13,7 @@ from app.services.report_html import (
 
 def _sample_context():
     return {
-        "scenario": "general",
+        "scenario": "due_diligence",
         "title": "行业趋势风控报告",
         "story": "面向通识读者，讲清样本覆盖、行业走向与主要风险信号。",
         "report_date": "2026年08月26日",

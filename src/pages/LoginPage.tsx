@@ -16,12 +16,15 @@ export default function LoginPage() {
     email: '',
     password: '',
   });
+  const [formError, setFormError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     clearError();
+    setFormError('');
 
     if (!formData.email || !formData.password) {
+      setFormError('请输入邮箱和密码');
       return;
     }
 
@@ -145,9 +148,9 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {error && (
+            {(error || formError) && (
               <div className="p-3 text-sm text-terracotta bg-terracotta/10 border border-terracotta/30 rounded-lg">
-                {error}
+                {error || formError}
               </div>
             )}
 
@@ -177,6 +180,7 @@ export default function LoginPage() {
               disabled={isLoading}
               onClick={async () => {
                 clearError();
+                setFormError('');
                 const success = await demoLogin();
                 if (success) navigate('/overview');
               }}

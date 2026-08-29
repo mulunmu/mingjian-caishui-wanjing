@@ -1,19 +1,22 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { formatDate } from '@/utils/formatters';
 import { LogOut } from 'lucide-react';
 import { CuteEyeLogo } from '@/components/ui/CuteEyeLogo';
 import useAuthStore from '@/stores/authStore';
+import useOverviewStore from '@/stores/overviewStore';
 
 const navItems = [
   { path: '/overview', label: '风险态势' },
   { path: '/', label: '风险评估' },
   { path: '/ingest', label: '数据接入' },
   { path: '/report', label: '报告中心' },
+  { path: '/risk/fraud', label: '反欺诈' },
+  { path: '/risk/authenticity', label: '真实性' },
 ];
 
 export default function Header() {
   const navigate = useNavigate();
   const { isLoggedIn, user, logout } = useAuthStore();
+  const sampleCount = useOverviewStore((s) => s.kpi?.sample_count);
 
   const handleLogout = () => {
     logout();
@@ -22,13 +25,18 @@ export default function Header() {
 
   return (
     <header className="h-14 bg-white border-b border-warm-200 flex items-center px-6 flex-shrink-0 z-50">
-      {/* Logo */}
-      <div className="flex items-center gap-3 mr-8">
+      {/* Logo → 风险态势 */}
+      <button
+        type="button"
+        onClick={() => navigate('/overview')}
+        className="flex items-center gap-3 mr-8 hover:opacity-90 transition-opacity"
+        title="回到风险态势"
+      >
         <CuteEyeLogo size={36} />
         <span className="text-xl font-bold text-warm-800 tracking-tight">
           明鉴・财税票・万景
         </span>
-      </div>
+      </button>
 
       {/* 导航 */}
       <nav className="flex items-center gap-1">
@@ -53,7 +61,7 @@ export default function Header() {
       {/* 右侧信息 */}
       <div className="ml-auto flex items-center gap-4">
         <span className="text-xs text-warm-400">
-          数据截止 {formatDate(new Date())}
+          {typeof sampleCount === 'number' ? `数据样本 ${sampleCount} 家` : '数据样本 …'}
         </span>
         {isLoggedIn && (
           <div className="flex items-center gap-3">

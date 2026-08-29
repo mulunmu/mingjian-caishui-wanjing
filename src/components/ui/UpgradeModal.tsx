@@ -37,7 +37,10 @@ export default function UpgradeModal({ open, onClose, feature = '该功能' }: U
           {feature}为<strong className="text-warm-800">定制用户</strong>专享功能。
         </p>
         <p className="mb-5 text-xs leading-relaxed text-warm-400">
-          当前账号为非定制用户，可预览报告，但无法生成 / 下载。升级后解锁全部报告研判、主动监测与场景定制。
+          当前账号为非定制用户，可预览报告，但无法生成 / 下载。升级后解锁全部报告分析、主动监测与场景定制。
+        </p>
+        <p className="mb-5 text-xs leading-relaxed text-warm-500">
+          如需开通定制权限，请联系您的服务顾问或管理员。
         </p>
 
         <div className="flex justify-end">

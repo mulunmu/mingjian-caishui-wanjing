@@ -100,6 +100,19 @@ def test_calc_tax_health_no_false_positive_on_zero():
     assert "所得税税负率明显偏低" not in items
 
 
+def test_calc_tax_health_abstains_zero_on_time_rate():
+    """tax_on_time_rate=0 弃权：不计准时率贡献，与洞察 T-04 对齐。"""
+    from app.services.assessment import _calc_tax_health
+
+    score_present, pos_present, _ = _calc_tax_health(_m(tax_on_time_rate=Decimal("0.9")))
+    score_zero, pos_zero, _ = _calc_tax_health(_m(tax_on_time_rate=Decimal("0")))
+    labels_zero = [p["item"] for p in pos_zero]
+    assert "纳税准时率（数据弃权）" in labels_zero
+    assert any(p["item"] == "纳税准时率" for p in pos_present)
+    # 有准时率时应高于弃权（同信用分）
+    assert score_present > score_zero
+
+
 def test_industry_profile_stats_skips_abstain():
     from app.services.assessment import _industry_profile_stats
 

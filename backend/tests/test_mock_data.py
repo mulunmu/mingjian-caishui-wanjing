@@ -21,7 +21,7 @@ def test_get_mock_enterprise():
     assert "深圳明达" not in ent["enterprise_name"]
     assert ent["source"] == "mock"
     assert "dimensions" in ent
-    assert len(ent["dimensions"]) == 5
+    assert len(ent["dimensions"]) == 6
 
 
 def test_get_nonexistent_enterprise():

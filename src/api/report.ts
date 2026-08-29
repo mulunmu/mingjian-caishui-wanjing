@@ -18,6 +18,8 @@ export const reportApi = {
       scenario: params.scenario || 'general',
       session_id: params.session_id,
       query: params.query,
+      industry_l1: params.industry_l1,
+      province: params.province,
     }),
 
   /** 生成切片报告 */
@@ -26,6 +28,8 @@ export const reportApi = {
       scenario: params.scenario,
       session_id: params.session_id,
       query: params.query,
+      industry_l1: params.industry_l1,
+      province: params.province,
     }),
 
   /** 生成企业深度报告 */
@@ -40,24 +44,8 @@ export const reportApi = {
       query: params.query,
     }),
 
-  /** 从列表元数据组装详情（后端无 GET /report/:id；禁止伪造章节分数） */
-  get: async (id: string): Promise<Report> => {
-    const list = (await client.get('/report/list')) as ReportListResponse;
-    const item = (list.items || []).find((i) => i.report_id === id);
-    if (!item) {
-      throw new Error('报告不存在或无权访问');
-    }
-    return {
-      id: item.report_id,
-      title: item.title,
-      subtitle: 'PDF 交付物',
-      dimension: '—',
-      function: '—',
-      generated_at: item.date,
-      summary: '报告已生成。完整分析内容请下载 PDF 查看。',
-      chapters: [],
-    };
-  },
+  /** 报告结构化详情（与下载 PDF 同源快照回读） */
+  get: (id: string): Promise<Report> => client.get(`/report/${id}`),
 
   /** 下载 PDF */
   downloadPdf: (reportId: string): Promise<Blob> =>

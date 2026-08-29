@@ -1,5 +1,5 @@
 import client from './client';
-import type { ChartConfig } from '@/types/chat';
+import type { ChartConfig, ChatAction } from '@/types/chat';
 
 /** 后端 Chat 请求体 */
 export interface ChatRequest {
@@ -43,6 +43,14 @@ export interface EvidenceItem {
 /** 后端 Chat 响应 */
 export interface ChatBackendResponse {
   reply: string;
+  reply_source?: string;
+  analysis_mode?: string;
+  parse_source?: string;
+  judgment_modes?: {
+    analysis?: string;
+    parse?: string;
+    narration?: string;
+  };
   session_id?: string;
   session_note?: string;
   intent?: string;
@@ -51,6 +59,7 @@ export interface ChatBackendResponse {
   data?: {
     claims?: BackendClaim[];
     followups?: string[];
+    actions?: ChatAction[];
     [key: string]: unknown;
   };
   charts?: unknown;
@@ -65,9 +74,13 @@ export interface ChatResponse {
   evidence: EvidenceItem[];
   trace: string;
   followups: string[];
+  actions?: ChatAction[];
   function?: string;
   dimension?: string;
   chart?: ChartConfig;
+  replySource?: string;
+  analysisMode?: string;
+  parseSource?: string;
 }
 
 /** 将后端 claims 转换为前端 EvidenceItem 数组 */
@@ -162,6 +175,7 @@ export const chatApi = {
     // 从后端 data 中提取 followups 和 claims（后端结构: res.data.followups / res.data.claims）
     const backendData = res.data;
     const followups = backendData?.followups || [];
+    const actions = Array.isArray(backendData?.actions) ? backendData.actions : [];
     const evidence = claimsToEvidence(backendData?.claims);
 
     return {
@@ -170,9 +184,13 @@ export const chatApi = {
       evidence,
       trace: res.intent || '',
       followups,
+      actions,
       function: res.function,
       dimension: res.dimension,
       chart: normalizeChart(res.charts),
+      replySource: res.reply_source || res.judgment_modes?.narration,
+      analysisMode: res.analysis_mode || res.judgment_modes?.analysis || 'rule',
+      parseSource: res.parse_source || res.judgment_modes?.parse,
     };
   },
 };

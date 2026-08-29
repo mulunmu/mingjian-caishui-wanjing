@@ -62,6 +62,8 @@ async def _load_metrics(
         q = q.where(CoreMetrics.industry_l1 == industry_l1)
     if province:
         q = q.where(CoreMetrics.province == province)
+    # 确定性：截断子集（rows[:120] / fraud limit）必须可复现，按主体 ID 稳定排序。
+    q = q.order_by(CoreMetrics.enterprise_id)
     result = await db.execute(q)
     return list(result.scalars().all())
 
@@ -124,8 +126,9 @@ async def build_trend_industry_claims(
     for ind, group in by_ind.items():
         yoy = [_f(g.revenue_yoy) for g in group]
         avg_yoy = sum(yoy) / len(yoy) if yoy else 0.0
-        grow = sum(1 for g in group if (g.social_trend or "") == "增长")
-        shrink = sum(1 for g in group if (g.social_trend or "") == "缩减")
+        # 增长/缩减与方向字段同源（revenue_yoy 符号），不再用 social_trend（常为「稳定」/NULL，口径漂移）。
+        grow = sum(1 for g in group if _f(g.revenue_yoy) > 0)
+        shrink = sum(1 for g in group if _f(g.revenue_yoy) < 0)
         stats.append(
             {
                 "industry_l1": ind,
@@ -156,7 +159,7 @@ async def build_trend_industry_claims(
         claims.append(
             _claim(
                 f"{s['industry_l1']}行业营收同比均值 {s['avg_revenue_yoy']}%，趋势偏{direction}"
-                f"（增长 {s['grow_cnt']} / 缩减 {s['shrink_cnt']}，样本 {s['n']}）。",
+                f"（营收增长 {s['grow_cnt']} / 缩减 {s['shrink_cnt']}，样本 {s['n']}）。",
                 metric="avg_revenue_yoy",
                 number=s["avg_revenue_yoy"],
                 unit="%",
@@ -213,8 +216,8 @@ async def build_score_claims(
                     metric="avg_score",
                     number=attr.get("avg_score"),
                     unit="分",
-                    table="core_metrics",
-                    field="credit_score",
+                    table="assessment",
+                    field="overall_score",
                     query_id="Q_score_overall",
                     evidence=[f"sample_count={attr.get('sample_count')}"],
                 )
@@ -227,8 +230,8 @@ async def build_score_claims(
                         metric=f"dim_{key}",
                         number=round(float(d.get("score") or 0), 2),
                         unit="分",
-                        table="core_metrics",
-                        field="credit_score",
+                        table="assessment",
+                        field=f"dim_{key}",
                         query_id=f"Q_score_dim_{key}",
                         evidence=[f"weight={d.get('weight')}"],
                     )
@@ -273,17 +276,20 @@ async def build_score_claims(
             avg = sum(_f(g.credit_score) for g in group) / len(group)
             on_time = sum(_f(g.tax_on_time_rate) for g in group) / len(group)
             on_time_series.append(round(on_time * 100, 1))
+            small_n = len(group) < 5
+            note = "（样本 <5，仅供参考，不作判断依据）" if small_n else ""
             payload.append({"industry_l1": ind, "n": len(group), "avg_credit_score": round(avg, 2)})
             claims.append(
                 _claim(
-                    f"{ind}行业信用分均值 {avg:.1f}，纳税准时率均值 {on_time * 100:.1f}%（样本 {len(group)}）。",
+                    f"{ind}行业信用分均值 {avg:.1f}，纳税准时率均值 {on_time * 100:.1f}%（样本 {len(group)}）{note}",
                     metric="avg_credit_score",
                     number=round(avg, 2),
                     unit="分",
                     table="core_metrics",
                     field="credit_score",
                     query_id="Q_score_industry",
-                    evidence=[f"tax_on_time_rate_avg={round(on_time, 4)}"],
+                    confidence="inferred" if small_n else "computed",
+                    evidence=[f"tax_on_time_rate_avg={round(on_time, 4)}", f"n={len(group)}"],
                 )
             )
         chart = {
@@ -296,7 +302,7 @@ async def build_score_claims(
                 ],
             },
         }
-        return claims, {"by_industry": payload, "charts": chart}
+        return claims, {"by_industry": payload, "sample_count": len(rows), "charts": chart}
 
     # region：地区间评分对比（含对比图 + 最高/最低对比结论）
     by_prov: dict[str, list[CoreMetrics]] = {}
@@ -310,15 +316,18 @@ async def build_score_claims(
 
     claims = []
     for s in region_stats[:8]:
+        small_n = s["n"] < 5
+        note = "（样本 <5，仅供参考，不作判断依据）" if small_n else ""
         claims.append(
             _claim(
-                f"{s['province']}地区信用分均值 {s['avg']:.1f}（样本 {s['n']}）。",
+                f"{s['province']}地区信用分均值 {s['avg']:.1f}（样本 {s['n']}）{note}",
                 metric="avg_credit_score",
                 number=s["avg"],
                 unit="分",
                 table="core_metrics",
                 field="credit_score",
                 query_id="Q_score_region",
+                confidence="inferred" if small_n else "computed",
                 evidence=[f"province={s['province']}", f"n={s['n']}"],
             )
         )
@@ -338,14 +347,15 @@ async def build_score_claims(
                 evidence=[f"top={top['province']}", f"bottom={bottom['province']}"],
             )
         )
+    # 图表展示全部地区（而非 top8）：保证「最高/最低」对比结论引用的末位地区出现在图中（图文一致）。
     chart = {
         "type": "bar",
         "data": {
-            "labels": [s["province"] for s in region_stats[:8]],
-            "series": [{"name": "信用分均值", "values": [s["avg"] for s in region_stats[:8]]}],
+            "labels": [s["province"] for s in region_stats],
+            "series": [{"name": "信用分均值", "values": [s["avg"] for s in region_stats]}],
         },
     }
-    return claims, {"region_stats": region_stats, "region_count": len(by_prov), "charts": chart}
+    return claims, {"region_stats": region_stats, "region_count": len(by_prov), "sample_count": len(rows), "charts": chart}
 
 
 async def build_benchmark_claims(
@@ -362,20 +372,25 @@ async def build_benchmark_claims(
 
     claims = []
     for b in benches:
+        # 小样本采信阈值：样本 <5 的基准均值仅供参考，不作判断依据（弃权优先于编造）。
+        small_n = int(getattr(b, "sample_count", 0) or 0) < 5
+        note = "（样本 <5，仅供参考，不作判断依据）" if small_n else ""
         claims.append(
             _claim(
                 f"{b.industry_l1}行业基准：信用分均值 {_f(b.avg_credit_score):.1f}，"
                 f"营收偏差均值 {_f(b.avg_revenue_deviation) * 100:.2f}%，"
-                f"高风险占比 {_f(b.high_risk_rate) * 100:.1f}%（样本 {b.sample_count}）。",
+                f"高风险占比 {_f(b.high_risk_rate) * 100:.1f}%（样本 {b.sample_count}）{note}",
                 metric="avg_credit_score",
                 number=round(_f(b.avg_credit_score), 2),
                 unit="分",
                 table="industry_benchmark",
                 field="avg_credit_score",
                 query_id="Q_benchmark_industry",
+                confidence="inferred" if small_n else "computed",
                 evidence=[
                     f"avg_revenue_deviation={_f(b.avg_revenue_deviation)}",
                     f"high_risk_rate={_f(b.high_risk_rate)}",
+                    f"sample_count={b.sample_count}",
                 ],
             )
         )
@@ -397,6 +412,215 @@ async def build_benchmark_claims(
         },
     }
     return claims, {"benchmarks": len(benches), "charts": chart}
+
+
+async def build_financial_claims(
+    db: AsyncSession,
+    industry_l1: str | None = None,
+    dimension: str = "overall",
+    *,
+    province: str | None = None,
+) -> tuple[list[Claim], dict[str, Any]]:
+    """聚合「财务健康」切片：四能力比率均值 + 客观评级（阈值统一自 financial_benchmarks，铁律 L1）。
+
+    比率 0=弃权：仅对非 0 样本求均值，不产「无数据」假结论。
+    """
+    from app.services.financial_benchmarks import (
+        FINANCIAL_GROUPS,
+        FINANCIAL_RATIOS,
+        assess_financial_ratio,
+        format_financial_ratio,
+    )
+
+    rows = await _load_metrics(db, industry_l1, province=province)
+    if not rows:
+        return (
+            [
+                _claim(
+                    "当前样本库暂无财务数据。",
+                    metric="sample_count", number=0, unit="家",
+                    table="core_metrics", field="has_financial_statements",
+                    query_id="Q_financial_empty",
+                )
+            ],
+            {"sample_count": 0},
+        )
+
+    coverage = sum(1 for m in rows if bool(m.has_financial_statements))
+    claims = [
+        _claim(
+            f"样本 {len(rows)} 家，其中 {coverage} 家具备完整三大报表"
+            f"（财务覆盖率 {coverage / len(rows) * 100:.1f}%）。",
+            metric="financial_coverage", number=coverage, unit="家",
+            table="core_metrics", field="has_financial_statements",
+            query_id="Q_financial_coverage",
+            evidence=[f"sample_count={len(rows)}"],
+        )
+    ]
+
+    group_pass_rate: list[dict[str, Any]] = []
+    for gname in FINANCIAL_GROUPS:
+        fields = [f for f, cfg in FINANCIAL_RATIOS.items() if cfg.get("group") == gname]
+        rated: list[dict[str, Any]] = []
+        for field in fields:
+            vals = [_f(getattr(m, field)) for m in rows if _f(getattr(m, field)) != 0.0]
+            if not vals:
+                continue  # 0=弃权，不产假结论
+            avg = sum(vals) / len(vals)
+            rating = assess_financial_ratio(field, avg)
+            cfg = FINANCIAL_RATIOS[field]
+            is_pct = cfg.get("is_pct")
+            num = round(avg * 100, 2) if is_pct else round(avg, 2)
+            rated.append({"field": field, "rating": rating})
+            claims.append(
+                _claim(
+                    f"{cfg['label']}均值 {format_financial_ratio(field, avg)}"
+                    f"（{rating}，样本 {len(vals)}）。",
+                    metric=field, number=num, unit=cfg.get("unit") or "",
+                    table="core_metrics", field=field,
+                    query_id=f"Q_financial_{field}",
+                    evidence=[f"group={gname}", f"n={len(vals)}"],
+                )
+            )
+        if rated:
+            pass_cnt = sum(1 for r in rated if r["rating"] == "达标")
+            group_pass_rate.append({
+                "group": gname,
+                "pass_rate": round(pass_cnt / len(rated) * 100, 1),
+            })
+
+    chart = None
+    if group_pass_rate:
+        chart = {
+            "type": "bar",
+            "data": {
+                "labels": [g["group"] for g in group_pass_rate],
+                "series": [
+                    {"name": "达标率%", "values": [g["pass_rate"] for g in group_pass_rate]}
+                ],
+            },
+        }
+    return claims, {
+        "sample_count": len(rows),
+        "financial_coverage": coverage,
+        "group_pass_rate": group_pass_rate,
+        "charts": chart,
+    }
+
+
+async def build_tax_claims(
+    db: AsyncSession,
+    industry_l1: str | None = None,
+    dimension: str = "overall",
+    *,
+    province: str | None = None,
+) -> tuple[list[Claim], dict[str, Any]]:
+    """聚合「税务合规」切片：纳税准时率 / 税负率 / 欠税 / 违法 / 滞纳。0=弃权口径。"""
+    rows = await _load_metrics(db, industry_l1, province=province)
+    if not rows:
+        return (
+            [
+                _claim(
+                    "当前样本库暂无税务数据。",
+                    metric="sample_count", number=0, unit="家",
+                    table="core_metrics", field="tax_on_time_rate",
+                    query_id="Q_tax_empty",
+                )
+            ],
+            {"sample_count": 0},
+        )
+
+    def _mean(field: str) -> tuple[float, int]:
+        vals = [_f(getattr(m, field)) for m in rows if _f(getattr(m, field)) != 0.0]
+        if not vals:
+            return 0.0, 0
+        return sum(vals) / len(vals), len(vals)
+
+    on_time, n_on = _mean("tax_on_time_rate")
+    vat, n_vat = _mean("vat_burden")
+    income, n_income = _mean("income_tax_burden")
+    arrears = sum(1 for m in rows if int(getattr(m, "tax_arrears_cnt", 0) or 0) > 0)
+    viol = sum(1 for m in rows if int(getattr(m, "tax_violation_cnt", 0) or 0) > 0)
+    late = sum(int(getattr(m, "tax_late_penalty_cnt", 0) or 0) for m in rows)
+
+    claims = []
+    if n_on > 0:
+        claims.append(
+            _claim(
+                f"样本 {len(rows)} 家，纳税准时率均值 {on_time * 100:.1f}%（有效 {n_on} 家）。",
+                metric="tax_on_time_rate", number=round(on_time * 100, 2), unit="%",
+                table="core_metrics", field="tax_on_time_rate",
+                query_id="Q_tax_on_time", evidence=[f"n={n_on}"],
+            )
+        )
+    else:
+        claims.append(
+            _claim(
+                f"样本 {len(rows)} 家，纳税准时率无有效观测（0=弃权）。",
+                metric="tax_on_time_rate", number=None, unit="%",
+                table="core_metrics", field="tax_on_time_rate",
+                query_id="Q_tax_on_time_abstain", evidence=["n=0"],
+                confidence="inferred",
+            )
+        )
+    if n_vat > 0 or n_income > 0:
+        parts = []
+        if n_vat > 0:
+            parts.append(f"增值税税负率均值 {vat * 100:.2f}%（有效 {n_vat} 家）")
+        else:
+            parts.append("增值税税负率无有效观测")
+        if n_income > 0:
+            parts.append(f"所得税税负率均值 {income * 100:.2f}%（有效 {n_income} 家）")
+        else:
+            parts.append("所得税税负率无有效观测")
+        claims.append(
+            _claim(
+                "，".join(parts) + "。",
+                metric="vat_burden",
+                number=round(vat * 100, 2) if n_vat > 0 else None,
+                unit="%",
+                table="core_metrics", field="vat_burden",
+                query_id="Q_tax_burden",
+                evidence=[f"n_vat={n_vat}", f"n_income={n_income}"],
+            )
+        )
+    claims.append(
+        _claim(
+            f"欠税主体 {arrears} 家，税务违法主体 {viol} 家，滞纳/罚款累计 {late} 笔。",
+            metric="tax_arrears_cnt", number=arrears, unit="家",
+            table="core_metrics", field="tax_arrears_cnt",
+            query_id="Q_tax_arrears",
+            evidence=[f"tax_violation_cnt={viol}", f"tax_late_penalty_cnt={late}"],
+        )
+    )
+    chart_labels = []
+    chart_values = []
+    if n_on > 0:
+        chart_labels.append("纳税准时率")
+        chart_values.append(round(on_time * 100, 1))
+    if n_vat > 0:
+        chart_labels.append("增值税税负")
+        chart_values.append(round(vat * 100, 2))
+    if n_income > 0:
+        chart_labels.append("所得税税负")
+        chart_values.append(round(income * 100, 2))
+    chart = {
+        "type": "bar",
+        "data": {
+            "labels": chart_labels or ["无有效比率"],
+            "series": [{"name": "%", "values": chart_values or [0]}],
+        },
+    } if chart_labels else None
+    return claims, {
+        "sample_count": len(rows),
+        "on_time_avg": on_time if n_on else None,
+        "vat_burden_avg": vat if n_vat else None,
+        "income_tax_avg": income if n_income else None,
+        "arrears_cnt": arrears,
+        "violation_cnt": viol,
+        "late_penalty_cnt": late,
+        "charts": chart,
+    }
 
 
 async def build_signal_claims(
@@ -422,6 +646,23 @@ async def build_signal_claims(
             bucket_credit.add(eid)
     unique_affected = bucket_tax | bucket_dev | bucket_credit
 
+    # 多重风险叠加：按原始信号逐主体计命中类数（与互斥分桶独立，避免双计数混淆）。
+    # 三类 = 税务违法 / 营收偏差≥25% / 信用等级 C/D/M。
+    multi_2 = 0
+    multi_3 = 0
+    for m in rows:
+        hits = 0
+        if int(getattr(m, "tax_violation_cnt", 0) or 0) > 0:
+            hits += 1
+        if _f(m.revenue_deviation) >= 0.25:
+            hits += 1
+        if (m.credit_level or "") in ("C", "D", "M"):
+            hits += 1
+        if hits >= 2:
+            multi_2 += 1
+        if hits >= 3:
+            multi_3 += 1
+
     claims = [
         _claim(
             f"样本 {len(rows)} 家中，至少命中一类风险信号的主体共 {len(unique_affected)} 家；"
@@ -440,9 +681,25 @@ async def build_signal_claims(
                 f"high_dev={len(high_dev)}",
                 f"low_credit={len(low_credit)}",
                 f"unique_affected={len(unique_affected)}",
+                f"multi_hit_ge2={multi_2}",
+                f"multi_hit_ge3={multi_3}",
             ],
         )
     ]
+    if multi_2:
+        claims.append(
+            _claim(
+                f"同时命中 ≥2 类风险 {multi_2} 家、≥3 类 {multi_3} 家（多重风险叠加，需优先复核）。",
+                metric="multi_hit_count",
+                number=multi_2,
+                unit="家",
+                table="core_metrics",
+                field="tax_violation_cnt",
+                query_id="Q_signal_multi_hit",
+                confidence="inferred",
+                evidence=[f"ge2={multi_2}", f"ge3={multi_3}", "口径=原始信号逐主体计数（非互斥分桶）"],
+            )
+        )
     if low_credit:
         by_ind: dict[str, int] = {}
         for m in low_credit:
@@ -461,10 +718,14 @@ async def build_signal_claims(
             )
         )
     meta = {
+        "sample_count": len(rows),
         "coverage": "tax_illegal_only",
         "tax_violation": len(tax_viol),
         "high_dev": len(high_dev),
         "low_credit": len(low_credit),
+        "multi_hit_ge2": multi_2,
+        "multi_hit_ge3": multi_3,
+        "unique_affected": sorted(unique_affected),
     }
     from app.services.chart_payloads import signal_funnel_chart, signal_industry_heatmap, signal_pie_chart
 
@@ -500,8 +761,9 @@ async def build_authenticity_claims(
             {},
         )
 
-    # Benford 较慢，切片样本可截断
-    sample = rows[:120]
+    # Benford 已改用本切片金额（PG，无 MySQL 依赖），无需截断：分析全 scoped 主体，
+    # 消除「120 vs 193」口径漂移。行序已由 _load_metrics 的 ORDER BY 确定。
+    sample = rows
     result = await run_blocking(
         authenticity_engine.analyze_authenticity_batch, sample, industry_l1=industry_l1
     )
@@ -554,7 +816,7 @@ async def build_authenticity_claims(
 
 
 async def build_fraud_claims(
-    db: AsyncSession, industry_l1: str | None = None, limit: int = 40, *, province: str | None = None
+    db: AsyncSession, industry_l1: str | None = None, limit: int | None = None, *, province: str | None = None
 ) -> tuple[list[Claim], dict]:
     from app.services import fraud_engine
 
@@ -568,7 +830,11 @@ async def build_fraud_claims(
         q = q.where(CoreMetrics.industry_l1 == industry_l1)
     if province:
         q = q.where(CoreMetrics.province == province)
-    q = q.limit(limit)
+    # 口径统一：舞弊特征走 PG 预计算（engine_features_store），无需截断，
+    # 与封面 KPI（_resolve_scenario_kpis）同取全 scoped 主体，消除 40 vs 60 漂移。
+    q = q.order_by(CoreMetrics.enterprise_id)
+    if limit is not None:
+        q = q.limit(limit)
     result = await db.execute(q)
     rows = [(r[0], r[1], r[2]) for r in result.all()]
     if not rows:
@@ -644,13 +910,14 @@ async def build_fraud_claims(
     for sig, cnt in list((out.get("signal_counts") or {}).items())[:5]:
         claims.append(
             _claim(
-                f"信号「{sig}」出现 {cnt} 次。",
+                f"信号「{sig}」命中 {cnt} 家主体。",
                 metric="signal_count",
                 number=cnt,
-                unit="次",
+                unit="家",
                 table="syx_invoice_details",
                 field="scbm",
                 query_id="Q_fraud_signal",
+                evidence=["口径=去重主体数（signal_counts 为命中主体数，非事件次数）"],
             )
         )
     sc = out.get("signal_counts") or {}
@@ -673,7 +940,9 @@ async def build_fraud_claims(
     return claims, out
 
 
-ANALYSIS_FUNCTIONS = frozenset({"trend", "authenticity", "fraud", "score", "benchmark", "signal"})
+ANALYSIS_FUNCTIONS = frozenset(
+    {"trend", "authenticity", "fraud", "score", "benchmark", "signal", "financial", "tax"}
+)
 RISK_FUNCTIONS = frozenset({"signal", "fraud"})
 FUNCTION_LABELS = {
     "trend": "趋势",
@@ -823,8 +1092,8 @@ async def build_enterprise_claims(
             metric="overall_score",
             number=profile["overall_score"],
             unit="分",
-            table="core_metrics",
-            field="credit_score",
+            table="assessment",
+            field="overall_score",
             query_id="Q_enterprise_overall",
             evidence=[f"risk_level={profile['risk_level']}"],
         )
@@ -844,8 +1113,8 @@ async def build_enterprise_claims(
                 metric=f"dim_{key}",
                 number=round(float(score), 2),
                 unit="分",
-                table="core_metrics",
-                field="credit_score",
+                table="assessment",
+                field=f"dim_{key}",
                 query_id=f"Q_enterprise_dim_{key}",
                 evidence=[f"weight={d.get('weight')}"],
             )
@@ -886,8 +1155,8 @@ async def build_enterprise_claims(
                 metric="risk_factor",
                 number=n.get("deduction"),
                 unit="分",
-                table="core_metrics",
-                field="credit_score",
+                table="assessment",
+                field="attribution",
                 query_id="Q_enterprise_neg",
                 evidence=[f"dimension={dim_label}", f"item={n['item']}"],
             )
@@ -918,8 +1187,8 @@ async def build_enterprise_claims(
                 metric="overall_score",
                 number=profile["overall_score"],
                 unit="分",
-                table="core_metrics",
-                field="credit_score",
+                table="assessment",
+                field="overall_score",
                 query_id="Q_enterprise_attribution",
                 evidence=[f"dimensions={len(attr.get('dimensions') or {})}"],
             )
@@ -978,6 +1247,8 @@ DEFAULT_FOLLOWUPS = {
     "score": ["分析各行业趋势走向", "查看风险预警信号", "做行业对标"],
     "benchmark": ["分析趋势走向", "看真实性均分", "出组合报告"],
     "signal": ["分析舞弊切片", "看行业趋势", "生成风险报告"],
+    "financial": ["看偿债与营运能力拆解", "生成财务健康体检报告", "对照行业财务基准"],
+    "tax": ["看欠税与违法信号分布", "生成税务合规体检报告", "对照税负水平"],
     "report": ["补充真实性分析", "补充舞弊检测", "按行业看趋势"],
     "email_report": ["先生成报告再发送", "查看覆盖度", "分析行业趋势"],
     "general": ["分析各行业的趋势走向", "按地区对比信用评分", "查看有哪些风险预警"],
@@ -1036,6 +1307,10 @@ async def run_judgment(
         claims, meta2 = await build_authenticity_claims(db, industry, province=province)
     elif fn == "fraud":
         claims, meta2 = await build_fraud_claims(db, industry, province=province)
+    elif fn == "financial":
+        claims, meta2 = await build_financial_claims(db, industry, dimension=dim, province=province)
+    elif fn == "tax":
+        claims, meta2 = await build_tax_claims(db, industry, dimension=dim, province=province)
     elif fn == "signal" or (fn == "general" and dim == "signal"):
         claims, meta2 = await build_signal_claims(db, province=province)
         fn = "signal"
@@ -1111,8 +1386,11 @@ def _pearson(xs: list[float], ys: list[float]) -> float:
 
 
 def _metric_to_source_field(metric: str) -> str | None:
+    """CoreMetrics 列映射（不含 assessment 计算分）。"""
     return {
         "credit_score": "credit_score",
+        "avg_credit_score": "credit_score",
+        "avg_composite": "fraud_composite_score",
         "revenue_yoy": "revenue_yoy",
         "revenue_deviation": "revenue_deviation",
         "profit_margin": "profit_margin",
@@ -1131,6 +1409,19 @@ def _metric_to_source_field(metric: str) -> str | None:
         "unit_price_ratio": "unit_price_ratio",
         "change_cnt": "change_cnt",
     }.get(metric)
+
+
+def _trace_for_metric(metric: str) -> tuple[str, str]:
+    """Claim 溯源 (table, field)。综合/维度分来自 assessment，勿误标 credit_score。"""
+    if metric in ("overall_score", "avg_score"):
+        return "assessment", "overall_score"
+    if metric.startswith("dim_"):
+        return "assessment", metric
+    if metric == "avg_composite":
+        return "assessment", "fraud_composite_score"
+    sf = _metric_to_source_field(metric)
+    return "core_metrics", sf or metric
+
 
 
 def _metric_label(metric: str) -> str:
@@ -1239,7 +1530,22 @@ async def _generic_simple_avg(
         return claims, {"charts": chart}
     avg = _avg_for_rows(rows, metric)
     if avg is None:
-        avg = 0.0
+        return (
+            [
+                _claim(
+                    f"样本无有效{label}数据，无法计算均值。",
+                    metric=metric,
+                    number=None,
+                    unit="",
+                    table="core_metrics",
+                    field=sf,
+                    query_id="Q_semantic_overall_abstain",
+                    confidence="inferred",
+                    evidence=[f"sample_count={len(rows)}"],
+                )
+            ],
+            {"sample_count": len(rows)},
+        )
     claim = _claim(
         f"样本{label}均值 {avg:.2f}（样本 {len(rows)} 家）。",
         metric=metric,
@@ -1248,6 +1554,7 @@ async def _generic_simple_avg(
         table="core_metrics",
         field=sf,
         query_id="Q_semantic_overall",
+        evidence=[f"n={len(rows)}"],
     )
     return [claim], {}
 
@@ -1291,6 +1598,7 @@ async def build_comparison_claims(
 
     claims: list[Claim] = []
     # 无样本的值显式说明（不再静默跳过）：小样本/跨省时避免用户误以为只比了部分对象。
+    trace_table, trace_field = _trace_for_metric(metric)
     for m in missing:
         claims.append(
             _claim(
@@ -1298,8 +1606,8 @@ async def build_comparison_claims(
                 metric="compare_no_sample",
                 number=None,
                 unit="",
-                table="core_metrics",
-                field=_metric_to_source_field(metric) or "credit_score",
+                table=trace_table,
+                field=trace_field,
                 query_id="Q_comparison_no_sample",
                 confidence="inferred",
             )
@@ -1317,8 +1625,8 @@ async def build_comparison_claims(
                 metric=f"compare_{metric}",
                 number=p["avg"],
                 unit="",
-                table="core_metrics",
-                field=_metric_to_source_field(metric) or "credit_score",
+                table=trace_table,
+                field=trace_field,
                 query_id="Q_comparison_value",
             )
         )
@@ -1332,8 +1640,8 @@ async def build_comparison_claims(
                 metric="compare_spread",
                 number=round(top["avg"] - bottom["avg"], 2),
                 unit="",
-                table="core_metrics",
-                field=_metric_to_source_field(metric) or "credit_score",
+                table=trace_table,
+                field=trace_field,
                 query_id="Q_comparison_spread",
                 confidence="inferred",
                 evidence=[f"top={top['value']}", f"bottom={bottom['value']}"],
@@ -1362,8 +1670,85 @@ async def build_ranking_claims(
 
     if "industry_l1" in dims or "province" in dims:
         key = "industry_l1" if "industry_l1" in dims else "province"
+        # 综合分来自 assessment，禁止用 credit_score 顶替
+        if metric in ("overall_score", "avg_score"):
+            from app.services import assessment
+
+            items = await assessment.list_all(db)
+            industry_f = _sq_industry(sq)
+            province_f = _sq_province(sq)
+            groups_scores: dict[str, list[float]] = {}
+            for it in items:
+                if industry_f and (it.get("industry_l1") or "") != industry_f:
+                    continue
+                if province_f and (it.get("province") or "") != province_f:
+                    continue
+                g = it.get(key) or "其他"
+                score = it.get("overall_score")
+                if score is None:
+                    continue
+                groups_scores.setdefault(g, []).append(float(score))
+            stats = [
+                {"group": g, "avg": round(sum(vs) / len(vs), 2), "n": len(vs)}
+                for g, vs in groups_scores.items()
+                if vs
+            ]
+            stats.sort(key=lambda x: x["avg"], reverse=(order == "desc"))
+            stats = stats[:limit]
+            if not stats:
+                return (
+                    [
+                        _claim(
+                            "暂无有效综合评分样本，无法排名。",
+                            metric="sample_count",
+                            number=0,
+                            unit="家",
+                            table="assessment",
+                            field="overall_score",
+                            query_id="Q_ranking_empty",
+                        )
+                    ],
+                    {"ranking": []},
+                )
+            claims = [
+                _claim(
+                    f"第{i + 1}{ordinal}：{s['group']}，{label}均值 {s['avg']}（样本 {s['n']}）。",
+                    metric=f"rank_{metric}",
+                    number=s["avg"],
+                    unit="分",
+                    table="assessment",
+                    field="overall_score",
+                    query_id="Q_ranking_group",
+                    confidence="inferred",
+                )
+                for i, s in enumerate(stats)
+            ]
+            chart = {
+                "type": "bar",
+                "data": {
+                    "labels": [s["group"] for s in stats],
+                    "series": [{"name": label, "values": [s["avg"] for s in stats]}],
+                },
+            }
+            return claims, {"ranking": stats, "charts": chart}
+
         rows = await _load_metrics(db, _sq_industry(sq), province=_sq_province(sq))
-        sf = _metric_to_source_field(metric) or "credit_score"
+        sf = _metric_to_source_field(metric)
+        if not sf:
+            return (
+                [
+                    _claim(
+                        f"指标 {label} 无法按 {key} 聚合排名。",
+                        metric="rank_unsupported",
+                        number=None,
+                        unit="",
+                        table="core_metrics",
+                        field=metric,
+                        query_id="Q_ranking_unsupported",
+                    )
+                ],
+                {},
+            )
         groups: dict[str, list[CoreMetrics]] = {}
         for m in rows:
             groups.setdefault(getattr(m, key) or "其他", []).append(m)
@@ -1371,7 +1756,7 @@ async def build_ranking_claims(
         for g, group in groups.items():
             avg = _avg_for_rows(group, metric)
             if avg is None:
-                avg = sum(_f(getattr(x, sf)) for x in group) / len(group)
+                continue
             stats.append({"group": g, "avg": round(avg, 2), "n": len(group)})
         stats.sort(key=lambda x: x["avg"], reverse=(order == "desc"))
         stats = stats[:limit]
@@ -1381,8 +1766,8 @@ async def build_ranking_claims(
                 metric=f"rank_{metric}",
                 number=s["avg"],
                 unit="",
-                table="core_metrics",
-                field=sf,
+                table=_trace_for_metric(metric)[0],
+                field=_trace_for_metric(metric)[1],
                 query_id="Q_ranking_group",
                 confidence="inferred",
             )
@@ -1410,7 +1795,7 @@ async def build_ranking_claims(
             metric="rank_overall_score",
             number=round(float(it.get("overall_score") or 0), 2),
             unit="分",
-            table="core_metrics",
+            table="assessment",
             field="overall_score",
             query_id="Q_ranking_enterprise",
             confidence="inferred",

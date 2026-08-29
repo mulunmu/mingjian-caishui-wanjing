@@ -9,7 +9,7 @@ from app.services.report_html import build_report_html
 
 def _full_context():
     return {
-        "scenario": "general",
+        "scenario": "due_diligence",
         "scenario_label": "行业趋势风控",
         "tier": "standard",
         "title": "行业趋势风控报告",
@@ -22,8 +22,8 @@ def _full_context():
         ],
         "chapters": [
             {
-                "title": "五维雷达 · 综合画像",
-                "purpose": "样本五维均分雷达",
+                "title": "六维雷达 · 综合画像",
+                "purpose": "样本六维均分雷达",
                 "claims": [{"claim": "全样本综合均分47.0分。", "confidence": "computed", "trace": {}, "evidence_chain": []}],
                 "numeric_rows": [["avg_score", "47.0", "分", "综合均分"]],
                 "chart_data_uri": "data:image/png;base64,iVBORw0KGgo=",
@@ -45,6 +45,9 @@ def _full_context():
             },
         },
         "attribution_chart_data_uri": "data:image/png;base64,iVBORw0KGgo=",
+        "summary_conclusion": "综合均分 47.0 分，风险等级「中高风险」，样本 193 家",
+        "summary_strengths": ["「法律合规」维度均分 70.0 分（相对稳健）"],
+        "summary_risks": ["税务违法（12 家）", "重点关注主体 3 家"],
         "validation": {"ok": True, "total_claims": 6, "unanchored": 0},
         "appendix": {
             "data": ["core_metrics", "syx_tax_illega", "syx_auditing"],
@@ -55,8 +58,15 @@ def _full_context():
 
 REQUIRED_MARKERS = [
     "行业趋势风控报告",
+    "cover-motif",
     "样本规模",
-    "五维雷达 · 综合画像",
+    "执行摘要",
+    "主要优势",
+    "主要风险",
+    "综合均分 47.0 分",
+    "税务违法（12 家）",
+    "重点关注主体 3 家",
+    "六维雷达 · 综合画像",
     "维度归因",
     "主要拖累因素",
     "抗幻觉",
@@ -78,3 +88,70 @@ def test_report_html_structure_snapshot(tmp_path):
         assert marker in html, f"missing section marker: {marker}"
     assert "data:image/png;base64," in html
     assert html.count("<table") >= 2
+
+
+def test_cover_scenario_motif_and_accent():
+    """封面按场景渲染母题图形 + 主色 + 副标题 + 数据类侧重。"""
+    ctx = _full_context()
+    ctx["scenario"] = "financial"
+    ctx["cover"] = {"motif": "ledger", "accent": "#0f766e"}
+    ctx["subtitle"] = "盈利能力 · 偿债能力 · 营运能力 · 现金流"
+    ctx["data_focus"] = ["财务数据", "企业基础信息"]
+    html = build_report_html(ctx, "slice_financial_cover_test")
+    assert "#0f766e" in html          # 主色贯穿封面
+    assert "盈利能力" in html          # 副标题
+    assert "财务数据" in html          # 数据类侧重芯片
+    assert "<rect" in html            # ledger 母题柱状图形
+
+
+def test_design_tokens_centralized_slice():
+    """L4 设计令牌：切片模板共用 _brand_tokens.css，正文用 var() 引用。"""
+    html = build_report_html(_full_context(), "slice_tokens_test")
+    assert "--brand: #003366" in html   # 令牌定义（含品牌藏蓝）
+    assert "var(--brand)" in html
+    assert "var(--ink)" in html
+    assert "var(--accent)" in html
+    assert "--font-sans" in html
+
+
+def _enterprise_context():
+    return {
+        "scenario": "enterprise",
+        "scenario_label": "企业财务分析报告",
+        "tier": "general",
+        "title": "企业财务分析报告 · #abc12345",
+        "story": "针对匿名样本的财务深度分析。",
+        "report_date": "2026年08月27日",
+        "subject": {
+            "short_id": "abc12345", "label": "样本", "industry_l1": "制造",
+            "industry_l2": "通用设备", "province": "广东", "report_year": "2024",
+        },
+        "overall": {
+            "health": "良好", "health_color": "#2e7d32", "risk_level": "低风险",
+            "overall_score": 72.5, "reason": "综合评分72.5分，风险等级低风险。",
+            "risk_points": ["毛利率偏低"], "advantages": ["资产负债率达标"], "advice": ["关注成本结构"],
+        },
+        "dimensions": [
+            {
+                "title": "盈利风险", "risk_level": "低", "risk_color": "#2e7d32",
+                "metrics": [{"label": "毛利率", "value": "23.5%", "unit": "", "standard": "≥20%", "rating": "达标"}],
+                "analysis": {"level_review": "1项达标。", "trend": "单期无跨期比较。", "risks": "无预警。", "advice": "保持。"},
+            }
+        ],
+        "statements": {
+            "income": {"title": "利润表", "rows": [["营业收入", "1,000.00"]]},
+            "balance": {"title": "资产负债表", "rows": [["资产总计", "2,000.00"]]},
+            "cashflow": {"title": "现金流量表", "rows": [["经营活动现金流量净额", "100.00"]]},
+        },
+        "radar_chart": None,
+        "validation": {"ok": True, "total_claims": 1, "unanchored": 0},
+        "appendix": {"data": ["core_metrics"], "methods": ["六维加权评分"]},
+    }
+
+
+def test_design_tokens_centralized_enterprise():
+    """L4 设计令牌：个体模板同样引用 _brand_tokens.css 的令牌。"""
+    html = build_report_html(_enterprise_context(), "ent_tokens_test")
+    assert "--brand: #003366" in html
+    assert "var(--brand)" in html
+    assert "var(--gold)" in html

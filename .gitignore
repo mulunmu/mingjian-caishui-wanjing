@@ -26,3 +26,16 @@ data/*.xlsx
 
 # 生成产物（不提交）
 backend/reports/
+
+# 临时调研/提取文件（不提交）
+_tmp_ref/
+_fin_names.txt
+_ref_report.txt
+_render_pdf.py
+backend/_ent.pdf
+backend/_ent.txt
+backend/_downloaded.pdf
+backend/_downloaded.txt
+企划书/_render/
+企划书/_extract_design.py
+企划书/*.pdf

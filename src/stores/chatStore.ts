@@ -32,11 +32,11 @@ const createWelcomeMessage = (): Message => ({
   id: 'welcome',
   role: 'assistant',
   content:
-    '你好！我是明鉴风控助手。你可以通过右侧卡片选择分析维度和功能，或直接输入问题，我来帮你分析财税票风险数据。',
+    '你好！我是明鉴风控引擎，专注财税票风险分析。你可以通过右侧卡片选择分析维度和功能（评分、真实性、反欺诈、基准、趋势），或直接输入问题，我会基于已接入的匿名企业数据给出可溯源的分析结论。',
   timestamp: Date.now(),
   followups: [
     '整体风险评分如何？',
-    '哪些行业逾期率最高？',
+    '哪些行业风险评分最高？',
     '经营真实性验证结果',
   ],
 });
@@ -60,7 +60,12 @@ const useChatStore = create<ChatStore>((set, get) => ({
   sessionId: null,
   enterpriseId: null,
 
-  setEnterpriseId: (id: string | null) => set({ enterpriseId: id }),
+  setEnterpriseId: (id: string | null) => {
+    // 切换主体只换锚点，不清空对话（防中断）；「清空对话」按钮才是唯一重置入口。
+    // 跨主体不串味靠后端按 enterprise_id 接地，而非前端清空历史。
+    if (id === get().enterpriseId) return;
+    set({ enterpriseId: id });
+  },
 
   addUserMessage: (text: string) => {
     const userMsg: Message = {
@@ -91,9 +96,13 @@ const useChatStore = create<ChatStore>((set, get) => ({
         timestamp: Date.now(),
         chart: res.chart,
         followups: res.followups,
+        actions: res.actions,
         evidence: res.evidence,
         evidence_chain: res.evidence.map((e) => e.content),
         trace: res.trace,
+        replySource: res.replySource,
+        analysisMode: res.analysisMode || 'rule',
+        parseSource: res.parseSource,
       };
 
       set((s) => ({

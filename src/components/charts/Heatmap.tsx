@@ -12,7 +12,7 @@ interface HeatmapProps {
 }
 
 export default function Heatmap({ data, height = 280 }: HeatmapProps) {
-  const maxVal = Math.max(...data.values.map((v) => v[2]));
+  const maxVal = Math.max(...data.values.map((v) => v[2]), 1);
 
   const option = {
     ...warmTheme,
@@ -42,6 +42,7 @@ export default function Heatmap({ data, height = 280 }: HeatmapProps) {
       orient: 'horizontal' as const,
       left: 'center',
       bottom: 0,
+      // 单色序（米金 → 深金）：仅明度变化，红/绿/蓝盲均可区分。
       inRange: {
         color: ['#FAF6F1', '#C08B30'],
       },
@@ -51,7 +52,15 @@ export default function Heatmap({ data, height = 280 }: HeatmapProps) {
       {
         type: 'heatmap',
         data: data.values,
-        label: { show: true, color: '#2C2418', fontSize: 10 },
+        label: {
+          show: true,
+          fontSize: 10,
+          // 深色格白字、浅色格深字，保证数值对比度。
+          color: (params: { value?: [number, number, number] }) => {
+            const val = params.value?.[2] ?? 0;
+            return val >= maxVal * 0.6 ? '#FFFFFF' : '#2C2418';
+          },
+        },
         emphasis: {
           itemStyle: { shadowBlur: 6, shadowColor: 'rgba(44, 36, 24, 0.2)' },
         },

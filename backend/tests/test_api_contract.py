@@ -30,7 +30,8 @@ def test_mock_list_format():
         assert "source" in e
         assert e["source"] == "mock"
         assert isinstance(e["dimensions"], dict)
-        assert len(e["dimensions"]) == 5
+        assert len(e["dimensions"]) == 6
+        assert "invoice" in e["dimensions"]
 
     warnings = get_mock_warnings()
     for w in warnings:

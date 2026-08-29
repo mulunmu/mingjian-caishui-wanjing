@@ -9,6 +9,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import useOverviewStore from '@/stores/overviewStore';
+import MetricDictionary from '@/components/overview/MetricDictionary';
 import Badge from '@/components/ui/Badge';
 import Skeleton from '@/components/ui/Skeleton';
 import PieChart from '@/components/charts/PieChart';
@@ -161,14 +162,37 @@ export default function OverviewPage() {
       <div className="max-w-[1200px] mx-auto p-6 space-y-4">
 
         {/* ── 标题 ── */}
-        <div className="flex items-end justify-between">
+        <div className="flex items-end justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-lg font-bold text-warm-800">企业风险监测看板</h1>
             <p className="text-xs text-warm-400 mt-0.5">实时监控全域税务风险态势</p>
           </div>
-          <p className="text-[11px] text-warm-300">
-            {kpi.sample_count} 家样本 · 均分 {kpi.avg_score.toFixed(1)}
-          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="h-8 px-3 rounded-lg text-xs font-medium bg-amber text-white hover:bg-amber/90 transition-colors"
+            >
+              深入评估
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/risk/fraud')}
+              className="h-8 px-3 rounded-lg text-xs font-medium border border-warm-300 text-warm-600 hover:bg-warm-50 transition-colors"
+            >
+              反欺诈
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/risk/authenticity')}
+              className="h-8 px-3 rounded-lg text-xs font-medium border border-warm-300 text-warm-600 hover:bg-warm-50 transition-colors"
+            >
+              真实性
+            </button>
+            <p className="text-[11px] text-warm-300 ml-1">
+              {kpi.sample_count} 家样本 · 均分 {kpi.avg_score.toFixed(1)}
+            </p>
+          </div>
         </div>
 
         {/* ── KPI ── */}
@@ -275,6 +299,9 @@ export default function OverviewPage() {
             </div>
           </motion.div>
         </div>
+
+        {/* ── 指标字典 ── */}
+        <MetricDictionary />
 
       </div>
     </div>

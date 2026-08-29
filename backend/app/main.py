@@ -80,6 +80,23 @@ async def lifespan(app: FastAPI):
         except Exception as col_exc:
             logger.debug("chat_sessions column ensure: %s", col_exc)
 
+        def _ensure_chat_session_custom_state_column() -> None:
+            """已有库 create_all 不会加列；补 chat_sessions.custom_state_json（定制报告对话态）。"""
+            from sqlalchemy import text
+
+            with eng.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE chat_sessions "
+                        "ADD COLUMN IF NOT EXISTS custom_state_json TEXT"
+                    )
+                )
+
+        try:
+            await asyncio.to_thread(_ensure_chat_session_custom_state_column)
+        except Exception as col_exc:
+            logger.debug("chat_sessions custom_state column ensure: %s", col_exc)
+
         def _ensure_app_user_plan_column() -> None:
             """已有库 create_all 不会加列；补 app_users.plan（订阅分层）。"""
             from sqlalchemy import text
@@ -127,7 +144,7 @@ app = FastAPI(
     title="明鉴・财税票・万景",
     description="""## 明鉴・财税票・万景 API
 
-基于税务数据的五维风控引擎（评分 / 真实性 / 反欺诈 / 基准 / 趋势）。
+基于税务数据的六维风控引擎（评分 / 真实性 / 反欺诈 / 基准 / 趋势）。
 
 ### 数据模式
 - **mock** — 纯离线演示模式（无后端）
@@ -135,7 +152,7 @@ app = FastAPI(
 - **live** — 真实税务数据 + AI 大模型
 
 ### 认证
-演示阶段默认不强制认证。设置 `AUTH_REQUIRED=true` 开启 JWT 保护。
+演示默认开启 JWT（`AUTH_REQUIRED=true`）。本地无鉴权调试请显式设 `AUTH_REQUIRED=false`。
 """,
     version="3.0.0",
     docs_url="/docs",
@@ -173,6 +190,7 @@ class RateLimitMiddleware:
             return
 
         client_key = _client_key_from_scope(scope)
+        rate_limiter.set_request_client_key(client_key)
         if not rate_limiter.check_api_limit(client_key):
             response = JSONResponse(status_code=429, content={"detail": "请求过于频繁，请稍后重试"})
             await response(scope, receive, send)
@@ -183,14 +201,15 @@ class RateLimitMiddleware:
 
 
 def _client_key_from_scope(scope: Scope) -> str:
-    headers = {k.decode().lower(): v.decode() for k, v in (scope.get("headers") or [])}
-    forwarded = (headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    if forwarded:
-        return f"ip:{forwarded}"
+    """限流键：默认用直连 peer；仅 TRUST_PROXY=true 时信任 X-Forwarded-For。"""
     client = scope.get("client")
-    if client and client[0]:
-        return f"ip:{client[0]}"
-    return "ip:unknown"
+    peer = client[0] if client and client[0] else "unknown"
+    if os.getenv("TRUST_PROXY", "false").lower() in ("1", "true", "yes"):
+        headers = {k.decode().lower(): v.decode() for k, v in (scope.get("headers") or [])}
+        forwarded = (headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        if forwarded:
+            return f"ip:{forwarded}"
+    return f"ip:{peer}"
 
 
 app.add_middleware(RateLimitMiddleware)
@@ -208,8 +227,6 @@ app.include_router(subscription_router, prefix="/api/v1")
 @app.get("/api/v1/health")
 async def health():
     database = "disconnected"
-    enterprise_count = 0
-    engine_features_count = 0
     data_mode = "mock"
     try:
         async with _get_async_session_local() as db:
@@ -218,14 +235,6 @@ async def health():
             result = await db.execute(select(func.count()).select_from(CoreMetrics))
             enterprise_count = result.scalar_one()
             data_mode = "live" if enterprise_count > 0 else "mock"
-            try:
-                from app.models.engine_store import EnterpriseEngineFeatures
-
-                engine_features_count = (
-                    await db.execute(select(func.count()).select_from(EnterpriseEngineFeatures))
-                ).scalar_one()
-            except Exception:
-                engine_features_count = 0
     except Exception as e:
         logger.error(f"Health check failed: {type(e).__name__}: {e}", exc_info=True)
         database = "disconnected"
@@ -233,16 +242,12 @@ async def health():
 
     llm_available = is_llm_configured()
     from app.services.cache_service import is_redis_available
-    from app.services.rate_limiter import get_llm_usage, redis_backend_active
+    from app.services.rate_limiter import redis_backend_active
 
     return {
         "status": "ok",
         "database": database,
-        "enterprise_count": enterprise_count,
-        "engine_features_count": engine_features_count,
         "llm_configured": llm_available,
         "data_mode": data_mode if data_mode == "live" else ("mock_with_llm" if llm_available else "mock"),
         "redis": "connected" if is_redis_available() or redis_backend_active() else "memory",
-        "llm_usage": get_llm_usage(),
-        "mysql_checks": _startup_checks or None,
     }

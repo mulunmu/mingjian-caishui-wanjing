@@ -29,6 +29,12 @@ export interface EvidenceItem {
 /** 消息类型 */
 export type MessageRole = 'user' | 'assistant' | 'system';
 
+/** 可点击的引导动作：跳转到具体功能页（报告向导 / 数据接入等） */
+export interface ChatAction {
+  label: string;
+  target: string;
+}
+
 export interface Message {
   id: string;
   role: MessageRole;
@@ -38,12 +44,20 @@ export interface Message {
   chart?: ChartConfig;
   /** 追问建议 */
   followups?: string[];
+  /** 引导动作（跳转功能页，区别于追问文本） */
+  actions?: ChatAction[];
   /** 证据链（仅报告使用，对话中隐藏） */
   evidence_chain?: string[];
   /** 结构化溯源证据 */
   evidence?: EvidenceItem[];
   /** 溯源 */
   trace?: string;
+  /** 表述来源：llm | template */
+  replySource?: 'llm' | 'template' | string;
+  /** 数字/风险研判来源：rule（当前恒规则） */
+  analysisMode?: 'rule' | 'llm' | string;
+  /** 意图解析来源：rule | llm | corrected */
+  parseSource?: string;
 }
 
 /** 对话上下文 */

@@ -369,14 +369,14 @@ def load_auditing() -> list[dict]:
 
 
 def load_invoice() -> dict[str, dict]:
-    # zfbz 存 false/true；销项用修复后 sign 或双重编码 HEX
+    # 销项营收用 hjje（不含税），与 vat_revenue / finance_revenue 口径对齐；勿用 jshj（价税合计）
     rows = fetch_all(
         f"""
         SELECT taxpayer_id,
                COUNT(*) AS cnt,
                SUM(CASE
                      WHEN {U('sign')} LIKE '%%销%%' OR HEX(sign) LIKE 'C3A9%%'
-                     THEN COALESCE(jshj, 0) ELSE 0
+                     THEN COALESCE(CAST(NULLIF(hjje,'') AS DECIMAL(20,4)), 0) ELSE 0
                    END) AS sales_amt,
                COUNT(DISTINCT DATE_FORMAT(kprq, '%%Y-%%m')) AS months
         FROM syx_invoice
@@ -416,27 +416,23 @@ def load_red_invoice() -> dict[str, int]:
 
 def load_vat_revenue() -> dict[str, float]:
     rows = fetch_all(
-        """
+        f"""
         SELECT taxpayer_id,
                MAX(COALESCE(general_year_accumulative_amount,0)
                    + COALESCE(current_year_accumulative_goods,0)
                    + COALESCE(current_year_accumulative_service,0)) AS rev
         FROM syx_tax_value_added
         WHERE taxpayer_id IS NOT NULL
-          AND (project_name LIKE '%%应税销售额%%' OR project_name LIKE '%%销售额%%' OR column_sequence IN ('1','1.0'))
+          AND ({U('project_name')} LIKE '%%应税销售额%%'
+               OR {U('project_name')} LIKE '%%销售额%%'
+               OR column_sequence IN ('1','1.0'))
         GROUP BY taxpayer_id
         """
     )
     if not rows:
-        rows = fetch_all(
-            """
-            SELECT taxpayer_id,
-                   SUM(COALESCE(general_year_accumulative_amount,0)) AS rev
-            FROM syx_tax_value_added
-            WHERE taxpayer_id IS NOT NULL
-            GROUP BY taxpayer_id
-            """
-        )
+        # 品目过滤无命中时弃权（不回退为全表 SUM，避免把进项/免税行计入销售额）
+        logger.warning("load_vat_revenue: no rows matched 销售额品目 filter (with U()); abstaining")
+        return {}
     return {enterprise_id_of(r["taxpayer_id"]): _f(r["rev"]) for r in rows}
 
 
@@ -464,9 +460,10 @@ _BALANCE_ALIASES: dict[str, list[str]] = {
     "retained_earnings": ["未分配利润"],
 }
 _PROFIT_ALIASES: dict[str, list[str]] = {
-    "revenue": ["营业收入", "主营业务收入"],
-    "cost": ["营业成本", "主营业务成本"],
-    "tax_surcharge": ["税金及附加", "主营业务税金及附加"],
+    # 仅用「营业收入」；勿并列「主营业务收入」以免同表多行时跨别名非确定性少计/混用
+    "revenue": ["营业收入"],
+    "cost": ["营业成本"],
+    "tax_surcharge": ["税金及附加"],
     "sell_expense": ["销售费用", "营业费用"],
     "admin_expense": ["管理费用"],
     "finance_expense": ["财务费用"],
@@ -483,20 +480,28 @@ _CASHFLOW_ALIASES: dict[str, list[str]] = {
 
 
 def _extract_field_rows(rows: list[dict], aliases: dict[str, list[str]], value_key: str) -> dict[str, dict]:
-    """按别名精确匹配行项目，取最新报告期（rows 已按 end_date DESC 排序，首条命中即最新）。"""
+    """按别名精确匹配行项目；同一企业只取同一报告期（该表最新 end_date）的字段，避免跨期混用。"""
     alias_to_field: dict[str, str] = {}
     for field, names in aliases.items():
         for nm in names:
             alias_to_field.setdefault(nm, field)
-    out: dict[str, dict] = defaultdict(dict)
-    seen: dict[str, set[str]] = defaultdict(set)
+
+    # eid → end_date → {field: value}；同期内首条命中保留（rows 已按 end_date DESC）
+    by_eid_date: dict[str, dict[Any, dict[str, float]]] = defaultdict(lambda: defaultdict(dict))
     for r in rows:
         eid = enterprise_id_of(r["taxpayer_id"])
+        ed = r.get("end_date")
+        if not eid or ed is None:
+            continue
         key = _fin_key(r.get("project_name") or "")
         field = alias_to_field.get(key)
-        if field and field not in seen[eid]:
-            seen[eid].add(field)
-            out[eid][field] = _f(r.get(value_key))
+        if field and field not in by_eid_date[eid][ed]:
+            by_eid_date[eid][ed][field] = _f(r.get(value_key))
+
+    out: dict[str, dict] = {}
+    for eid, by_date in by_eid_date.items():
+        latest = max(by_date.keys())
+        out[eid] = by_date[latest]
     return out
 
 
@@ -535,7 +540,7 @@ def load_finance() -> dict[str, dict]:
     cf_rows = fetch_all(
         f"""
         SELECT taxpayer_id, {U('project_name')} AS project_name,
-               COALESCE(NULLIF(bnljje, 0), bqje, bnljje) AS bnljje,
+               COALESCE(bnljje, bqje) AS bnljje,
                end_date
         FROM syx_cash_flow
         WHERE taxpayer_id IS NOT NULL
@@ -706,30 +711,38 @@ def build_financials(ents: dict[str, dict], finance: dict[str, dict]) -> list[En
 
 
 def load_social() -> dict[str, dict]:
+    """社保趋势：按时间轴前半/后半「缴费人数」均值比较；人数缺失时弃权为稳定。
+
+    禁止用记录条数前后半比较（几乎恒「稳定」却驱动扣分）。
+    """
     rows = fetch_all(
         """
-        SELECT taxpayer_id, begin_date, end_date
+        SELECT taxpayer_id, begin_date, end_date,
+               COALESCE(payment_people_number, enrollment_number, 0) AS headcount
         FROM syx_social_declaration
         WHERE taxpayer_id IS NOT NULL
         ORDER BY begin_date
         """
     )
-    by_eid: dict[str, list] = defaultdict(list)
+    by_eid: dict[str, list[tuple]] = defaultdict(list)
     for r in rows:
         eid = enterprise_id_of(r["taxpayer_id"])
-        if r.get("begin_date"):
-            by_eid[eid].append(r["begin_date"])
+        bd = r.get("begin_date")
+        if not bd:
+            continue
+        by_eid[eid].append((bd, _f(r.get("headcount"))))
     out = {}
-    for eid, dates in by_eid.items():
-        dates = sorted(dates)
-        months = len({(d.year, d.month) for d in dates if d})
-        if months >= 6:
-            mid = len(dates) // 2
-            first_half = mid
-            second_half = len(dates) - mid
-            if second_half > first_half * 1.15:
+    for eid, pts in by_eid.items():
+        pts = sorted(pts, key=lambda x: x[0])
+        months = len({(d.year, d.month) for d, _ in pts if d})
+        headcounts = [h for _, h in pts if h > 0]
+        if months >= 6 and len(headcounts) >= 4:
+            mid = len(headcounts) // 2
+            first = sum(headcounts[:mid]) / max(mid, 1)
+            second = sum(headcounts[mid:]) / max(len(headcounts) - mid, 1)
+            if first > 0 and second > first * 1.15:
                 trend = "增长"
-            elif second_half < first_half * 0.85:
+            elif first > 0 and second < first * 0.85:
                 trend = "缩减"
             else:
                 trend = "稳定"
@@ -824,7 +837,7 @@ def build_metrics() -> tuple[
                 scale_label=base["scale_label"],
                 credit_level=c.get("credit_level", "暂无"),
                 credit_score=_dec(c.get("credit_score", 50)),
-                tax_on_time_rate=_dec(p.get("tax_on_time_rate", 0.85 if eid in payment else 0.5)),
+                tax_on_time_rate=_dec(p.get("tax_on_time_rate", 0)),  # 无缴款记录 → 0=弃权，禁止伪造 0.5/0.85
                 tax_arrears_cnt=arrears.get(eid, 0),
                 tax_violation_cnt=illegal_cnt.get(eid, 0),
                 high_severity_cnt=high_sev,
@@ -832,8 +845,8 @@ def build_metrics() -> tuple[
                 # 勿将 False 解读为「已核实无失信」
                 is_dishonesty=False,
                 is_execution=False,
-                loan_cnt=loan.get("loan_cnt", 0),
-                loan_amount=_dec(loan.get("loan_amount", 0)),
+                loan_cnt=int(taxp.get("tax_loan_apply_cnt") or loan.get("loan_cnt", 0)),
+                loan_amount=_dec(taxp.get("tax_loan_amount") or loan.get("loan_amount", 0)),
                 vat_revenue=_dec(vat_rev),
                 invoice_revenue=_dec(inv_rev),
                 finance_revenue=_dec(fin_rev),

@@ -45,6 +45,8 @@ def prepare_html_context(context: dict[str, Any], report_id: str) -> dict[str, A
     out["chapters"] = chapters
 
     out["attribution_chart_data_uri"] = _file_to_data_uri(context.get("attribution_chart"))
+    out["radar_chart_data_uri"] = _file_to_data_uri(context.get("radar_chart"))
+    out["benchmark_chart_data_uri"] = _file_to_data_uri(context.get("benchmark_chart"))
 
     attr = context.get("attribution") or {}
     dims = attr.get("dimensions") or {}
@@ -57,11 +59,20 @@ def prepare_html_context(context: dict[str, Any], report_id: str) -> dict[str, A
     )
     tier = context.get("tier") or "general"
     out["tier_label"] = "付费定制" if tier == "premium" else "通用模板"
+    # 五场景封面元数据兜底（历史 fixture 无 cover/subtitle 也能渲染）
+    out["cover"] = context.get("cover") or {"motif": "compass", "accent": "#003366"}
+    out["subtitle"] = context.get("subtitle") or ""
+    out["data_focus"] = list(context.get("data_focus") or [])
     return out
 
 
 def build_report_html(context: dict[str, Any], report_id: str) -> str:
-    tpl = _env.get_template("slice_report.html")
+    template = (
+        "enterprise_report.html"
+        if context.get("scenario") == "enterprise"
+        else "slice_report.html"
+    )
+    tpl = _env.get_template(template)
     return tpl.render(**prepare_html_context(context, report_id))
 
 

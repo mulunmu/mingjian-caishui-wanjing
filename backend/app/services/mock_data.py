@@ -47,6 +47,7 @@ MOCK_ENTERPRISES: list[dict[str, Any]] = [
         "dimensions": {
             "tax_health": 88,
             "authenticity": 82,
+            "invoice": 75,
             "industry": 85,
             "legal": 90,
             "finance": 81,
@@ -87,6 +88,7 @@ MOCK_ENTERPRISES: list[dict[str, Any]] = [
         "dimensions": {
             "tax_health": 70,
             "authenticity": 65,
+            "invoice": 75,
             "industry": 68,
             "legal": 75,
             "finance": 64,
@@ -127,6 +129,7 @@ MOCK_ENTERPRISES: list[dict[str, Any]] = [
         "dimensions": {
             "tax_health": 92,
             "authenticity": 90,
+            "invoice": 75,
             "industry": 93,
             "legal": 95,
             "finance": 89,
@@ -167,6 +170,7 @@ MOCK_ENTERPRISES: list[dict[str, Any]] = [
         "dimensions": {
             "tax_health": 75,
             "authenticity": 70,
+            "invoice": 75,
             "industry": 72,
             "legal": 78,
             "finance": 68,
@@ -207,6 +211,7 @@ MOCK_ENTERPRISES: list[dict[str, Any]] = [
         "dimensions": {
             "tax_health": 84,
             "authenticity": 78,
+            "invoice": 75,
             "industry": 88,
             "legal": 85,
             "finance": 78,
@@ -247,6 +252,7 @@ MOCK_ENTERPRISES: list[dict[str, Any]] = [
         "dimensions": {
             "tax_health": 42,
             "authenticity": 38,
+            "invoice": 75,
             "industry": 45,
             "legal": 35,
             "finance": 48,
@@ -287,6 +293,7 @@ MOCK_ENTERPRISES: list[dict[str, Any]] = [
         "dimensions": {
             "tax_health": 80,
             "authenticity": 75,
+            "invoice": 75,
             "industry": 78,
             "legal": 82,
             "finance": 72,
@@ -327,6 +334,7 @@ MOCK_ENTERPRISES: list[dict[str, Any]] = [
         "dimensions": {
             "tax_health": 62,
             "authenticity": 55,
+            "invoice": 75,
             "industry": 58,
             "legal": 65,
             "finance": 52,
@@ -367,6 +375,7 @@ MOCK_ENTERPRISES: list[dict[str, Any]] = [
         "dimensions": {
             "tax_health": 35,
             "authenticity": 32,
+            "invoice": 75,
             "industry": 38,
             "legal": 28,
             "finance": 45,
@@ -407,6 +416,7 @@ MOCK_ENTERPRISES: list[dict[str, Any]] = [
         "dimensions": {
             "tax_health": 52,
             "authenticity": 48,
+            "invoice": 75,
             "industry": 45,
             "legal": 55,
             "finance": 44,
@@ -477,7 +487,7 @@ def get_mock_enterprise(enterprise_id: str) -> dict[str, Any] | None:
                 "overall_score": 50,
                 "risk_level": "中等风险",
                 "credit_level": "B",
-                "dimensions": {"tax_health": 50, "authenticity": 50, "industry": 50, "legal": 50, "finance": 50},
+                "dimensions": {"tax_health": 50, "authenticity": 50, "invoice": 50, "industry": 50, "legal": 50, "finance": 50},
                 "warning_signals": [],
                 "source": "mock_placeholder",
             }

@@ -26,8 +26,8 @@ def test_benford_uses_industry_slice_when_industry_set():
         for i in range(40)
     ]
     out = analyze_authenticity_batch(metrics, industry_l1="制造")
-    assert out["benford_source"].startswith("industry_slice:")
-    assert out["benford_scope"] == "制造"
+    assert out["benford_source"].startswith("slice_metrics")
+    assert out["benford_scope"] == "本切片"
 
 
 def test_session_synthesis_requires_two_functions():

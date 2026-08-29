@@ -257,9 +257,10 @@ def analyze_authenticity_batch(metrics: list[Any], industry_l1: str | None = Non
         if a["cross_source"].get("avg_deviation") is not None
     ]
 
-    from app.services.engine_features_store import load_benford_snapshot
-
-    industry_amounts = [
+    # 切片金额 = 本切片（当前 metrics）主体金额，非全库快照。运行时只读 PG（CoreMetrics 营收列），
+    # MySQL 源库离线也不影响 Benford。弃权优先于编造：<30 家时 benford_test 直接返回
+    # conformity="insufficient_sample"、chi2=None，绝不回退全库 snapshot 硬凑数字。
+    slice_amounts = [
         float(
             getattr(m, "finance_revenue", 0)
             or getattr(m, "vat_revenue", 0)
@@ -268,25 +269,13 @@ def analyze_authenticity_batch(metrics: list[Any], industry_l1: str | None = Non
         )
         for m in metrics
     ]
-    industry_amounts = [a for a in industry_amounts if abs(a) >= 1]
+    slice_amounts = [a for a in slice_amounts if abs(a) >= 1]
 
-    if industry_l1:
-        # 行业切片：Benford 仅用该行业主体金额，不用全库 snapshot
-        benford = benford_test(industry_amounts, min_n=min(30, max(10, len(industry_amounts) // 3 or 10)))
-        benford_source = f"industry_slice:{industry_l1}"
-    else:
-        benford = load_benford_snapshot()
-        if not benford:
-            logger.warning("benford snapshot miss — MySQL/metrics fallback")
-            amounts = load_finance_amounts_for_benford()
-            if len(amounts) < 50:
-                amounts = industry_amounts
-            benford = benford_test(amounts, min_n=30)
-            benford_source = "mysql_or_metrics"
-        else:
-            benford_source = "engine_snapshots"
+    # Benford 一律用本切片金额（行业切片与整体切片口径一致），不再读 engine_snapshots 全库快照。
+    benford = benford_test(slice_amounts, min_n=30)
+    benford_source = f"slice_metrics:{industry_l1}" if industry_l1 else "slice_metrics"
 
-    scope_label = industry_l1 or "全库"
+    scope_label = "本切片"
 
     return {
         "dimension": "industry" if industry_l1 else "overall",

@@ -25,8 +25,8 @@ def test_pool_kwargs_nullpool_when_disabled(monkeypatch):
     assert kw.get("poolclass") is NullPool
 
 
-def test_validate_production_config_demo_mode(monkeypatch):
-    monkeypatch.delenv("AUTH_REQUIRED", raising=False)
+def test_validate_production_config_auth_off(monkeypatch):
+    monkeypatch.setenv("AUTH_REQUIRED", "false")
     out = validate_production_config()
     assert out["ok"] is True
     assert out["auth_required"] is False
@@ -48,3 +48,22 @@ def test_validate_production_config_rejects_wildcard_cors(monkeypatch):
     out = validate_production_config()
     assert out["ok"] is False
     assert any("CORS" in e for e in out["errors"])
+
+
+def test_validate_production_config_rejects_demo_login_non_localhost(monkeypatch):
+    monkeypatch.setenv("AUTH_REQUIRED", "true")
+    monkeypatch.setenv("JWT_SECRET", "a" * 32)
+    monkeypatch.setenv("CORS_ORIGINS", "https://app.example.com")
+    monkeypatch.setenv("DEMO_LOGIN_ENABLED", "true")
+    out = validate_production_config()
+    assert out["ok"] is False
+    assert any("DEMO_LOGIN" in e for e in out["errors"])
+
+
+def test_validate_production_config_allows_demo_login_localhost(monkeypatch):
+    monkeypatch.setenv("AUTH_REQUIRED", "true")
+    monkeypatch.setenv("JWT_SECRET", "a" * 32)
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost:3000")
+    monkeypatch.setenv("DEMO_LOGIN_ENABLED", "true")
+    out = validate_production_config()
+    assert out["ok"] is True

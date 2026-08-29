@@ -1,4 +1,4 @@
-"""认证依赖 — AUTH_REQUIRED=false 时演示放行；true 时全端点强制 JWT。"""
+"""认证依赖 — 读可选、写/订阅/角色强制鉴权（deny-by-default）。"""
 from collections.abc import Callable
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -32,7 +32,11 @@ def _payload_from_credentials(
 async def get_current_user_optional(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> dict | None:
-    """AUTH_REQUIRED=true 时强制登录；false 时尽量解析 token（供归属校验）。"""
+    """AUTH_REQUIRED=true 时强制登录；false 时尽量解析 token（供归属校验）。
+
+    仅用于只读/演示端点。写操作、订阅与角色守卫请用 get_current_user /
+    require_plan / require_roles（始终强制鉴权）。
+    """
     if auth_service.AUTH_REQUIRED:
         return _payload_from_credentials(credentials, required=True)
     if credentials is None:
@@ -43,25 +47,19 @@ async def get_current_user_optional(
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> dict:
-    """始终要求有效 JWT（注册门禁、管理员操作等）。"""
+    """始终要求有效 JWT（注册门禁、管理员操作、写端点等）。"""
     user = _payload_from_credentials(credentials, required=True)
     assert user is not None
     return user
 
 
 def require_roles(*roles: str) -> Callable:
-    """基于 JWT role 的基础 RBAC。
-
-    演示态（AUTH_REQUIRED=false）未登录时放行，与 get_current_user_optional 一致；
-    已登录（或 AUTH_REQUIRED=true）时校验 role。
-    """
+    """基于 JWT role 的 RBAC — 始终要求登录（deny-by-default）。"""
 
     async def _dep(
         credentials: HTTPAuthorizationCredentials | None = Depends(security),
-    ) -> dict | None:
-        user = await get_current_user_optional(credentials)
-        if user is None:
-            return None
+    ) -> dict:
+        user = await get_current_user(credentials)
         role = user.get("role") or "user"
         if role not in roles:
             raise HTTPException(
@@ -74,18 +72,12 @@ def require_roles(*roles: str) -> Callable:
 
 
 def require_plan(*plans: str) -> Callable:
-    """订阅分层 RBAC：定制功能守卫。
-
-    演示态（AUTH_REQUIRED=false）未登录放行（等同定制，便于开发）；
-    已登录（或 AUTH_REQUIRED=true）时：admin 或 plan 命中则放行，否则 403。
-    """
+    """订阅分层守卫 — 始终要求登录；admin 或命中 plan 才放行。"""
 
     async def _dep(
         credentials: HTTPAuthorizationCredentials | None = Depends(security),
-    ) -> dict | None:
-        user = await get_current_user_optional(credentials)
-        if user is None:
-            return None
+    ) -> dict:
+        user = await get_current_user(credentials)
         role = user.get("role") or "user"
         plan = user.get("plan") or "free"
         if role == "admin" or plan in plans:
