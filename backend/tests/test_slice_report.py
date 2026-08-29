@@ -15,8 +15,8 @@ from app.services.slice_report import (
     _flagged_count,
     _resolve_scenario_kpis,
     _score_to_risk_level,
+    _scenario_summary_block,
     _slice_ratio_mean,
-    _slice_summary_block,
     build_report_detail,
 )
 
@@ -251,39 +251,90 @@ def test_score_to_risk_level_aligns_with_scoring_layer():
     assert _score_to_risk_level(20) == "高风险"
 
 
-def test_slice_summary_block_anchors_values():
-    """执行摘要块：结论 + 优势/风险二栏每条挂数值，无空 sentinel。"""
+def test_scenario_summary_block_scenario_specific():
+    """场景化：专项报告优势/风险来自本场景章节，不复读全样本六维归因（杜绝跑题）。"""
     attr = {
         "avg_score": 55.0,
         "sample_count": 12,
-        "dimensions": {
-            "tax_health": {"label": "税务健康", "score": 70.0},
-            "authenticity": {"label": "经营真实性", "score": 40.0},
-            "industry": {"label": "行业地位", "score": 62.5},
-        },
-        "drag_factors": [{"item": "欠税记录", "count": 5}, {"item": "营收偏差", "count": 3}],
+        "dimensions": {},
+        "drag_factors": [{"item": "税务违法", "count": 99}],
     }
-    block = _slice_summary_block(attr, {"e1", "e2", "e3"})
+    financial_ch = {
+        "function": "financial",
+        "claims": [
+            {
+                "claim": "毛利率均值 30.5%（达标，样本 12）。",
+                "value": {"metric": "gross_margin", "number": 30.5, "unit": "%"},
+            },
+            {
+                "claim": "资产负债率均值 82.0%（预警，样本 12）。",
+                "value": {"metric": "debt_ratio", "number": 82.0, "unit": "%"},
+            },
+        ],
+        "meta": {"sample_count": 12},
+    }
+    block = _scenario_summary_block([financial_ch], attr, set())
+    # 结论仍 L1 统一
     assert block["conclusion"] == "综合均分 55.0 分，风险等级「中等风险」，样本 12 家"
-    # 优势仅取 ≥60 维度并挂均分；40 分维度不产出
-    assert block["strengths"] == [
-        "「税务健康」维度均分 70.0 分（相对稳健）",
-        "「行业地位」维度均分 62.5 分（相对稳健）",
-    ]
-    # 风险挂样本计数 + 重点关注主体数
-    assert block["risks"] == [
-        "欠税记录（5 家）",
-        "营收偏差（3 家）",
-        "重点关注主体 3 家",
-    ]
+    # 优势/风险来自财务章节；六维 drag_factors 的「税务违法 99 家」绝不出现在财务报告摘要
+    assert block["strengths"] == ["「毛利率」30.5%（达标）"]
+    assert block["risks"] == ["「资产负债率」82.0%（预警）"]
 
 
-def test_slice_summary_block_abstains_empty():
-    """无评分/维度/拖累因素 → 全弃权（结论空、优势风险空），不硬造。"""
-    block = _slice_summary_block({"avg_score": None, "dimensions": {}, "drag_factors": []}, set())
+def test_scenario_summary_block_six_dim_via_score():
+    """六维归因只经 score 章（meta.attribution）携带，总览/尽调场景专用。"""
+    attr = {"avg_score": 47.0, "sample_count": 193}
+    score_ch = {
+        "function": "score",
+        "claims": [],
+        "meta": {
+            "attribution": {
+                "dimensions": {"legal": {"label": "法律合规", "score": 70.0}},
+                "drag_factors": [{"item": "税务违法", "count": 12}],
+            }
+        },
+    }
+    block = _scenario_summary_block([score_ch], attr, {"e1", "e2", "e3"})
+    assert block["strengths"] == ["「法律合规」维度均分 70.0 分（相对稳健）"]
+    assert block["risks"] == ["税务违法（12 家）", "重点关注主体 3 家"]
+
+
+def test_scenario_summary_block_abstains_empty():
+    """无章节/无评分 → 全弃权（结论空、优势风险空），不硬造。"""
+    block = _scenario_summary_block([], {"avg_score": None, "dimensions": {}, "drag_factors": []}, set())
     assert block["conclusion"] == ""
     assert block["strengths"] == []
     assert block["risks"] == []
+
+
+def test_scenario_summary_block_no_false_strength_on_dirty_sample():
+    """清净主体占比过低不构成优势（弃权），杜绝把 5.7% 清净当「主要优势」。"""
+    signal_ch = {
+        "function": "signal",
+        "claims": [],
+        "meta": {
+            "sample_count": 193,
+            "unique_affected": ["e1"] * 182,
+            "tax_violation": 83,
+            "high_dev": 50,
+            "low_credit": 30,
+            "multi_hit_ge2": 10,
+        },
+    }
+    block = _scenario_summary_block([signal_ch], {"avg_score": 43.1, "sample_count": 193}, set())
+    assert block["strengths"] == []
+    assert "税务违法 83 家" in block["risks"]
+
+
+def test_scenario_summary_block_clean_strength_when_majority():
+    """清净主体占比 ≥80% 才构成优势锚点。"""
+    signal_ch = {
+        "function": "signal",
+        "claims": [],
+        "meta": {"sample_count": 100, "unique_affected": ["e1"] * 5, "tax_violation": 5},
+    }
+    block = _scenario_summary_block([signal_ch], {"avg_score": 80.0, "sample_count": 100}, set())
+    assert block["strengths"] == ["无风险信号主体 95 家（占比 95.0%）"]
 
 
 def test_slice_ratio_mean_abstain_zero():

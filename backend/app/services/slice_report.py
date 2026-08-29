@@ -456,17 +456,171 @@ def _build_summary_kpis(chapters: list[dict[str, Any]]) -> list[dict[str, str]]:
     return kpis
 
 
-def _slice_summary_block(
+# ── 场景化「主要优势 vs 主要风险」提炼器（L3 场景化，定制化核心）──
+# 每个可组合 function 声明「本章哪些数值是优势信号 / 风险信号」，全部从该章 claims/meta 取数，
+# 每条挂具体数值；拿不到值即弃权不产出。专项场景只从本报告实际装配的章节提炼，
+# 绝不回退全样本六维归因（六维归因只经总览/尽调的 score 章 meta.attribution 天然携带）。
+def _financial_signals(claims: list[dict[str, Any]], meta: dict[str, Any]) -> tuple[list[str], list[str]]:
+    from app.services.financial_benchmarks import FINANCIAL_RATIOS
+
+    strengths: list[str] = []
+    risks: list[str] = []
+    for c in claims:
+        val = c.get("value") or {}
+        metric = val.get("metric")
+        num = val.get("number")
+        if not metric or num is None:
+            continue
+        text = c.get("claim") or ""
+        cfg = FINANCIAL_RATIOS.get(metric)
+        label = (cfg or {}).get("label") or metric
+        unit = val.get("unit") or ""
+        if "预警" in text:
+            risks.append(f"「{label}」{num}{unit}（预警）")
+        elif "达标" in text:
+            strengths.append(f"「{label}」{num}{unit}（达标）")
+    return strengths, risks
+
+
+# 纳税准时率 ≥95% 视为合规良好（仅作理由层正向锚点，不参与 L1 评级，评级仍由 assessment 统一）
+_TAX_ON_TIME_GOOD = 0.95
+
+# 无风险/正常主体占比 ≥80% 才构成「主要优势」；低于此说明样本整体偏险，清净补充不再当作优势（弃权优先）
+_CLEAN_RATIO_GOOD = 0.8
+
+
+def _clean_share_strength(sample: Any, clean: int, label: str) -> str | None:
+    """清净主体占比达到阈值才输出为优势锚点；否则返回 None（弃权，不把 5.7% 清净当优势）。"""
+    if not sample or not isinstance(clean, int) or clean <= 0:
+        return None
+    ratio = clean / int(sample)
+    if ratio < _CLEAN_RATIO_GOOD:
+        return None
+    return f"{label} {clean} 家（占比 {ratio * 100:.1f}%）"
+
+
+def _tax_signals(claims: list[dict[str, Any]], meta: dict[str, Any]) -> tuple[list[str], list[str]]:
+    strengths: list[str] = []
+    risks: list[str] = []
+    on_time = meta.get("on_time_avg")
+    if on_time is not None:
+        pct = round(float(on_time) * 100, 1)
+        if pct >= _TAX_ON_TIME_GOOD * 100:
+            strengths.append(f"纳税准时率均值 {pct}%")
+        else:
+            risks.append(f"纳税准时率均值 {pct}%（偏低）")
+    for label, key in (("欠税主体", "arrears_cnt"), ("税务违法主体", "violation_cnt")):
+        n = meta.get(key)
+        if n:
+            risks.append(f"{label} {int(n)} 家")
+    late = meta.get("late_penalty_cnt")
+    if late:
+        risks.append(f"滞纳/罚款累计 {int(late)} 笔")
+    return strengths, risks
+
+
+def _fraud_signals(claims: list[dict[str, Any]], meta: dict[str, Any]) -> tuple[list[str], list[str]]:
+    strengths: list[str] = []
+    risks: list[str] = []
+    sample = meta.get("sample_count")
+    flagged = meta.get("flagged_count")
+    if sample and isinstance(flagged, (int, float)) and int(flagged) < int(sample):
+        s = _clean_share_strength(sample, int(sample) - int(flagged), "未触发舞弊标记主体")
+        if s:
+            strengths.append(s)
+    if flagged:
+        risks.append(f"触发舞弊标记 {int(flagged)} 家")
+    for sig, cnt in (meta.get("signal_counts") or {}).items():
+        if cnt is not None:
+            risks.append(f"「{sig}」{int(cnt)} 家")
+    return strengths, risks
+
+
+def _authenticity_signals(claims: list[dict[str, Any]], meta: dict[str, Any]) -> tuple[list[str], list[str]]:
+    strengths: list[str] = []
+    risks: list[str] = []
+    sample = meta.get("sample_count")
+    suspicious = meta.get("suspicious_count")
+    if sample and isinstance(suspicious, (int, float)) and int(suspicious) < int(sample):
+        s = _clean_share_strength(sample, int(sample) - int(suspicious), "经营真实性正常主体")
+        if s:
+            strengths.append(s)
+    if suspicious:
+        rate = meta.get("suspicious_rate")
+        if rate is not None:
+            risks.append(f"交叉偏差可疑 {int(suspicious)} 家（占比 {float(rate) * 100:.1f}%）")
+        else:
+            risks.append(f"交叉偏差可疑 {int(suspicious)} 家")
+    if (meta.get("benford") or {}).get("violation"):
+        risks.append("Benford 检验违例（利润累计额首位分布异常）")
+    return strengths, risks
+
+
+def _signal_signals(claims: list[dict[str, Any]], meta: dict[str, Any]) -> tuple[list[str], list[str]]:
+    strengths: list[str] = []
+    risks: list[str] = []
+    sample = meta.get("sample_count")
+    affected = meta.get("unique_affected")
+    affected_n = len(affected) if affected else 0
+    if sample and affected_n < int(sample):
+        s = _clean_share_strength(sample, int(sample) - affected_n, "无风险信号主体")
+        if s:
+            strengths.append(s)
+    for label, key in (
+        ("税务违法", "tax_violation"),
+        ("营收偏差≥25%", "high_dev"),
+        ("信用等级 C/D/M", "low_credit"),
+    ):
+        n = meta.get(key)
+        if n:
+            risks.append(f"{label} {int(n)} 家")
+    if meta.get("multi_hit_ge2"):
+        risks.append(f"同时命中≥2 类风险 {int(meta['multi_hit_ge2'])} 家")
+    return strengths, risks
+
+
+def _score_signals(claims: list[dict[str, Any]], meta: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """六维综合评分：仅当本章携带六维归因（总览/尽调的 score 章）时提炼，其余弃权。"""
+    strengths: list[str] = []
+    risks: list[str] = []
+    attr = meta.get("attribution")
+    if not attr:
+        return strengths, risks
+    for d in (attr.get("dimensions") or {}).values():
+        score = d.get("score")
+        if isinstance(score, (int, float)) and score >= 60:
+            strengths.append(f"「{d.get('label', '')}」维度均分 {score:.1f} 分（相对稳健）")
+    for f in attr.get("drag_factors") or []:
+        item = f.get("item")
+        cnt = f.get("count")
+        if item and cnt is not None:
+            risks.append(f"{item}（{cnt} 家）")
+    return strengths, risks
+
+
+_FUNCTION_SIGNALS: dict[str, Any] = {
+    "financial": _financial_signals,
+    "tax": _tax_signals,
+    "fraud": _fraud_signals,
+    "authenticity": _authenticity_signals,
+    "signal": _signal_signals,
+    "score": _score_signals,
+}
+
+
+def _scenario_summary_block(
+    chapters: list[dict[str, Any]],
     attribution: dict[str, Any],
     high_risk_ids: set[str],
 ) -> dict[str, Any]:
-    """切片执行摘要「结论前置」块：结论 + 主要优势 vs 主要风险二栏（数据锚点化，无值弃权）。
+    """切片执行摘要「结论前置」块（场景化版）。
 
-    - 结论：综合均分 → 风险等级 + 样本规模（对齐 assessment.RISK_LEVELS，口径与封面 KPI 一致）。
-    - 优势：六维中均分 ≥ 60 的维度（挂均分，相对稳健）；无则弃权不渲染。
-    - 风险：高频拖累因素（挂样本计数）+ 重点关注主体数。
+    - 结论：综合均分 → 风险等级 + 样本规模（L1 统一评级，场景无关，铁律）。
+    - 优势/风险：从本报告实际装配的章节按 function 提炼（L3 场景化），每条挂数值；
+      专项场景不复读全样本六维归因，杜绝「财务报告列出税务违法」式跑题。
+    - 无值弃权：任一 function 无信号即不产出该条，绝不硬凑空分析。
 
-    铁律：每条都挂具体数值，拿不到值就不产出该条，杜绝「税务健康：纳税信用」式空 sentinel。
+    铁律：结论评级/评分口径不变；此处只决定「理由从哪来、怎么表达」。
     """
     avg_score = attribution.get("avg_score")
     conclusion = ""
@@ -477,22 +631,35 @@ def _slice_summary_block(
             conclusion += f"，样本 {sample_count} 家"
 
     strengths: list[str] = []
-    for d in (attribution.get("dimensions") or {}).values():
-        score = d.get("score")
-        if isinstance(score, (int, float)) and score >= 60:
-            strengths.append(f"「{d.get('label', '')}」维度均分 {score:.1f} 分（相对稳健）")
-    strengths = strengths[:3]
-
     risks: list[str] = []
-    for f in attribution.get("drag_factors") or []:
-        item = f.get("item")
-        cnt = f.get("count")
-        if item and cnt is not None:
-            risks.append(f"{item}（{cnt} 家）")
+    for ch in chapters:
+        extractor = _FUNCTION_SIGNALS.get(ch.get("function"))
+        if not extractor:
+            continue
+        s, r = extractor(ch.get("claims") or [], ch.get("meta") or {})
+        strengths.extend(s)
+        risks.extend(r)
+
     if high_risk_ids:
         risks.append(f"重点关注主体 {len(high_risk_ids)} 家")
 
-    return {"conclusion": conclusion, "strengths": strengths, "risks": risks[:4]}
+    def _dedupe(items: list[str], limit: int) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for it in items:
+            if it in seen:
+                continue
+            seen.add(it)
+            out.append(it)
+            if len(out) >= limit:
+                break
+        return out
+
+    return {
+        "conclusion": conclusion,
+        "strengths": _dedupe(strengths, 3),
+        "risks": _dedupe(risks, 4),
+    }
 
 
 # 场景封面 KPI 中「百分比类比率」字段（存 0-1，展示 ×100），对齐 core_metrics 列
@@ -907,7 +1074,7 @@ async def _build_context_from_spec(
                 executive_summary = s
         except Exception as exc:
             logger.warning("executive summary LLM failed: %s", exc)
-    summary_block = _slice_summary_block(attribution, high_risk_ids)
+    summary_block = _scenario_summary_block(chapters, attribution, high_risk_ids)
     return {
         "scenario": key,
         "scenario_label": get_scenario_label(key),
@@ -1011,49 +1178,29 @@ def _generate_slice_pdf_fpdf(context: dict[str, Any], report_id: str, output_pat
     else:
         fn = "Helvetica"
 
-    # 封面
+    # 封面（严肃正式：品牌 + 标题 + 场景 + 元数据 + 密级，与 HTML 版一致）
     pdf.add_page()
     pdf.start_section("封面")
-    _para(pdf, context["title"], size=18, h=10, align="C")
-    pdf.ln(6)
-    _para(pdf, context["story"], size=12, h=7, align="C")
-    pdf.ln(8)
-
-    kpis = context.get("summary_kpis") or []
-    if kpis:
-        pdf.set_x(pdf.l_margin)
-        pdf.set_font(fn, size=12)
-        pdf.cell(_text_w(pdf), 8, "关键指标", ln=True)
-        col_w = _text_w(pdf) / max(len(kpis), 1)
-        pdf.set_font(fn, size=10)
-        for k in kpis:
-            pdf.cell(col_w, 7, k["label"], border=1, align="C")
-        pdf.ln()
-        for k in kpis:
-            pdf.cell(col_w, 10, f"{k['value']}{k['unit']}", border=1, align="C")
-        pdf.ln(10)
-
+    pdf.ln(26)
+    _para(pdf, "明鉴 · 财税票 · 万景", size=12, h=8, align="C")
+    _para(pdf, "风险控制报告", size=10, h=8, align="C")
+    pdf.ln(40)
+    _para(pdf, context["title"], size=20, h=11, align="C")
+    if context.get("subtitle"):
+        _para(pdf, context["subtitle"], size=12, h=7, align="C")
+    pdf.ln(34)
     tier_txt = "付费定制" if context.get("tier") == "premium" else "通用模板"
     for line in (
-        f"报告日期：{context['report_date']}",
         f"报告编号：{report_id}",
-        f"场景：{context.get('scenario_label', context['scenario'])}",
+        f"报告日期：{context['report_date']}",
+        f"报告场景：{context.get('scenario_label', context['scenario'])}",
         f"报告层级：{tier_txt}",
-        "本报告为聚合切片，各模块统计子集不同，详见各章节标注。",
     ):
         pdf.set_x(pdf.l_margin)
         pdf.set_font(fn, size=11)
         pdf.cell(_text_w(pdf), 8, line, ln=True, align="C")
-    val = context.get("validation") or {}
-    pdf.set_x(pdf.l_margin)
-    pdf.set_font(fn, size=11)
-    pdf.cell(
-        _text_w(pdf),
-        8,
-        f"抗幻觉校验：{'通过' if val.get('ok') else '有告警'}（claims={val.get('total_claims')}, unanchored={val.get('unanchored')}）",
-        ln=True,
-        align="C",
-    )
+    pdf.ln(22)
+    _para(pdf, "机密 · 仅限内部使用 · 本报告基于聚合匿名数据生成，不涉及单一主体身份信息", size=9, h=6, align="C")
 
     # 执行摘要（结论前置：结论 + 主要优势/风险二栏 + 成段理由）
     conclusion = context.get("summary_conclusion")
@@ -1066,6 +1213,16 @@ def _generate_slice_pdf_fpdf(context: dict[str, Any], report_id: str, output_pat
         pdf.set_x(pdf.l_margin)
         pdf.set_font(fn, size=14)
         pdf.cell(_text_w(pdf), 10, "执行摘要", ln=True)
+        kpis = context.get("summary_kpis") or []
+        if kpis:
+            col_w = _text_w(pdf) / max(len(kpis), 1)
+            pdf.set_font(fn, size=10)
+            for k in kpis:
+                pdf.cell(col_w, 7, k["label"], border=1, align="C")
+            pdf.ln()
+            for k in kpis:
+                pdf.cell(col_w, 10, f"{k['value']}{k['unit']}", border=1, align="C")
+            pdf.ln(8)
         if conclusion:
             _para(pdf, conclusion, size=11, h=6)
             pdf.ln(2)
@@ -1085,6 +1242,7 @@ def _generate_slice_pdf_fpdf(context: dict[str, Any], report_id: str, output_pat
         if exec_summary:
             _para(pdf, exec_summary, size=11, h=6)
             pdf.ln(3)
+        _para(pdf, "本报告为聚合切片，各模块统计子集不同，详见各章节标注。", size=9, h=5)
 
     # 归因章节（仅综合尽调前置；专项场景不复读全样本六维归因）
     attr = context.get("attribution") or {}

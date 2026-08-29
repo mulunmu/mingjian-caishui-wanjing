@@ -51,14 +51,14 @@ def _full_context():
         "validation": {"ok": True, "total_claims": 6, "unanchored": 0},
         "appendix": {
             "data": ["core_metrics", "syx_tax_illega", "syx_auditing"],
-            "methods": ["趋势聚合", "Benford", "互斥分桶预警"],
+            "methods": ["趋势聚合", "Benford", "互斥分桶预警", "抗幻觉：仅保留 computed/inferred"],
         },
     }
 
 
 REQUIRED_MARKERS = [
     "行业趋势风控报告",
-    "cover-motif",
+    "风险控制报告",
     "样本规模",
     "执行摘要",
     "主要优势",
@@ -90,18 +90,20 @@ def test_report_html_structure_snapshot(tmp_path):
     assert html.count("<table") >= 2
 
 
-def test_cover_scenario_motif_and_accent():
-    """封面按场景渲染母题图形 + 主色 + 副标题 + 数据类侧重。"""
+def test_cover_serious_style():
+    """封面严肃化：藏蓝满版 + 品牌 + 场景副标题 + 密级；无母题 SVG/无营销芯片/无校验徽章。"""
     ctx = _full_context()
     ctx["scenario"] = "financial"
     ctx["cover"] = {"motif": "ledger", "accent": "#0f766e"}
     ctx["subtitle"] = "盈利能力 · 偿债能力 · 营运能力 · 现金流"
     ctx["data_focus"] = ["财务数据", "企业基础信息"]
     html = build_report_html(ctx, "slice_financial_cover_test")
-    assert "#0f766e" in html          # 主色贯穿封面
-    assert "盈利能力" in html          # 副标题
-    assert "财务数据" in html          # 数据类侧重芯片
-    assert "<rect" in html            # ledger 母题柱状图形
+    assert "#0f766e" in html            # 主色仍作 in-page 强调色（:root --accent）
+    assert "盈利能力" in html            # 副标题 → 封面 scope 行
+    assert "风险控制报告" in html          # 封面类别
+    assert "机密" in html               # 密级提示
+    assert "<rect" not in html          # 不再渲染母题 SVG 图标
+    assert "抗幻觉校验" not in html        # 校验徽章不上封面
 
 
 def test_design_tokens_centralized_slice():
