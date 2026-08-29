@@ -281,6 +281,31 @@ def test_scenario_summary_block_scenario_specific():
     assert block["risks"] == ["「资产负债率」82.0%（预警）"]
 
 
+def test_scenario_summary_block_scenario_subject_clause():
+    """L2 语气层：专项场景结论补「维度主语」，引用 L1 维度分；综合场景/无数据弃权。"""
+    attr = {
+        "avg_score": 43.1,
+        "sample_count": 193,
+        "dimensions": {"finance": {"label": "财务健康", "score": 52.0}},
+        "drag_factors": [],
+    }
+    block = _scenario_summary_block([], attr, set(), scenario="financial")
+    assert block["conclusion"] == (
+        "综合均分 43.1 分，风险等级「中高风险」，样本 193 家；财务健康维度均分 52.0 分（中等风险）"
+    )
+    # 无单一维度锚点的综合场景：不补主语（结论仍 L1 统一）
+    block2 = _scenario_summary_block([], attr, set(), scenario="due_diligence")
+    assert block2["conclusion"] == "综合均分 43.1 分，风险等级「中高风险」，样本 193 家"
+    # 维度无数据（0=弃权 sentinel）：不补主语，杜绝「0.0 分=高风险」式虚假结论
+    attr_empty = {
+        "avg_score": 43.1,
+        "sample_count": 193,
+        "dimensions": {"finance": {"label": "财务健康", "score": 0.0}},
+    }
+    block3 = _scenario_summary_block([], attr_empty, set(), scenario="financial")
+    assert block3["conclusion"] == "综合均分 43.1 分，风险等级「中高风险」，样本 193 家"
+
+
 def test_scenario_summary_block_six_dim_via_score():
     """六维归因只经 score 章（meta.attribution）携带，总览/尽调场景专用。"""
     attr = {"avg_score": 47.0, "sample_count": 193}

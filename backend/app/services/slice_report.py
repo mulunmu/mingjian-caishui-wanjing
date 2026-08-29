@@ -607,15 +607,41 @@ _FUNCTION_SIGNALS: dict[str, Any] = {
     "score": _score_signals,
 }
 
+# 场景 → 主维度 key：仅对有单一维度锚点的专项场景补「维度主语」（L2 语气层）。
+# 综合尽调/总览/画像为六维综合，结论已含「综合均分」，不重复补主语（弃权）。
+_SCENARIO_PRIMARY_DIMENSION: dict[str, str] = {
+    "financial": "finance",
+    "tax": "tax_health",
+    "fraud": "invoice",
+}
+
+
+def _scenario_subject_clause(scenario: str | None, attribution: dict[str, Any]) -> str:
+    """结论场景主语（L2 语气层）：引用 attribution.dimensions 里已存在的 L1 维度分，
+    不重评级、不虚造；无单一维度锚点或维度无数据（0=弃权）时返回空串。"""
+    dim_key = _SCENARIO_PRIMARY_DIMENSION.get(scenario or "")
+    if not dim_key:
+        return ""
+    dim = (attribution.get("dimensions") or {}).get(dim_key)
+    if not dim or not isinstance(dim.get("score"), (int, float)):
+        return ""
+    score = float(dim["score"])
+    if score <= 0:  # 0=弃权 sentinel：该维度无数据，不补主语
+        return ""
+    label = dim.get("label") or dim_key
+    return f"；{label}维度均分 {score:.1f} 分（{_score_to_risk_level(score)}）"
+
 
 def _scenario_summary_block(
     chapters: list[dict[str, Any]],
     attribution: dict[str, Any],
     high_risk_ids: set[str],
+    scenario: str | None = None,
 ) -> dict[str, Any]:
     """切片执行摘要「结论前置」块（场景化版）。
 
-    - 结论：综合均分 → 风险等级 + 样本规模（L1 统一评级，场景无关，铁律）。
+    - 结论：综合均分 → 风险等级 + 样本规模（L1 统一评级，场景无关，铁律）；
+      专项场景再补一句「维度主语」（L2 语气层，纯表达，不改评级）。
     - 优势/风险：从本报告实际装配的章节按 function 提炼（L3 场景化），每条挂数值；
       专项场景不复读全样本六维归因，杜绝「财务报告列出税务违法」式跑题。
     - 无值弃权：任一 function 无信号即不产出该条，绝不硬凑空分析。
@@ -629,6 +655,7 @@ def _scenario_summary_block(
         sample_count = attribution.get("sample_count")
         if sample_count:
             conclusion += f"，样本 {sample_count} 家"
+        conclusion += _scenario_subject_clause(scenario, attribution)
 
     strengths: list[str] = []
     risks: list[str] = []
@@ -1074,7 +1101,7 @@ async def _build_context_from_spec(
                 executive_summary = s
         except Exception as exc:
             logger.warning("executive summary LLM failed: %s", exc)
-    summary_block = _scenario_summary_block(chapters, attribution, high_risk_ids)
+    summary_block = _scenario_summary_block(chapters, attribution, high_risk_ids, scenario=key)
     return {
         "scenario": key,
         "scenario_label": get_scenario_label(key),
