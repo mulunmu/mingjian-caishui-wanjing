@@ -16,7 +16,8 @@ export default function AIMessage({ message, onFollowUp, onAction }: AIMessagePr
   const hasCard =
     message.chart ||
     (message.followups && message.followups.length > 0) ||
-    (message.actions && message.actions.length > 0);
+    (message.actions && message.actions.length > 0) ||
+    (message.guidanceCards && message.guidanceCards.length > 0);
 
   // 如果有图表、追问或引导动作，使用 ConclusionCard 渲染
   if (hasCard) {
@@ -28,6 +29,7 @@ export default function AIMessage({ message, onFollowUp, onAction }: AIMessagePr
             chart={message.chart}
             followups={message.followups || []}
             actions={message.actions}
+            guidanceCards={message.guidanceCards}
             onFollowUp={onFollowUp}
             onAction={onAction}
             replySource={message.replySource}

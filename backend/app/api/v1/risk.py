@@ -233,6 +233,50 @@ async def list_industries(
     return {"items": [{"industry_l1": k, "n": v} for k, v in sorted(counts.items())]}
 
 
+@router.get("/enterprises")
+async def list_enterprises(
+    q: str | None = Query(None, description="按「企业N」或行业/地区关键字过滤"),
+    db: AsyncSession = Depends(get_db),
+    _user: dict | None = Depends(get_current_user_optional),
+):
+    """单企业通道：可串联的「企业N」清单（含行业/地区），供报告向导「指定企业」选择。"""
+    try:
+        rows = (
+            await db.execute(
+                select(
+                    CoreMetrics.enterprise_id,
+                    CoreMetrics.display_name,
+                    CoreMetrics.display_label,
+                    CoreMetrics.industry_l1,
+                    CoreMetrics.province,
+                ).order_by(CoreMetrics.enterprise_id)
+            )
+        ).all()
+    except Exception as exc:
+        logger.warning("enterprises unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail="企业清单暂不可用，请稍后重试。") from exc
+
+    items = [
+        {
+            "enterprise_id": r[0],
+            "display_name": r[1] or r[2],
+            "industry_l1": r[3],
+            "province": r[4],
+        }
+        for r in rows
+    ]
+    if q:
+        needle = q.strip()
+        items = [
+            it
+            for it in items
+            if needle in (it["display_name"] or "")
+            or needle in (it["industry_l1"] or "")
+            or needle in (it["province"] or "")
+        ]
+    return {"items": items, "total": len(items)}
+
+
 @router.get("/fraud")
 async def fraud_overview(
     industry: str | None = Query(None, description="行业大类，如 制造/批发零售"),
@@ -241,12 +285,12 @@ async def fraud_overview(
     _user: dict | None = Depends(get_current_user_optional),
 ):
     """反欺诈行业/整体切片（确定性算法）。"""
-    q = select(CoreMetrics.enterprise_id, CoreMetrics.display_label, CoreMetrics.industry_l1)
+    q = select(CoreMetrics.enterprise_id, CoreMetrics.display_label, CoreMetrics.industry_l1, CoreMetrics.display_name)
     if industry:
         q = q.where(CoreMetrics.industry_l1 == industry)
     q = q.limit(limit)
     rows = (await db.execute(q)).all()
-    batch = [(r[0], r[1], r[2]) for r in rows]
+    batch = [(r[0], r[1], r[2], r[3]) for r in rows]
     return await run_blocking(fraud_engine.analyze_metrics_batch, batch, max_n=limit)
 
 

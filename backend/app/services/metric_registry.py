@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -468,42 +469,42 @@ def build_dictionary(metrics: list) -> dict:
 # 运行时 Claim.value.metric 字符串 → 中文标签（统一 slice_report 与语义层的 metric 命名空间）。
 # 动态指标（rank_* / seg_* / corr_* / compare_spread / risk_level_count 等）不在表内时回退到 metric 原名。
 RUNTIME_METRIC_LABELS: dict[str, str] = {
-    "avg_credit_score": "信用分均值",
+    "avg_credit_score": "信用表现",
     "avg_revenue_yoy": "营收同比",
-    "avg_authenticity_score": "真实性均分",
-    "avg_score": "综合均分",
+    "avg_authenticity_score": "经营真实性",
+    "avg_score": "综合经营表现",
     "signal_total": "风险信号主体数",
     "coverage_count": "覆盖功能数",
-    "benford_mad": "Benford MAD",
+    "benford_mad": "开票金额首位数字分布",
     "sample_count": "样本数",
     "session_synthesis_dims": "综合风控维度数",
     "session_overall_posture": "综合风险维度数",
     "avg_revenue_yoy_spread": "营收同比极差",
-    "avg_credit_score_spread": "信用分极差",
-    "dim_tax_health": "税务健康均分",
-    "dim_authenticity": "经营真实性均分",
-    "dim_invoice": "发票健康均分",
-    "dim_industry": "行业地位均分",
-    "dim_legal": "法律合规均分",
-    "dim_finance": "财务健康均分",
-    "avg_composite": "舞弊综合均分",
+    "avg_credit_score_spread": "信用表现极差",
+    "dim_tax_health": "税务健康",
+    "dim_authenticity": "经营真实性",
+    "dim_invoice": "发票健康",
+    "dim_industry": "行业地位",
+    "dim_legal": "法律合规",
+    "dim_finance": "财务健康",
+    "avg_composite": "发票舞弊",
     "signal_count": "信号主体数",
     "low_credit_industry_count": "低信用主体数",
-    "risk_factor": "风险成因扣分",
+    "risk_factor": "风险成因",
     "warning_signal_count": "预警信号项数",
-    "peer_industry_percentile": "行业分位",
-    "peer_province_percentile": "地区分位",
-    "peer_scale_percentile": "规模分位",
-    "overall_score": "综合评分",
-    "credit_score": "信用分",
+    "peer_industry_percentile": "行业对标",
+    "peer_province_percentile": "地区对标",
+    "peer_scale_percentile": "规模对标",
+    "overall_score": "综合经营表现",
+    "credit_score": "信用表现",
     "revenue_yoy": "营收同比",
-    "authenticity_score": "真实性得分",
+    "authenticity_score": "经营真实性",
     "revenue_deviation": "营收偏差",
     "profit_margin": "利润率",
     "profit_yoy": "利润同比",
     "debt_ratio": "资产负债率",
     "tax_on_time_rate": "纳税准时率",
-    "fraud_composite_score": "舞弊综合分",
+    "fraud_composite_score": "发票舞弊",
     "customer_concentration": "客户集中度",
     "supplier_concentration": "供应商集中度",
     "category_concentration": "品目集中度",
@@ -515,7 +516,58 @@ RUNTIME_METRIC_LABELS: dict[str, str] = {
     "void_invoice_cnt": "作废发票笔数",
     "unit_price_ratio": "单价离散度",
     "change_cnt": "变更登记次数",
+    "financial_coverage": "财务覆盖率",
+    "current_ratio": "流动比率",
+    "quick_ratio": "速动比率",
+    "gross_margin": "毛利率",
+    "net_margin": "净利率",
+    "roe": "净资产收益率",
+    "roa": "总资产收益率",
+    "asset_turnover": "总资产周转率",
+    "receivables_turnover": "应收账款周转率",
+    "inventory_turnover": "存货周转率",
+    "flagged_count": "预警主体数",
+    "risk_level": "群体风险判断",
+    "high_severity_cnt": "高危信号数",
 }
+
+
+def zh_metric_label(metric: str | None) -> str | None:
+    """运行时 metric → 业务中文名；未知英文/蛇形字段返回 None（禁止对外透出）。"""
+    if not metric:
+        return None
+    if metric in RUNTIME_METRIC_LABELS:
+        return RUNTIME_METRIC_LABELS[metric]
+    try:
+        from app.services.financial_benchmarks import FINANCIAL_RATIOS
+
+        cfg = FINANCIAL_RATIOS.get(metric)
+        if cfg and cfg.get("label"):
+            return str(cfg["label"])
+    except Exception:
+        pass
+    # 已是中文则放行
+    if any("\u4e00" <= ch <= "\u9fff" for ch in metric):
+        return metric
+    return None
+
+
+def format_surface_number(num: Any, unit: str = "", *, metric: str = "") -> str:
+    """对外数字格式：计数字段出整数，其余去多余尾零。"""
+    if num is None:
+        return "—"
+    try:
+        f = float(num)
+    except (TypeError, ValueError):
+        return str(num)
+    count_units = {"家", "次", "笔", "项", "人", "个", "条"}
+    count_metric_suffixes = ("_cnt", "_count", "count", "hits", "flags")
+    is_count = unit in count_units or any(metric.endswith(s) for s in count_metric_suffixes)
+    if is_count:
+        return str(int(round(f)))
+    if abs(f - round(f)) < 1e-9:
+        return str(int(round(f)))
+    return f"{f:.4f}".rstrip("0").rstrip(".")
 
 # 运行时 metric → 规范 metric_key（仅覆盖有明确对应关系的；其余映射到自身）。
 RUNTIME_TO_CANONICAL: dict[str, str] = {
@@ -557,3 +609,19 @@ def build_llm_dictionary() -> dict:
         ],
         "allowed_metrics": ALLOWED_METRIC_KEYS,
     }
+
+
+# ── 风险信号阈值（唯一源，铁律：引擎/页面/模板一律引用，禁止写死数字）──
+# 营收口径偏差（三口径离散度）预警阈值：>= 此值判「营收偏差过高」。
+# 曾散落三处：信号分桶/热力图 25%、预警信号/洞察 A-01 30%、企划书 v1 20%，现统一收编。
+REVENUE_DEVIATION_WARN = 0.30
+
+# 多源交叉偏差（增值税/发票/财务三口径两两相对偏差）：异于 REVENUE_DEVIATION_WARN
+# （后者是单字段 revenue_deviation）。真实性引擎 cross_source_deviation 唯一引用。
+CROSS_AVG_DEVIATION_WARN = 0.25
+CROSS_MAX_DEVIATION_WARN = 0.40
+
+
+def revenue_deviation_warn_label() -> str:
+    """营收偏差预警阈值中文标签（与 REVENUE_DEVIATION_WARN 同源，避免「≥25%」「30%」写死）。"""
+    return f"营收偏差≥{int(REVENUE_DEVIATION_WARN * 100)}%"

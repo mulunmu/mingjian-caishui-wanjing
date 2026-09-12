@@ -40,6 +40,22 @@ export interface Report {
   summary: string;
   kpis: ReportKpi[];
   chapters: ReportChapter[];
+  story?: string;
+  validation?: ReportValidation;
+}
+
+/** 报告抗幻觉 / 门禁校验结果（与后端 validation 同源） */
+export interface ReportValidation {
+  ok?: boolean;
+  empty?: boolean;
+  total_claims?: number;
+  unanchored?: number;
+  number_unanchored?: number;
+  risk_contradictions?: number;
+  details?: Array<Record<string, unknown>>;
+  enforced?: Record<string, unknown>;
+  cross_enforced?: Record<string, unknown>;
+  cross_surface?: Record<string, unknown>;
 }
 
 /** 后端报告列表项 */
@@ -65,7 +81,7 @@ export interface ReportGenerateResponse {
   status: string;
   title: string;
   scenario?: string;
-  validation?: Record<string, unknown>;
+  validation?: ReportValidation;
   download_url: string;
 }
 

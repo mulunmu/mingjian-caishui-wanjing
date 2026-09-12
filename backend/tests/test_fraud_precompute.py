@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 def test_analyze_metrics_batch_empty_when_precompute_missing():
     from app.services.fraud_engine import analyze_metrics_batch
 
-    rows = [("e1", "样本1", "制造"), ("e2", "样本2", "制造")]
+    rows = [("e1", "样本1", "制造", None), ("e2", "样本2", "制造", None)]
     with patch.dict(os.environ, {"FRAUD_ALLOW_MYSQL_FALLBACK": "false"}):
         with patch("app.services.engine_features_store.load_fraud_features_batch", return_value={}):
             out = analyze_metrics_batch(rows)
@@ -28,7 +28,7 @@ async def test_build_fraud_claims_precompute_miss_message():
 
     db = AsyncMock()
     result = MagicMock()
-    result.all.return_value = [("e1", "样本1", "制造")]
+    result.all.return_value = [("e1", "样本1", "制造", None, None)]
     db.execute = AsyncMock(return_value=result)
 
     miss_out = {
@@ -44,8 +44,9 @@ async def test_build_fraud_claims_precompute_miss_message():
         with patch("app.services.judgment_service.run_blocking", new_callable=AsyncMock) as rb:
             rb.return_value = miss_out
             claims, meta = await build_fraud_claims(db, "制造")
-    assert "预计算" in claims[0].claim
+    assert "暂未就绪" in claims[0].claim
     assert "0/0" not in claims[0].claim
+    assert "暂不评估" in claims[0].claim
     assert meta.get("coverage") == "precompute_missing"
 
 
@@ -58,7 +59,7 @@ async def test_build_fraud_claims_signal_uses_subject_unit():
 
     db = AsyncMock()
     result = MagicMock()
-    result.all.return_value = [("e1", "样本1", "制造")]
+    result.all.return_value = [("e1", "样本1", "制造", None, None)]
     db.execute = AsyncMock(return_value=result)
 
     out = {

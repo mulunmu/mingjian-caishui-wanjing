@@ -13,6 +13,7 @@ def test_chart_helpers():
         "dimensions": {
             "tax_health": 80,
             "authenticity": 70,
+            "invoice": 68,
             "industry": 75,
             "legal": 85,
             "finance": 65,

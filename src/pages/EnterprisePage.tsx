@@ -701,10 +701,10 @@ export default function EnterprisePage() {
               </div>
               <div>
                 <p className="text-xs text-warm-400 font-mono">
-                  ANONYMOUS SAMPLE #{p.enterprise_id.slice(0, 8)}
+                  {p.display_label}
                 </p>
                 <h1 className="text-xl font-bold text-warm-800 mt-0.5">
-                  {p.display_label}
+                  {p.enterprise_name}
                 </h1>
                 <div className="flex items-center gap-2 mt-1">
                   <span className="text-sm text-warm-500">

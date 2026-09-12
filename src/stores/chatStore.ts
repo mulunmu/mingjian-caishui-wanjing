@@ -97,6 +97,7 @@ const useChatStore = create<ChatStore>((set, get) => ({
         chart: res.chart,
         followups: res.followups,
         actions: res.actions,
+        guidanceCards: res.guidanceCards,
         evidence: res.evidence,
         evidence_chain: res.evidence.map((e) => e.content),
         trace: res.trace,

@@ -22,6 +22,7 @@ from app.services import (
 from app.services.intent_engine import IntentResult, industry_l1_options
 from app.services.judgment_service import without_synthesis_claims
 from app.services.report_templates import (
+    CUSTOM_CHAPTERS,
     PremiumReportLocked,
     has_scenario_keyword,
     resolve_scenario,
@@ -185,6 +186,7 @@ def _custom_report_response(
         "coverage": [],
         "report_hint": None,
         "actions": meta.get("actions", []),
+        "guidance_cards": meta.get("guidance_cards", []),
         "slice": {k: v for k, v in meta.items() if k not in ("actions", "charts")},
         "custom_stage": custom_state.get("stage"),
     }
@@ -211,6 +213,133 @@ def _custom_report_response(
         "session_id": sid,
         "conclusion_id": None,
     }
+
+
+def _chapter_name_to_fn(name: str) -> str | None:
+    """章节标题/键 → 章节键（用于「换章节：标题」卡片反解）。"""
+    for fn, (title, _desc) in CUSTOM_CHAPTERS.items():
+        if title == name or fn == name:
+            return fn
+    return None
+
+
+def _apply_custom_adjustment(spec_obj, q: str):
+    """确定性地应用拦截卡片的调整指令（不等用户口述重来）。
+
+    返回 (new_spec, mode)：mode ∈ {'adjust' 改后重校验, 'reask' 回提问阶段, 'none' 非调整指令}。
+    """
+    from app.schemas.custom_report import CustomReportSpec
+
+    data = spec_obj.model_dump()
+    if q == "改用全部样本":
+        data.update(industry_l1=None, province=None, enterprises=[])
+        return CustomReportSpec(**data), "adjust"
+    if q == "保留企业，去掉范围过滤":
+        data.update(industry_l1=None, province=None)
+        return CustomReportSpec(**data), "adjust"
+    if q.startswith("换章节："):
+        fn = _chapter_name_to_fn(q[len("换章节："):].strip())
+        if fn:
+            data["chapters"] = [fn]
+            return CustomReportSpec(**data), "adjust"
+        return spec_obj, "none"
+    if q == "自定义修改范围":
+        data.update(industry_l1=None, province=None, enterprises=[])
+        return CustomReportSpec(**data), "reask"
+    return spec_obj, "none"
+
+
+async def _custom_adjustment_followups(db, spec, validation) -> list[dict]:
+    """拦截时的可点击调整卡片：① 改用全部样本 ② 保留企业去范围 ③ 换章节 ④ 自定义。
+
+    返回 {label, description} 卡片；label 即 followup 文本（点击触发 _apply_custom_adjustment）。
+    """
+    from app.services.slice_report import validate_custom_report
+
+    chapters = list(spec.chapters or [])
+    cards: list[dict] = []
+
+    # ① 改用全部样本：请求章节在全样本下确有数据才给（避免二次空拦截）
+    if spec.industry_l1 or spec.province:
+        full = await validate_custom_report(db, chapters=chapters, industry_l1=None, province=None)
+        if any(full["chapters"].get(fn, {}).get("available") for fn in chapters):
+            cards.append({"label": "改用全部样本", "description": "取消行业、地区过滤，使用全部样本"})
+
+    # ② 保留指定企业、去掉行业/地区过滤（有企业且当前有范围过滤时）
+    if spec.enterprises and (spec.industry_l1 or spec.province):
+        ent_names = "、".join(spec.enterprises)
+        cards.append({"label": "保留企业，去掉范围过滤", "description": f"保留 {ent_names}，取消行业、地区筛选"})
+
+    # ③ 换章节：当前范围（含指定企业）下其他有数据的章节
+    alt_chapters = [f for f in CUSTOM_CHAPTERS if f not in chapters]
+    if alt_chapters:
+        alts = await validate_custom_report(
+            db, chapters=alt_chapters,
+            industry_l1=spec.industry_l1, province=spec.province,
+            enterprise_ids=validation.get("enterprise_ids") or None,
+        )
+        for fn in alt_chapters:
+            if alts["chapters"].get(fn, {}).get("available"):
+                title = CUSTOM_CHAPTERS[fn][0]
+                cards.append({"label": f"换章节：{title}", "description": f"改为当前范围下有数据的章节「{title}」"})
+
+    # ④ 自定义修改范围
+    cards.append({"label": "自定义修改范围", "description": "重新告诉我行业、地区或目标企业"})
+    return cards
+
+
+async def _custom_proposal_with_validation(db, spec) -> dict:
+    """propose 阶段的数据驱动校验（元数据接口在组装好完整参数后立即调用）。
+
+    返回 {reply, followups, empty, blocked, validation}：
+    - 全部章节无数据 → blocked（不开放「确认生成」），给出根因 + 可点击调整卡片；
+    - 部分章节无数据 → 保留「确认生成」，明确告知哪些章节将不出现；
+    - 全部有数据 → 正常方案 +「确认生成」。
+    """
+    from app.services import assessment as _assessment
+    from app.services import custom_report as cr
+    from app.services.slice_report import custom_report_block_reason, validate_custom_report
+
+    chapters = list(spec.chapters or [])
+    enterprise_ids = await _assessment.resolve_enterprise_ids(db, spec.enterprises)
+    validation = await validate_custom_report(
+        db,
+        chapters=chapters,
+        industry_l1=spec.industry_l1,
+        province=spec.province,
+        enterprise_ids=enterprise_ids or None,
+    )
+    empty = [fn for fn in chapters if not validation["chapters"].get(fn, {}).get("available")]
+    base = cr.proposal_text(spec)
+
+    if empty and len(empty) == len(chapters):
+        reason = await custom_report_block_reason(
+            db,
+            industry_l1=spec.industry_l1,
+            province=spec.province,
+            enterprise_ids=enterprise_ids or None,
+            scope_sample_count=validation.get("scope_sample_count") or 0,
+        )
+        names = "、".join(CUSTOM_CHAPTERS[fn][0] for fn in empty if fn in CUSTOM_CHAPTERS)
+        reply = (
+            f"{base}\n\n"
+            f"❗ 当前组合没有匹配的「{names}」数据，无法生成这份报告。\n"
+            f"原因：{reason}\n\n"
+            "你可以直接选择下面任一调整方案（点击右侧卡片）："
+        )
+        cards = await _custom_adjustment_followups(db, spec, validation)
+        followups = [c["label"] for c in cards]
+        return {"reply": reply, "followups": followups, "cards": cards, "empty": empty, "blocked": True, "validation": validation}
+    else:
+        reply = base
+        if empty:
+            names = "、".join(CUSTOM_CHAPTERS[fn][0] for fn in empty if fn in CUSTOM_CHAPTERS)
+            reply += (
+                f"\n\n⚠️ 提示：「{names}」在当前范围暂无可用数据，生成后该章节将不出现。"
+                "可改用「全部样本」或换章节，或直接确认生成（其余章节照常输出）。"
+            )
+        followups = list(cr.PROPOSE_FOLLOWUPS)
+        return {"reply": reply, "followups": followups, "cards": [], "empty": empty, "blocked": False, "validation": validation}
 
 
 async def _route_custom_report(
@@ -241,6 +370,7 @@ async def _route_custom_report(
     industry_l1: str | None = None
     province: str | None = None
     reply_source = "rule"
+    guidance_cards: list[dict] = []
 
     q = (query or "").strip()
 
@@ -252,49 +382,116 @@ async def _route_custom_report(
             {"label": "直接生成固定报告（6 套模板）", "target": "/report?wizard=1"},
             {"label": "重新开始 AI 定制", "target": "/?custom=1"},
         ]
-    elif (state.get("stage") or "asking") == "propose" and cr.is_confirm(q):
+    elif (state.get("stage") or "asking") == "propose":
         spec = state.get("spec")
         spec_obj = CustomReportSpec.model_validate(spec) if spec else None
-        if spec_obj is None or not spec_obj.chapters:
-            state["stage"] = "asking"
-            reply = "方案章节还不完整，请再告诉我你关注哪些风险（财务/税务/发票舞弊/真实性/评分/对标/趋势/信号）。"
-            followups = list(cr.ASKING_FOLLOWUPS)
-        else:
-            try:
-                from app.services.slice_report import generate_custom_report
+        handled = False
 
-                report_id, _pdf, ctx = await generate_custom_report(
-                    db,
-                    spec=spec_obj,
-                    session_id=sid,
-                    owner=_owner_email(user),
-                    industry_l1=spec_obj.industry_l1,
-                    province=spec_obj.province,
-                )
-                industry_l1 = spec_obj.industry_l1
-                province = spec_obj.province
-                report_meta = {
-                    "report_id": report_id,
-                    "download_url": f"/api/v1/report/{report_id}/download",
-                    "title": ctx.get("title"),
-                    "validation": ctx.get("validation"),
-                }
-                reply = f"已按你的方案生成《{ctx.get('title')}》，报告编号 {report_id}。可在报告中心查看、下载。"
-                followups = ["再定制一份", "换成固定报告"]
-                meta["actions"] = [
-                    {"label": "查看并下载报告", "target": f"/report?highlight={report_id}"},
-                    {"label": "再定制一份", "target": "/?custom=1"},
-                ]
-                meta["report_id"] = report_id
-                state["active"] = False
-            except Exception as exc:
-                logger.warning("custom report generation failed: %s", exc)
-                reply = f"定制报告生成失败：{exc}。请调整范围后重试，或改用固定报告。"
-                followups = ["重新开始定制", "打开报告生成向导"]
-                meta["actions"] = [{"label": "打开报告生成向导", "target": "/report?wizard=1"}]
-                meta["report_error"] = str(exc)
+        # 1) 拦截卡片的确定性调整指令（点击卡片即生效，不等用户口述重来）
+        if spec_obj is not None:
+            spec_obj, adjust_mode = _apply_custom_adjustment(spec_obj, q)
+            if adjust_mode == "reask":
+                handled = True
+                state["spec"] = spec_obj.model_dump()
+                state["stage"] = "asking"
+                reply = "好的，请告诉我新的范围：行业（如制造、批发零售）、地区（如广东、浙江），或直接说「全部样本」。"
+                followups = ["全部样本", "退出定制"]
+            elif adjust_mode == "adjust":
+                handled = True
+                proposal = await _custom_proposal_with_validation(db, spec_obj)
+                state["spec"] = spec_obj.model_dump()
+                state["stage"] = "propose"
+                state["validation"] = proposal["validation"]
+                state["empty_chapters"] = proposal["empty"]
+                reply = proposal["reply"]
+                followups = list(proposal["followups"])
+                guidance_cards = list(proposal.get("cards", []))
+
+        # 2) 确认生成：生成前再跑一次校验兜底（即便前端漏放确认按钮，也绝不生成空报告）
+        if not handled and cr.is_confirm(q):
+            if spec_obj is None or not spec_obj.chapters:
+                state["stage"] = "asking"
+                reply = "方案章节还不完整，请再告诉我你关注哪些风险（财务/税务/发票舞弊/真实性/评分/对标/趋势/信号）。"
+                followups = list(cr.ASKING_FOLLOWUPS)
+            else:
+                proposal = await _custom_proposal_with_validation(db, spec_obj)
+                if proposal["blocked"]:
+                    state["empty_chapters"] = proposal["empty"]
+                    reply = proposal["reply"]
+                    followups = list(proposal["followups"])
+                    guidance_cards = list(proposal.get("cards", []))
+                else:
+                    try:
+                        from app.services import assessment
+                        from app.services.slice_report import generate_custom_report
+
+                        enterprise_ids = await assessment.resolve_enterprise_ids(db, spec_obj.enterprises)
+                        report_id, _pdf, ctx = await generate_custom_report(
+                            db,
+                            spec=spec_obj,
+                            session_id=sid,
+                            owner=_owner_email(user),
+                            industry_l1=spec_obj.industry_l1,
+                            province=spec_obj.province,
+                            enterprise_ids=enterprise_ids or None,
+                        )
+                        industry_l1 = spec_obj.industry_l1
+                        province = spec_obj.province
+                        report_meta = {
+                            "report_id": report_id,
+                            "download_url": f"/api/v1/report/{report_id}/download",
+                            "title": ctx.get("title"),
+                            "validation": ctx.get("validation"),
+                        }
+                        # 以实际生成为准：比对请求章节与生成章节，告知真正被跳过的章节
+                        generated_fns = {ch.get("function") for ch in (ctx.get("chapters") or [])}
+                        skipped = [fn for fn in spec_obj.chapters if fn not in generated_fns]
+                        if skipped:
+                            names = "、".join(CUSTOM_CHAPTERS[fn][0] for fn in skipped if fn in CUSTOM_CHAPTERS)
+                            reply = (
+                                f"已生成《{ctx.get('title')}》（编号 {report_id}）。"
+                                f"注意：「{names}」在当前范围暂无数据已跳过，建议改用「全部样本」范围查看。"
+                            )
+                        else:
+                            reply = f"已按你的方案生成《{ctx.get('title')}》，报告编号 {report_id}。可在报告中心查看、下载。"
+                        followups = ["再定制一份", "换成固定报告"]
+                        meta["actions"] = [
+                            {"label": "查看并下载报告", "target": f"/report?highlight={report_id}"},
+                            {"label": "再定制一份", "target": "/?custom=1"},
+                        ]
+                        meta["report_id"] = report_id
+                        state["active"] = False
+                    except Exception as exc:
+                        logger.warning("custom report generation failed: %s", exc)
+                        reply = (
+                            f"定制报告生成失败：{exc}。"
+                            "若刚才对话已定好方案，可再说一次「确认生成」重试；"
+                            "或调整行业/章节后重试，也可改用报告中心快捷模板。"
+                        )
+                        followups = ["重新开始定制", "打开报告生成向导"]
+                        meta["actions"] = [{"label": "打开报告生成向导", "target": "/report?wizard=1"}]
+                        meta["report_error"] = str(exc)
+
+        # 3) propose 阶段非确认非调整 → 继续推进（允许用户口述改方案）
+        elif not handled:
+            result = await cr.next_turn(state, q)
+            reply = result["reply"]
+            followups = list(result["followups"])
+            reply_source = "llm" if result.get("llm") else "rule"
+            state["stage"] = result.get("stage") or state.get("stage") or "asking"
+            if result.get("spec") is not None:
+                state["spec"] = result["spec"].model_dump()
+            if result.get("spec") is not None and result.get("stage") == "propose":
+                proposal = await _custom_proposal_with_validation(db, result["spec"])
+                state["validation"] = proposal["validation"]
+                state["empty_chapters"] = proposal["empty"]
+                reply = proposal["reply"]
+                followups = list(proposal["followups"])
+                guidance_cards = list(proposal.get("cards", []))
+            meta = dict(result.get("meta") or {})
+
     else:
-        # asking 阶段，或 propose 阶段的非确认输入（含「调整范围」「换个章节组合」）→ 推进一轮
+        # asking 阶段：必须推进 next_turn（此前误把 next_turn 挂在 propose 分支内 → 空气泡）
         result = await cr.next_turn(state, q)
         reply = result["reply"]
         followups = list(result["followups"])
@@ -302,7 +499,20 @@ async def _route_custom_report(
         state["stage"] = result.get("stage") or state.get("stage") or "asking"
         if result.get("spec") is not None:
             state["spec"] = result["spec"].model_dump()
+        if result.get("spec") is not None and result.get("stage") == "propose":
+            proposal = await _custom_proposal_with_validation(db, result["spec"])
+            state["validation"] = proposal["validation"]
+            state["empty_chapters"] = proposal["empty"]
+            reply = proposal["reply"]
+            followups = list(proposal["followups"])
+            guidance_cards = list(proposal.get("cards", []))
         meta = dict(result.get("meta") or {})
+
+    # 兜底：绝不返回空正文（前端会只剩规则引擎徽章）
+    if not (reply or "").strip():
+        reply = cr.rule_next_question(state)
+        if not followups:
+            followups = list(cr.ASKING_FOLLOWUPS)
 
     await run_blocking(
         session_store.store_session,
@@ -315,6 +525,9 @@ async def _route_custom_report(
         query=query,
         custom_report=state,
     )
+
+    if guidance_cards:
+        meta["guidance_cards"] = guidance_cards
 
     return _custom_report_response(
         sid,

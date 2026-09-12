@@ -186,14 +186,28 @@ async def ingest_rows(
 
     # permanent：写 core_metrics（upsert）
     try:
+        from sqlalchemy import select
+
         from app.models.core_metrics import CoreMetrics
+
+        # 计算下一个可读名「企业N」：取已有 display_name 最大数值后缀 +1，保证新增企业不重名
+        max_n = 0
+        for name in (
+            await db.execute(select(CoreMetrics.display_name).where(CoreMetrics.display_name.isnot(None)))
+        ).scalars().all():
+            if name and name.startswith("企业"):
+                try:
+                    max_n = max(max_n, int(name[2:]))
+                except ValueError:
+                    pass
 
         for it in ingested:
             kwargs = ingest_service.to_core_metrics_kwargs(it)
             eid = kwargs.pop("enterprise_id")
             existing = await db.get(CoreMetrics, eid)
             if existing is None:
-                db.add(CoreMetrics(enterprise_id=eid, **kwargs))
+                max_n += 1
+                db.add(CoreMetrics(enterprise_id=eid, display_name=f"企业{max_n}", **kwargs))
             else:
                 for k, v in kwargs.items():
                     setattr(existing, k, v)

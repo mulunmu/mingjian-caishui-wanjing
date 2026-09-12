@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.core_metrics import CoreMetrics
 from app.models.engine_store import EnterpriseEngineFeatures
 from app.schemas.claim import Claim, ClaimTrace, ClaimValue
+from app.services.metric_registry import REVENUE_DEVIATION_WARN, revenue_deviation_warn_label
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +69,31 @@ class Evidence:
             return f"{self.label}={'是' if self.value else '否'}"
         if isinstance(self.value, str):
             return f"{self.label}={self.value}"
+        # 字段已知 → 走财务比率字典（倍数/百分比口径唯一源，禁止空 unit 启发式篡改）
+        if self.field:
+            from app.services.financial_benchmarks import FINANCIAL_RATIOS, format_financial_ratio
+
+            if self.field in FINANCIAL_RATIOS:
+                return f"{self.label} {format_financial_ratio(self.field, self.value)}"
         if self.unit == "%":
             return f"{self.label} {float(self.value) * 100:.1f}%"
-        if self.unit in ("家", "次", "笔"):
-            return f"{self.label} {int(self.value)}{self.unit}"
+        if self.unit in ("家", "次", "笔", "项", "人", "个", "条"):
+            return f"{self.label} {int(round(float(self.value)))}{self.unit}"
+        # 显式偏差率字段（无 % unit 的遗留）：仅白名单可 ×100，禁止把流动比率等倍数误当百分比
+        if (
+            self.unit == ""
+            and self.field in {
+                "revenue_deviation",
+                "cross_deviation",
+                "cross_avg_deviation",
+                "authenticity_gap",
+            }
+            and isinstance(self.value, (int, float))
+            and 0 < abs(float(self.value)) < 1
+        ):
+            return f"{self.label} {float(self.value) * 100:.1f}%"
+        if isinstance(self.value, (int, float)) and abs(float(self.value) - round(float(self.value))) < 1e-9:
+            return f"{self.label} {int(round(float(self.value)))}{self.unit}"
         return f"{self.label} {float(self.value):.2f}{self.unit}"
 
 
@@ -490,13 +512,13 @@ def _r_i11_unit_price_dispersion(m: CoreMetrics, feats: EnterpriseEngineFeatures
 def _r_a01_deviation(m: CoreMetrics, feats: EnterpriseEngineFeatures | None) -> Insight | None:
     if not _present(m.revenue_deviation):
         return None
-    # 与 assessment._warning_signals 统一阈值 0.3
-    if _f(m.revenue_deviation) <= 0.3:
+    # 与 assessment._warning_signals 统一阈值（见 metric_registry.REVENUE_DEVIATION_WARN）
+    if _f(m.revenue_deviation) < REVENUE_DEVIATION_WARN:
         return None
     return Insight(
         "A-01", "真实性", "多源营收口径背离", "预警",
         [_pct("营收偏差", m.revenue_deviation, "revenue_deviation")],
-        "多源营收口径背离超过 30%，数据真实性存疑，建议交叉核对申报口径。",
+        f"多源营收口径背离超过 {int(REVENUE_DEVIATION_WARN * 100)}%，数据真实性存疑，建议交叉核对申报口径。",
     )
 
 
@@ -597,7 +619,8 @@ def evaluate_insights(
 
     high = [i for i in insights if i.severity == "高危"]
     if len(high) >= 2:
-        fired = "、".join(f"{i.title}({i.rule_id})" for i in high)
+        # 对外只展示中文标题，禁止 rule_id（T-01/A-02）漏进报告正文
+        fired = "、".join(i.title for i in high)
         insights.append(
             Insight(
                 "R-03",

@@ -49,6 +49,7 @@ export default function FraudPage() {
   const filteredData = data.filter((item) => {
     if (!searchTerm) return true;
     return (
+      (item.display_name || '').includes(searchTerm) ||
       (item.display_label || '').includes(searchTerm) ||
       (item.industry_l1 || '').includes(searchTerm)
     );
@@ -157,7 +158,7 @@ export default function FraudPage() {
                     className={`grid grid-cols-7 gap-2 px-5 py-3 border-t border-warm-100 transition-colors ${canNavigate ? 'hover:bg-warm-50 cursor-pointer' : ''}`}
                     onClick={() => canNavigate && navigate(`/enterprise/${item.enterprise_id}`)}
                   >
-                    <div className="text-sm text-warm-800 font-medium">{item.display_label || item.enterprise_id}</div>
+                    <div className="text-sm text-warm-800 font-medium">{item.display_name || item.display_label || item.enterprise_id}</div>
                     <div className="text-sm text-warm-600">{item.industry_l1 || '-'}</div>
                     <div className="text-sm text-warm-800 font-mono">{item.fraud_composite_score?.toFixed(1) ?? '-'}</div>
                     <div>

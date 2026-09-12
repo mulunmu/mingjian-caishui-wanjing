@@ -9,6 +9,7 @@ export interface RiskSummaryResponse {
   enterprises: {
     enterprise_id: string;
     display_label: string;
+    display_name?: string;
     risk_level: string;
     overall_score: number;
     industry_l1: string;
@@ -30,6 +31,7 @@ export interface IndustryProfileItem {
 export interface WarningEnterprise {
   enterprise_id: string;
   display_label: string;
+  display_name?: string;
   enterprise_name?: string;
   industry_l1?: string;
   risk_level?: string;

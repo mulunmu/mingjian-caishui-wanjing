@@ -4,21 +4,33 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.assessment_weights import DIMENSION_LABELS, DIMENSION_WEIGHTS
+from app.services.metric_registry import REVENUE_DEVIATION_WARN, revenue_deviation_warn_label
+from app.services.report_templates import zh_industry
 
-SIGNAL_X_LABELS = ["税务违法", "营收偏差≥25%", "信用C/D/M"]
+SIGNAL_X_LABELS = ["税务违法", revenue_deviation_warn_label(), "信用C/D/M"]
 SIGNAL_BUCKET_KEYS = ("tax", "dev", "credit")
 
 
-def attribution_radar_chart(attribution: dict[str, Any], *, name: str = "全样本") -> dict[str, Any] | None:
-    """样本六维均分雷达图（来自 get_slice_attribution）。"""
-    dims = attribution.get("dimensions") or {}
-    if not dims:
+def attribution_radar_chart(
+    attribution: dict[str, Any],
+    *,
+    name: str = "全样本",
+    dims: list[str] | None = None,
+) -> dict[str, Any] | None:
+    """样本六维均分雷达图（来自 get_slice_attribution）。
+
+    dims 非空时只展示这些维度（铁律：雷达 ⊆ 正文解析维度），用于按章节裁剪。
+    """
+    all_dims = attribution.get("dimensions") or {}
+    if not all_dims:
         return None
     indicators: list[dict[str, Any]] = []
     values: list[float] = []
     caveats: list[dict[str, str]] = []
     for key in DIMENSION_WEIGHTS:
-        d = dims.get(key)
+        if dims is not None and key not in dims:
+            continue
+        d = all_dims.get(key)
         if not d:
             continue
         label = d.get("label") or DIMENSION_LABELS.get(key, key)
@@ -35,7 +47,7 @@ def attribution_radar_chart(attribution: dict[str, Any], *, name: str = "全样�
         values.append(score)
     if not indicators:
         return None
-    scope = attribution.get("industry_l1")
+    scope = zh_industry(attribution.get("industry_l1"))
     label = f"{scope}行业" if scope else name
     payload: dict[str, Any] = {"indicators": indicators, "values": values, "name": label}
     if caveats:
@@ -46,14 +58,28 @@ def attribution_radar_chart(attribution: dict[str, Any], *, name: str = "全样�
     }
 
 
-def enterprise_radar_chart(ent: dict[str, Any]) -> dict[str, Any]:
-    """单企业多维雷达（兼容旧 chat_router._radar_chart，维度随 DIMENSION_WEIGHTS 扩展）。"""
-    dims = ent.get("dimensions", {})
+def enterprise_radar_chart(
+    ent: dict[str, Any],
+    *,
+    dims: list[str] | None = None,
+) -> dict[str, Any] | None:
+    """单企业多维雷达。
+
+    dims 非空时只展示这些维度（铁律：雷达 ⊆ 正文已解析维度）；全空则弃权。
+    """
+    scores = ent.get("dimensions", {}) or {}
     indicators: list[dict[str, Any]] = []
     values: list[float] = []
     for key in DIMENSION_WEIGHTS:
+        if dims is not None and key not in dims:
+            continue
+        score = float(scores.get(key, 0) or 0)
+        if score <= 0:
+            continue  # 0=弃权，不画入雷达
         indicators.append({"name": DIMENSION_LABELS.get(key, key), "max": 100})
-        values.append(float(dims.get(key, 0) or 0))
+        values.append(score)
+    if not indicators:
+        return None
     return {
         "type": "radar",
         "data": {
@@ -83,7 +109,7 @@ def signal_industry_heatmap(rows: list[Any]) -> dict[str, Any] | None:
         ind = m.industry_l1 or "其他"
         if int(getattr(m, "tax_violation_cnt", 0) or 0) > 0:
             buckets[ind]["tax"].add(eid)
-        elif _f(m.revenue_deviation) >= 0.25:
+        elif _f(m.revenue_deviation) >= REVENUE_DEVIATION_WARN:
             buckets[ind]["dev"].add(eid)
         elif (m.credit_level or "") in ("C", "D", "M"):
             buckets[ind]["credit"].add(eid)

@@ -5,7 +5,8 @@ import asyncio
 def _profile():
     return {
         "enterprise_id": "abc123456789",
-        "enterprise_name": "Anonymous Sample",
+        "enterprise_name": "企业1",
+        "display_name": "企业1",
         "display_label": "Anonymous Sample",
         "credit_level": "B",
         "overall_score": 61.5,
@@ -77,9 +78,9 @@ def test_build_enterprise_claims(monkeypatch):
     )
 
     assert meta["enterprise_id"] == "abc123456789"
-    assert meta["short_id"] == "abc12345"
+    assert meta["enterprise_label"] == "企业1"
     assert meta["charts"]["type"] == "radar"
-    assert any("综合评分" in c.claim for c in claims)
+    assert any("综合风险等级" in c.claim for c in claims)
     assert any("排名第 5/20" in c.claim for c in claims)
     assert any("预警信号" in c.claim for c in claims)
     # 数字均须有 trace（computed 可溯源）
@@ -130,10 +131,11 @@ def test_build_enterprise_report_context(monkeypatch):
     )
 
     assert ctx["scenario"] == "enterprise"
-    assert "#abc12345" in ctx["title"]
+    assert "企业1" in ctx["title"]
     assert ctx["tier"] == "general"
     assert ctx["scenario_label"] == "企业财务分析报告"
     # 企业基本信息
+    assert ctx["subject"]["name"] == "企业1"
     assert ctx["subject"]["short_id"] == "abc12345"
     assert ctx["subject"]["industry_l1"] == "制造"
     assert ctx["subject"]["province"] == "广东"
@@ -142,16 +144,29 @@ def test_build_enterprise_report_context(monkeypatch):
     assert ctx["overall"]["overall_score"] == 61.5
     assert ctx["overall"]["health"] == "中等"
     assert ctx["overall"]["benchmark_groups"] is not None
-    # 分维度风险分析（业界顺序：资本结构→偿债→盈利→现金流→营运→成长）
-    dim_titles = [d["title"] for d in ctx["dimensions"]]
-    assert dim_titles == ["资本结构", "偿债能力", "盈利能力", "现金流", "营运能力", "成长能力"]
-    for d in ctx["dimensions"]:
-        assert d["risk_level"] in ("低", "中", "高")
-        assert all("rating" in m for m in d["metrics"])
-        assert {"level_review", "trend", "risks", "advice"} <= set(d["analysis"])
-    # 主要财务数据（三大报表）
-    assert {"income", "balance", "cashflow"} <= set(ctx["statements"])
-    assert ctx["validation"]["ok"] is True
+    # 分维度风险分析：db=None（无财务报表）→ 弃权不出现（空数据消除，不再写「无数据」占位）
+    assert ctx["dimensions"] == []
+    # 主要财务数据：无报表 → 弃权不出现
+    assert ctx["statements"] is None
+    assert ctx["dupont"] is None
+    # 真校验（禁止假 ok 占位）：结构含抗幻觉字段
+    v = ctx["validation"]
+    assert "number_unanchored" in v
+    assert "risk_contradictions" in v
+    assert "details" in v
+    assert v["ok"] is True
+    assert v["total_claims"] >= 1
+    # A.1：个体封面 story 来自 claim，禁止营销罐装句
+    story = ctx.get("story") or ""
+    assert "财务体检：先给综合评级" not in story
+    assert story  # 有 claim 则必有导语（或弃权句）；本夹具有 overall claim
+    assert "综合经营表现" in story or "弃权" in story or "风险" in story
+    # 个体路径跨面机检（与切片同口径）
+    assert isinstance(v.get("cross_surface"), dict)
+    assert v["cross_surface"].get("ok") is True
+    assert isinstance(v.get("cross_enforced"), dict)
+    assert ctx.get("summary_kpis")
+    assert "executive_summary" in ctx
 
 
 def test_generate_enterprise_report_id_prefix():

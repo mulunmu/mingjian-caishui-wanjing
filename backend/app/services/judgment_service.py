@@ -14,6 +14,8 @@ from app.models.core_metrics import CoreMetrics, IndustryBenchmark
 from app.schemas.claim import Claim, ClaimTrace, ClaimValue
 from app.schemas.semantic_query import QueryType, SemanticQuery
 from app.services.intent_engine import IntentResult
+from app.services.metric_registry import REVENUE_DEVIATION_WARN, revenue_deviation_warn_label
+from app.services.report_templates import business_level, zh_industry, zh_signal
 from app.services.sync_runner import run_blocking
 
 logger = logging.getLogger(__name__)
@@ -56,16 +58,31 @@ async def _load_metrics(
     db: AsyncSession,
     industry_l1: str | None = None,
     province: str | None = None,
+    enterprise_ids: list[str] | None = None,
 ) -> list[CoreMetrics]:
     q = select(CoreMetrics)
     if industry_l1:
         q = q.where(CoreMetrics.industry_l1 == industry_l1)
     if province:
         q = q.where(CoreMetrics.province == province)
+    if enterprise_ids:
+        q = q.where(CoreMetrics.enterprise_id.in_(enterprise_ids))
     # 确定性：截断子集（rows[:120] / fraud limit）必须可复现，按主体 ID 稳定排序。
     q = q.order_by(CoreMetrics.enterprise_id)
     result = await db.execute(q)
     return list(result.scalars().all())
+
+
+async def _load_metrics_scoped(
+    db: AsyncSession,
+    industry_l1: str | None = None,
+    province: str | None = None,
+    enterprise_ids: list[str] | None = None,
+) -> list[CoreMetrics]:
+    """按需追加 enterprise_ids 过滤；空时不传该 kwarg，兼容旧测试 monkeypatch 的 _load_metrics 签名。"""
+    if enterprise_ids:
+        return await _load_metrics(db, industry_l1, province=province, enterprise_ids=enterprise_ids)
+    return await _load_metrics(db, industry_l1, province=province)
 
 
 def is_synthesis_claim(c: Claim) -> bool:
@@ -99,9 +116,9 @@ def without_synthesis_claims(claims: list[Claim]) -> list[Claim]:
 
 
 async def build_trend_industry_claims(
-    db: AsyncSession, industry_l1: str | None = None, *, province: str | None = None
+    db: AsyncSession, industry_l1: str | None = None, *, province: str | None = None, enterprise_ids: list[str] | None = None
 ) -> tuple[list[Claim], dict[str, Any]]:
-    rows = await _load_metrics(db, industry_l1, province=province)
+    rows = await _load_metrics_scoped(db, industry_l1, province=province, enterprise_ids=enterprise_ids)
     if not rows:
         return (
             [
@@ -158,7 +175,7 @@ async def build_trend_industry_claims(
         direction = "上行" if s["avg_revenue_yoy"] > 2 else ("下行" if s["avg_revenue_yoy"] < -2 else "平稳")
         claims.append(
             _claim(
-                f"{s['industry_l1']}行业营收同比均值 {s['avg_revenue_yoy']}%，趋势偏{direction}"
+                f"{zh_industry(s['industry_l1'])}行业营收同比均值 {s['avg_revenue_yoy']}%，趋势偏{direction}"
                 f"（营收增长 {s['grow_cnt']} / 缩减 {s['shrink_cnt']}，样本 {s['n']}）。",
                 metric="avg_revenue_yoy",
                 number=s["avg_revenue_yoy"],
@@ -173,8 +190,8 @@ async def build_trend_industry_claims(
         top, bottom = stats[0], stats[-1]
         claims.append(
             _claim(
-                f"同比均值最高为{top['industry_l1']}（{top['avg_revenue_yoy']}%），"
-                f"最低为{bottom['industry_l1']}（{bottom['avg_revenue_yoy']}%）。",
+                f"同比均值最高为{zh_industry(top['industry_l1'])}（{top['avg_revenue_yoy']}%），"
+                f"最低为{zh_industry(bottom['industry_l1'])}（{bottom['avg_revenue_yoy']}%）。",
                 metric="avg_revenue_yoy_spread",
                 number=round(top["avg_revenue_yoy"] - bottom["avg_revenue_yoy"], 2),
                 unit="百分点",
@@ -189,11 +206,52 @@ async def build_trend_industry_claims(
     chart = {
         "type": "line",
         "data": {
-            "labels": [s["industry_l1"] for s in stats],
+            "labels": [zh_industry(s["industry_l1"]) for s in stats],
             "series": [{"name": "营收同比%", "values": [s["avg_revenue_yoy"] for s in stats]}],
         },
     }
     return claims, {"industries": stats, "sample_count": total, "charts": chart}
+
+
+def _score_overall_from_attr(
+    attr: dict[str, Any],
+    radar_fn: Any,
+) -> tuple[list[Claim], dict[str, Any]]:
+    """六维 overall 章：从 get_slice_attribution 结果装配 claim + 雷达。"""
+    dims = attr.get("dimensions") or {}
+    claims = [
+        _claim(
+            attr["summary"],
+            metric="avg_score",
+            number=attr.get("avg_score"),
+            unit="分",
+            table="assessment",
+            field="overall_score",
+            query_id="Q_score_overall",
+            evidence=[f"sample_count={attr.get('sample_count')}"],
+        )
+    ]
+    for key, d in dims.items():
+        claims.append(
+            _claim(
+                f"「{d.get('label', key)}」维度表现{business_level(float(d.get('score') or 0))}。",
+                metric=f"dim_{key}",
+                number=round(float(d.get("score") or 0), 2),
+                unit="分",
+                table="assessment",
+                field=f"dim_{key}",
+                query_id=f"Q_score_dim_{key}",
+                evidence=[f"weight={d.get('weight')}"],
+            )
+        )
+    radar = radar_fn(attr)
+    meta: dict[str, Any] = {
+        "attribution": attr,
+        "sample_count": attr.get("sample_count"),
+    }
+    if radar:
+        meta["charts"] = radar
+    return claims, meta
 
 
 async def build_score_claims(
@@ -202,52 +260,38 @@ async def build_score_claims(
     dimension: str = "overall",
     *,
     province: str | None = None,
+    enterprise_ids: list[str] | None = None,
 ) -> tuple[list[Claim], dict[str, Any]]:
-    if dimension == "overall" and not industry_l1:
+    # overall：六维归因必须同源当前筛选子集（禁止有行业筛选却回落全库 193）
+    if dimension == "overall":
         from app.services import assessment
         from app.services.chart_payloads import attribution_radar_chart
 
-        attr = await assessment.get_slice_attribution(db)
-        dims = attr.get("dimensions") or {}
-        if dims and attr.get("summary"):
-            claims = [
-                _claim(
-                    attr["summary"],
-                    metric="avg_score",
-                    number=attr.get("avg_score"),
-                    unit="分",
-                    table="assessment",
-                    field="overall_score",
-                    query_id="Q_score_overall",
-                    evidence=[f"sample_count={attr.get('sample_count')}"],
-                )
-            ]
-            for key, d in dims.items():
-                claims.append(
-                    _claim(
-                        f"{d.get('label', key)}维度均分 {float(d.get('score') or 0):.1f}，"
-                        f"加权贡献 {float(d.get('net_contribution') or 0):.1f} 分。",
-                        metric=f"dim_{key}",
-                        number=round(float(d.get("score") or 0), 2),
-                        unit="分",
-                        table="assessment",
-                        field=f"dim_{key}",
-                        query_id=f"Q_score_dim_{key}",
-                        evidence=[f"weight={d.get('weight')}"],
-                    )
-                )
-            radar = attribution_radar_chart(attr)
-            if radar:
-                return claims, {
-                    "attribution": attr,
-                    "sample_count": attr.get("sample_count"),
-                    "charts": radar,
-                }
+        attr = await assessment.get_slice_attribution(
+            db, industry_l1=industry_l1, enterprise_ids=enterprise_ids
+        )
+        # 地区筛选：归因暂无 province 参数时，用 scoped 行数校验；不一致则弃权回落到行聚合
+        if province:
+            scoped = await _load_metrics_scoped(
+                db, industry_l1, province=province, enterprise_ids=enterprise_ids
+            )
+            if int(attr.get("sample_count") or 0) != len(scoped):
+                # province 未进归因：走下方行聚合路径，保证 sample_count 对齐
+                pass
+            else:
+                dims = attr.get("dimensions") or {}
+                if dims and attr.get("summary"):
+                    return _score_overall_from_attr(attr, attribution_radar_chart)
+        else:
+            dims = attr.get("dimensions") or {}
+            if dims and attr.get("summary"):
+                return _score_overall_from_attr(attr, attribution_radar_chart)
 
-    rows = await _load_metrics(
+    rows = await _load_metrics_scoped(
         db,
-        industry_l1 if industry_l1 and dimension in ("industry", "region") else None,
+        industry_l1,
         province=province,
+        enterprise_ids=enterprise_ids,
     )
     if not rows:
         return (
@@ -265,6 +309,28 @@ async def build_score_claims(
             {},
         )
 
+    # overall 兜底（归因不可用 / 含 province 未进归因）：信用均分，sample_count=scoped N
+    if dimension == "overall":
+        avg = sum(_f(g.credit_score) for g in rows) / len(rows)
+        on_time_vals = [_f(g.tax_on_time_rate) for g in rows if _f(g.tax_on_time_rate) > 0]
+        on_time = (sum(on_time_vals) / len(on_time_vals)) if on_time_vals else 0.0
+        scope = zh_industry(industry_l1) or "当前范围"
+        claims = [
+            _claim(
+                f"{scope}综合经营表现{business_level(avg)}，信用均分 {avg:.1f}"
+                + (f"，纳税准时率均值 {on_time * 100:.1f}%" if on_time else "")
+                + f"（样本 {len(rows)} 家）。",
+                metric="avg_credit_score",
+                number=round(avg, 2),
+                unit="分",
+                table="core_metrics",
+                field="credit_score",
+                query_id="Q_score_overall_scoped",
+                evidence=[f"n={len(rows)}"],
+            )
+        ]
+        return claims, {"sample_count": len(rows)}
+
     if dimension == "industry" or (not industry_l1 and dimension != "region"):
         by_ind: dict[str, list[CoreMetrics]] = {}
         for m in rows:
@@ -281,7 +347,8 @@ async def build_score_claims(
             payload.append({"industry_l1": ind, "n": len(group), "avg_credit_score": round(avg, 2)})
             claims.append(
                 _claim(
-                    f"{ind}行业信用分均值 {avg:.1f}，纳税准时率均值 {on_time * 100:.1f}%（样本 {len(group)}）{note}",
+                    f"{zh_industry(ind) or ind}行业信用表现{business_level(avg)}，"
+                    f"纳税准时率均值 {on_time * 100:.1f}%（样本 {len(group)}）{note}",
                     metric="avg_credit_score",
                     number=round(avg, 2),
                     unit="分",
@@ -297,7 +364,7 @@ async def build_score_claims(
             "data": {
                 "labels": [p["industry_l1"] for p in payload],
                 "series": [
-                    {"name": "信用分均值", "values": [p["avg_credit_score"] for p in payload]},
+                    {"name": "信用表现", "values": [p["avg_credit_score"] for p in payload]},
                     {"name": "纳税准时率%", "values": on_time_series},
                 ],
             },
@@ -316,11 +383,11 @@ async def build_score_claims(
 
     claims = []
     for s in region_stats[:8]:
+        # 结论导向：不在用户面堆「样本 n / 仅供参考」meta；小样本仍标 confidence=inferred 供机检
         small_n = s["n"] < 5
-        note = "（样本 <5，仅供参考，不作判断依据）" if small_n else ""
         claims.append(
             _claim(
-                f"{s['province']}地区信用分均值 {s['avg']:.1f}（样本 {s['n']}）{note}",
+                f"{s['province']}地区信用表现{business_level(s['avg'])}，均分 {s['avg']:.1f}",
                 metric="avg_credit_score",
                 number=s["avg"],
                 unit="分",
@@ -347,19 +414,33 @@ async def build_score_claims(
                 evidence=[f"top={top['province']}", f"bottom={bottom['province']}"],
             )
         )
-    # 图表展示全部地区（而非 top8）：保证「最高/最低」对比结论引用的末位地区出现在图中（图文一致）。
+    # 地区过多时：图用 Top/Bottom 合并，避免横轴标签挤压；完整名单仍在 claims/表
+    chart_stats = region_stats
+    if len(region_stats) > 12:
+        top_n, bottom_n = region_stats[:6], region_stats[-4:]
+        mid = region_stats[6:-4]
+        mid_avg = round(sum(s["avg"] for s in mid) / len(mid), 2) if mid else None
+        chart_stats = list(top_n)
+        if mid_avg is not None:
+            chart_stats.append({"province": f"其余{len(mid)}地", "n": sum(s["n"] for s in mid), "avg": mid_avg})
+        # 避免 bottom 与 top 重叠
+        top_set = {s["province"] for s in top_n}
+        for s in bottom_n:
+            if s["province"] not in top_set:
+                chart_stats.append(s)
     chart = {
         "type": "bar",
+        "orientation": "horizontal" if len(chart_stats) > 8 else "vertical",
         "data": {
-            "labels": [s["province"] for s in region_stats],
-            "series": [{"name": "信用分均值", "values": [s["avg"] for s in region_stats]}],
+            "labels": [s["province"] for s in chart_stats],
+            "series": [{"name": "信用表现", "values": [s["avg"] for s in chart_stats]}],
         },
     }
     return claims, {"region_stats": region_stats, "region_count": len(by_prov), "sample_count": len(rows), "charts": chart}
 
 
 async def build_benchmark_claims(
-    db: AsyncSession, industry_l1: str | None = None, *, province: str | None = None
+    db: AsyncSession, industry_l1: str | None = None, *, province: str | None = None, enterprise_ids: list[str] | None = None
 ) -> tuple[list[Claim], dict]:
     q = select(IndustryBenchmark)
     if industry_l1:
@@ -368,18 +449,17 @@ async def build_benchmark_claims(
     benches = list(result.scalars().all())
     if not benches:
         # fallback aggregate from core_metrics
-        return await build_score_claims(db, industry_l1, dimension="industry", province=province)
+        return await build_score_claims(db, industry_l1, dimension="industry", province=province, enterprise_ids=enterprise_ids)
 
     claims = []
     for b in benches:
         # 小样本采信阈值：样本 <5 的基准均值仅供参考，不作判断依据（弃权优先于编造）。
         small_n = int(getattr(b, "sample_count", 0) or 0) < 5
-        note = "（样本 <5，仅供参考，不作判断依据）" if small_n else ""
         claims.append(
             _claim(
-                f"{b.industry_l1}行业基准：信用分均值 {_f(b.avg_credit_score):.1f}，"
+                f"{zh_industry(b.industry_l1)}行业基准：信用表现{business_level(_f(b.avg_credit_score))}，"
                 f"营收偏差均值 {_f(b.avg_revenue_deviation) * 100:.2f}%，"
-                f"高风险占比 {_f(b.high_risk_rate) * 100:.1f}%（样本 {b.sample_count}）{note}",
+                f"高风险占比 {_f(b.high_risk_rate) * 100:.1f}%",
                 metric="avg_credit_score",
                 number=round(_f(b.avg_credit_score), 2),
                 unit="分",
@@ -395,12 +475,12 @@ async def build_benchmark_claims(
             )
         )
     payload = [{"industry_l1": b.industry_l1, "avg_credit_score": round(_f(b.avg_credit_score), 2)} for b in benches]
-    rows = await _load_metrics(db, industry_l1, province=province)
+    rows = await _load_metrics_scoped(db, industry_l1, province=province, enterprise_ids=enterprise_ids)
     live_by_ind: dict[str, list[float]] = {}
     for m in rows:
         live_by_ind.setdefault(m.industry_l1 or "其他", []).append(_f(m.credit_score))
     live_avgs = {k: round(sum(v) / len(v), 2) for k, v in live_by_ind.items() if v}
-    labels = [p["industry_l1"] for p in payload]
+    labels = [zh_industry(p["industry_l1"]) for p in payload]
     chart = {
         "type": "bar",
         "data": {
@@ -420,6 +500,7 @@ async def build_financial_claims(
     dimension: str = "overall",
     *,
     province: str | None = None,
+    enterprise_ids: list[str] | None = None,
 ) -> tuple[list[Claim], dict[str, Any]]:
     """聚合「财务健康」切片：四能力比率均值 + 客观评级（阈值统一自 financial_benchmarks，铁律 L1）。
 
@@ -432,7 +513,7 @@ async def build_financial_claims(
         format_financial_ratio,
     )
 
-    rows = await _load_metrics(db, industry_l1, province=province)
+    rows = await _load_metrics_scoped(db, industry_l1, province=province, enterprise_ids=enterprise_ids)
     if not rows:
         return (
             [
@@ -514,9 +595,10 @@ async def build_tax_claims(
     dimension: str = "overall",
     *,
     province: str | None = None,
+    enterprise_ids: list[str] | None = None,
 ) -> tuple[list[Claim], dict[str, Any]]:
     """聚合「税务合规」切片：纳税准时率 / 税负率 / 欠税 / 违法 / 滞纳。0=弃权口径。"""
-    rows = await _load_metrics(db, industry_l1, province=province)
+    rows = await _load_metrics_scoped(db, industry_l1, province=province, enterprise_ids=enterprise_ids)
     if not rows:
         return (
             [
@@ -624,11 +706,17 @@ async def build_tax_claims(
 
 
 async def build_signal_claims(
-    db: AsyncSession, *, province: str | None = None
+    db: AsyncSession,
+    *,
+    industry_l1: str | None = None,
+    province: str | None = None,
+    enterprise_ids: list[str] | None = None,
 ) -> tuple[list[Claim], dict]:
-    rows = await _load_metrics(db, None, province=province)
+    rows = await _load_metrics_scoped(
+        db, industry_l1, province=province, enterprise_ids=enterprise_ids
+    )
     # 源库无失信/被执行表：不报恒为 0 的假覆盖；仅用税务侧可得信号
-    high_dev = [m for m in rows if _f(m.revenue_deviation) >= 0.25]
+    high_dev = [m for m in rows if _f(m.revenue_deviation) >= REVENUE_DEVIATION_WARN]
     low_credit = [m for m in rows if (m.credit_level or "") in ("C", "D", "M")]
     tax_viol = [m for m in rows if int(getattr(m, "tax_violation_cnt", 0) or 0) > 0]
 
@@ -640,21 +728,21 @@ async def build_signal_claims(
         eid = m.enterprise_id
         if int(getattr(m, "tax_violation_cnt", 0) or 0) > 0:
             bucket_tax.add(eid)
-        elif _f(m.revenue_deviation) >= 0.25:
+        elif _f(m.revenue_deviation) >= REVENUE_DEVIATION_WARN:
             bucket_dev.add(eid)
         elif (m.credit_level or "") in ("C", "D", "M"):
             bucket_credit.add(eid)
     unique_affected = bucket_tax | bucket_dev | bucket_credit
 
     # 多重风险叠加：按原始信号逐主体计命中类数（与互斥分桶独立，避免双计数混淆）。
-    # 三类 = 税务违法 / 营收偏差≥25% / 信用等级 C/D/M。
+    # 三类 = 税务违法 / 营收偏差≥阈值 / 信用等级 C/D/M。
     multi_2 = 0
     multi_3 = 0
     for m in rows:
         hits = 0
         if int(getattr(m, "tax_violation_cnt", 0) or 0) > 0:
             hits += 1
-        if _f(m.revenue_deviation) >= 0.25:
+        if _f(m.revenue_deviation) >= REVENUE_DEVIATION_WARN:
             hits += 1
         if (m.credit_level or "") in ("C", "D", "M"):
             hits += 1
@@ -666,7 +754,7 @@ async def build_signal_claims(
     claims = [
         _claim(
             f"样本 {len(rows)} 家中，至少命中一类风险信号的主体共 {len(unique_affected)} 家；"
-            f"其中税务违法 {len(tax_viol)}、营收偏差≥25% {len(high_dev)}、信用等级 C/D/M {len(low_credit)}"
+            f"其中税务违法 {len(tax_viol)}、{revenue_deviation_warn_label()} {len(high_dev)}、信用等级 C/D/M {len(low_credit)}"
             f"（三类可重叠，饼图按优先级互斥展示）。"
             f"（法律合规维度仅覆盖税务侧，不含失信/被执行/诉讼）",
             metric="signal_total",
@@ -740,11 +828,11 @@ async def build_signal_claims(
 
 
 async def build_authenticity_claims(
-    db: AsyncSession, industry_l1: str | None = None, *, province: str | None = None
+    db: AsyncSession, industry_l1: str | None = None, *, province: str | None = None, enterprise_ids: list[str] | None = None
 ) -> tuple[list[Claim], dict]:
     from app.services import authenticity_engine
 
-    rows = await _load_metrics(db, industry_l1, province=province)
+    rows = await _load_metrics_scoped(db, industry_l1, province=province, enterprise_ids=enterprise_ids)
     if not rows:
         return (
             [
@@ -769,12 +857,12 @@ async def build_authenticity_claims(
     )
     claims = [
         _claim(
-            f"{result['industry_l1']}切片真实性均分 {result['avg_authenticity_score']}，"
-            f"交叉偏差可疑 {result['suspicious_count']} 家（占比 {result['suspicious_rate'] * 100:.1f}%），"
-            f"样本 {result['sample_count']}。",
-            metric="avg_authenticity_score",
-            number=result["avg_authenticity_score"],
-            unit="分",
+            f"{zh_industry(result['industry_l1']) or '全部'}主体 {result['sample_count']} 家，"
+            f"其中 {result['suspicious_count']} 家（占比 {result['suspicious_rate'] * 100:.1f}%）"
+            f"申报、开票、财报多口径营收不一致，建议核对申报与开票数据差异，关注收入真实性。",
+            metric="suspicious_count",
+            number=result["suspicious_count"],
+            unit="家",
             table="core_metrics",
             field="revenue_deviation",
             query_id="Q_authenticity_industry_slice",
@@ -783,27 +871,53 @@ async def build_authenticity_claims(
     ]
     bf = result.get("benford") or {}
     if bf.get("n"):
-        conformity = bf.get("conformity")
-        if conformity == "insufficient_sample" or bf.get("chi2") is None:
-            verdict = "样本不足、未检验"
-        elif bf.get("violation"):
-            verdict = "违例"
-        else:
-            verdict = "未显著违例"
-        scope = result.get("benford_scope") or result.get("industry_l1") or "全库"
-        claims.append(
-            _claim(
-                f"Benford（{scope}）：χ²={bf.get('chi2')}，MAD={bf.get('mad')}，结论{verdict}（n={bf.get('n')}）。",
-                metric="benford_mad",
-                number=bf.get("mad"),
-                unit="",
-                table="syx_tax_finance_profit_year",
-                field="current_year_accumulative_amount",
-                detail_table="syx_invoice",
-                query_id="Q_benford",
-                evidence=[f"chi2={bf.get('chi2')}", f"violation={bf.get('violation')}"],
+        chi2 = bf.get("chi2")
+        n = bf.get("n")
+        scope = zh_industry(result.get("industry_l1")) or "全部主体"
+        if chi2 is None:
+            # 样本不足（弃权优先于编造）：只给业务说明，不输出统计量
+            claims.append(
+                _claim(
+                    f"{scope}开票金额样本量不足（{n} 家），暂无法判断开票金额分布是否异常。",
+                    metric="benford_mad",
+                    number=None,
+                    unit="",
+                    table="syx_tax_finance_profit_year",
+                    field="current_year_accumulative_amount",
+                    detail_table="syx_invoice",
+                    query_id="Q_benford",
+                    evidence=[f"n={n}"],
+                )
             )
-        )
+        elif bf.get("violation"):
+            claims.append(
+                _claim(
+                    f"{scope}开票金额首位数字分布异常，偏离自然分布规律，"
+                    f"存在人为操纵开票金额的嫌疑，建议核实相关票据的真实性。",
+                    metric="benford_mad",
+                    number=n,
+                    unit="家",
+                    table="syx_tax_finance_profit_year",
+                    field="current_year_accumulative_amount",
+                    detail_table="syx_invoice",
+                    query_id="Q_benford",
+                    evidence=[f"n={n}", f"violation={bf.get('violation')}"],
+                )
+            )
+        else:
+            claims.append(
+                _claim(
+                    f"{scope}开票金额首位数字分布正常，未见明显人为操纵迹象。",
+                    metric="benford_mad",
+                    number=n,
+                    unit="家",
+                    table="syx_tax_finance_profit_year",
+                    field="current_year_accumulative_amount",
+                    detail_table="syx_invoice",
+                    query_id="Q_benford",
+                    evidence=[f"n={n}", f"violation={bf.get('violation')}"],
+                )
+            )
     ok_count = max(0, result["sample_count"] - result["suspicious_count"])
     result["charts"] = {
         "type": "pie",
@@ -816,7 +930,7 @@ async def build_authenticity_claims(
 
 
 async def build_fraud_claims(
-    db: AsyncSession, industry_l1: str | None = None, limit: int | None = None, *, province: str | None = None
+    db: AsyncSession, industry_l1: str | None = None, limit: int | None = None, *, province: str | None = None, enterprise_ids: list[str] | None = None
 ) -> tuple[list[Claim], dict]:
     from app.services import fraud_engine
 
@@ -825,18 +939,21 @@ async def build_fraud_claims(
         CoreMetrics.display_label,
         CoreMetrics.industry_l1,
         CoreMetrics.province,
+        CoreMetrics.display_name,
     )
     if industry_l1:
         q = q.where(CoreMetrics.industry_l1 == industry_l1)
     if province:
         q = q.where(CoreMetrics.province == province)
+    if enterprise_ids:
+        q = q.where(CoreMetrics.enterprise_id.in_(enterprise_ids))
     # 口径统一：舞弊特征走 PG 预计算（engine_features_store），无需截断，
     # 与封面 KPI（_resolve_scenario_kpis）同取全 scoped 主体，消除 40 vs 60 漂移。
     q = q.order_by(CoreMetrics.enterprise_id)
     if limit is not None:
         q = q.limit(limit)
     result = await db.execute(q)
-    rows = [(r[0], r[1], r[2]) for r in result.all()]
+    rows = [(r[0], r[1], r[2], r[4]) for r in result.all()]
     if not rows:
         return (
             [
@@ -878,11 +995,10 @@ async def build_fraud_claims(
         return (
             [
                 _claim(
-                    f"舞弊特征尚未预计算（{miss_n}/{len(rows)} 家缺失 engine_features），"
-                    "无法给出舞弊均分。请运行 `python -m app.etl.engine_features` 后重试。",
+                    "发票舞弊特征数据暂未就绪，本报告暂不评估发票舞弊风险。",
                     metric="precompute_missing",
-                    number=miss_n,
-                    unit="家",
+                    number=None,
+                    unit="",
                     table="enterprise_engine_features",
                     field="fraud_composite_score",
                     query_id="Q_fraud_precompute_miss",
@@ -895,11 +1011,12 @@ async def build_fraud_claims(
 
     claims = [
         _claim(
-            f"{out['industry_l1']}切片舞弊综合均分 {out['avg_composite']}，"
-            f"触发标记 {out['flagged_count']}/{out['sample_count']} 家。",
-            metric="avg_composite",
-            number=out["avg_composite"],
-            unit="分",
+            f"{zh_industry(out['industry_l1']) or '全部'}主体 {out['sample_count']} 家，"
+            f"其中 {out['flagged_count']} 家存在进销错配、红字发票异常等发票舞弊迹象，"
+            f"建议核查票据交易背景与货物凭证。",
+            metric="flagged_count",
+            number=out["flagged_count"],
+            unit="家",
             table="syx_invoice_details",
             field="scbm",
             detail_table="syx_invoice",
@@ -910,7 +1027,7 @@ async def build_fraud_claims(
     for sig, cnt in list((out.get("signal_counts") or {}).items())[:5]:
         claims.append(
             _claim(
-                f"信号「{sig}」命中 {cnt} 家主体。",
+                f"信号「{zh_signal(sig)}」命中 {cnt} 家主体。",
                 metric="signal_count",
                 number=cnt,
                 unit="家",
@@ -922,7 +1039,7 @@ async def build_fraud_claims(
         )
     sc = out.get("signal_counts") or {}
     if sc:
-        labels = list(sc.keys())
+        labels = [zh_signal(k) for k in sc.keys()]
         values = list(sc.values())
         if len(labels) >= 2:
             out["charts"] = {
@@ -1080,14 +1197,13 @@ async def build_enterprise_claims(
             {"enterprise_id": enterprise_id},
         )
 
-    label = profile.get("display_label") or profile.get("enterprise_name")
-    short_id = enterprise_id[:8]
+    name = profile.get("display_name") or profile.get("enterprise_name") or profile.get("display_label") or "样本"
     claims: list[Claim] = []
 
     claims.append(
         _claim(
-            f"匿名样本 #{short_id}（{label}）综合评分 {profile['overall_score']} 分，"
-            f"风险等级 {profile['risk_level']}，所属 {profile.get('industry_l1') or '未知'} · "
+            f"{name}综合风险等级「{profile['risk_level']}」，"
+            f"所属 {zh_industry(profile.get('industry_l1')) or '未知'} · "
             f"{profile.get('province') or '未知'}。",
             metric="overall_score",
             number=profile["overall_score"],
@@ -1108,8 +1224,7 @@ async def build_enterprise_claims(
         d = dim_details.get(key) or {}
         claims.append(
             _claim(
-                f"{d.get('label', key)}维度 {float(score):.1f} 分"
-                f"（权重 {float(d.get('weight', 0)) * 100:.0f}%）。",
+                f"「{d.get('label', key)}」维度表现{business_level(float(score) or 0)}。",
                 metric=f"dim_{key}",
                 number=round(float(score), 2),
                 unit="分",
@@ -1126,13 +1241,15 @@ async def build_enterprise_claims(
             g = (bench.get("groups") or {}).get(gkey)
             if not g:
                 continue
+            _dev = g.get("deviation") or 0
+            _dev_trend = "高于" if _dev > 0 else "低于" if _dev < 0 else "接近"
             claims.append(
                 _claim(
-                    f"{g['label']}（{g['value']}）排名第 {g['rank']}/{g['peer_total']}，"
-                    f"位于 {g['percentile']} 分位，综合分偏离群体均值 {g['deviation']:+} 分。",
+                    f"在「{g['value']}」同群主体中，{name}综合经营表现排名第 {g['rank']}/{g['peer_total']}，"
+                    f"{_dev_trend}同群平均水平。",
                     metric=f"peer_{gkey}_percentile",
                     number=g["percentile"],
-                    unit="分位",
+                    unit="",
                     table="core_metrics",
                     field="overall_score",
                     query_id=f"Q_enterprise_peer_{gkey}",
@@ -1148,10 +1265,9 @@ async def build_enterprise_claims(
         for n in d.get("negative") or []:
             neg_items.append((d.get("label", key), n))
     for dim_label, n in neg_items[:5]:
-        tail = f"（扣 {n['deduction']} 分）" if n.get("deduction") else ""
         claims.append(
             _claim(
-                f"风险成因 · {dim_label}：{n['item']}{tail}。",
+                f"风险成因 · {dim_label}：{n['item']}。",
                 metric="risk_factor",
                 number=n.get("deduction"),
                 unit="分",
@@ -1197,8 +1313,8 @@ async def build_enterprise_claims(
     radar = enterprise_radar_chart(profile)
     meta: dict[str, Any] = {
         "enterprise_id": enterprise_id,
-        "enterprise_label": label,
-        "short_id": short_id,
+        "enterprise_label": name,
+        "enterprise_name": name,
         "industry_l1": profile.get("industry_l1"),
         "province": profile.get("province"),
         "overall_score": profile["overall_score"],
@@ -1245,7 +1361,7 @@ DEFAULT_FOLLOWUPS = {
     "authenticity": ["结合舞弊发票信号看", "看行业对标基准", "生成真实性专题报告"],
     "fraud": ["对比各行业趋势", "看营收偏差真实性", "按地区筛预警信号"],
     "score": ["分析各行业趋势走向", "查看风险预警信号", "做行业对标"],
-    "benchmark": ["分析趋势走向", "看真实性均分", "出组合报告"],
+    "benchmark": ["分析趋势走向", "看收入真实性表现", "出组合报告"],
     "signal": ["分析舞弊切片", "看行业趋势", "生成风险报告"],
     "financial": ["看偿债与营运能力拆解", "生成财务健康体检报告", "对照行业财务基准"],
     "tax": ["看欠税与违法信号分布", "生成税务合规体检报告", "对照税负水平"],
@@ -1262,17 +1378,17 @@ def _derive_followups(fn: str, meta: dict[str, Any], claims: list[Claim]) -> lis
         inds = meta.get("industries") or []
         if len(inds) >= 2:
             dynamic.append(
-                f"为什么{inds[0]['industry_l1']}同比高于{inds[-1]['industry_l1']}？"
+                f"为什么{zh_industry(inds[0]['industry_l1'])}同比高于{zh_industry(inds[-1]['industry_l1'])}？"
             )
     elif fn == "score":
         by_ind = meta.get("by_industry") or []
         if by_ind:
-            dynamic.append(f"深入分析{by_ind[0]['industry_l1']}行业信用分构成")
+            dynamic.append(f"深入分析{zh_industry(by_ind[0]['industry_l1'])}行业信用分构成")
     elif fn == "fraud":
         sc = meta.get("signal_counts") or {}
         if sc:
             top = max(sc.items(), key=lambda x: x[1])[0]
-            dynamic.append(f"为什么「{top}」舞弊信号最突出？")
+            dynamic.append(f"为什么「{zh_signal(top)}」舞弊信号最突出？")
     elif fn == "signal":
         if meta.get("low_credit"):
             dynamic.append("低信用等级集中在哪些行业？")
@@ -1298,27 +1414,29 @@ async def run_judgment(
         meta["province"] = province
 
     if fn == "trend":
-        claims, meta2 = await build_trend_industry_claims(db, industry, province=province)
+        claims, meta2 = await build_trend_industry_claims(db, industry, province=province, enterprise_ids=intent.enterprises)
     elif fn == "score":
-        claims, meta2 = await build_score_claims(db, industry, dimension=dim, province=province)
+        claims, meta2 = await build_score_claims(db, industry, dimension=dim, province=province, enterprise_ids=intent.enterprises)
     elif fn == "benchmark":
-        claims, meta2 = await build_benchmark_claims(db, industry, province=province)
+        claims, meta2 = await build_benchmark_claims(db, industry, province=province, enterprise_ids=intent.enterprises)
     elif fn == "authenticity":
-        claims, meta2 = await build_authenticity_claims(db, industry, province=province)
+        claims, meta2 = await build_authenticity_claims(db, industry, province=province, enterprise_ids=intent.enterprises)
     elif fn == "fraud":
-        claims, meta2 = await build_fraud_claims(db, industry, province=province)
+        claims, meta2 = await build_fraud_claims(db, industry, province=province, enterprise_ids=intent.enterprises)
     elif fn == "financial":
-        claims, meta2 = await build_financial_claims(db, industry, dimension=dim, province=province)
+        claims, meta2 = await build_financial_claims(db, industry, dimension=dim, province=province, enterprise_ids=intent.enterprises)
     elif fn == "tax":
-        claims, meta2 = await build_tax_claims(db, industry, dimension=dim, province=province)
+        claims, meta2 = await build_tax_claims(db, industry, dimension=dim, province=province, enterprise_ids=intent.enterprises)
     elif fn == "signal" or (fn == "general" and dim == "signal"):
-        claims, meta2 = await build_signal_claims(db, province=province)
+        claims, meta2 = await build_signal_claims(
+            db, industry_l1=industry, province=province, enterprise_ids=intent.enterprises
+        )
         fn = "signal"
     elif fn in ("report", "email_report"):
         claims, meta2 = await build_report_ready_claims(session_id, dim)
     else:
         # general：给趋势摘要 + 明确引导（引导用户用具体问法触发风控分析）
-        claims, meta2 = await build_trend_industry_claims(db, industry, province=province)
+        claims, meta2 = await build_trend_industry_claims(db, industry, province=province, enterprise_ids=intent.enterprises)
         guidance = [
             "分析各行业的趋势走向",
             "按地区对比信用评分",
@@ -1430,6 +1548,36 @@ def _metric_label(metric: str) -> str:
     return RUNTIME_METRIC_LABELS.get(metric, metric)
 
 
+# 评分类指标：报告/语义层展示一律转业务话术，不暴露原始得分（稳健/中等/偏弱）。
+_SCORE_METRICS: set[str] = {
+    "overall_score",
+    "credit_score",
+    "authenticity_score",
+    "fraud_composite_score",
+    "avg_score",
+    "avg_credit_score",
+    "avg_authenticity_score",
+    "avg_composite",
+    "dim_tax_health",
+    "dim_authenticity",
+    "dim_invoice",
+    "dim_industry",
+    "dim_legal",
+    "dim_finance",
+    "risk_factor",
+    "peer_industry_percentile",
+    "peer_province_percentile",
+    "peer_scale_percentile",
+}
+
+
+def _metric_value_text(metric: str, avg: float) -> str:
+    """评分类指标 → 业务话术（稳健/中等/偏弱）；业务比率类保留数值（均值 XX）。"""
+    if metric in _SCORE_METRICS:
+        return business_level(float(avg))
+    return f"均值 {float(avg):.1f}"
+
+
 def _sq_industry(sq: SemanticQuery) -> str | None:
     return (sq.filters.get("industry_l1") or [None])[0]
 
@@ -1510,7 +1658,7 @@ async def _generic_simple_avg(
         stats.sort(key=lambda x: -x["avg"])
         claims = [
             _claim(
-                f"{s['group']}{label}均值 {s['avg']}（样本 {s['n']}）。",
+                f"{s['group']}{label}{_metric_value_text(metric, s['avg'])}（样本 {s['n']}）。",
                 metric=metric,
                 number=s["avg"],
                 unit="",
@@ -1547,7 +1695,7 @@ async def _generic_simple_avg(
             {"sample_count": len(rows)},
         )
     claim = _claim(
-        f"样本{label}均值 {avg:.2f}（样本 {len(rows)} 家）。",
+        f"样本{label}{_metric_value_text(metric, avg)}（样本 {len(rows)} 家）。",
         metric=metric,
         number=round(avg, 2),
         unit="",
@@ -1621,7 +1769,7 @@ async def build_comparison_claims(
     for p in per_value:
         claims.append(
             _claim(
-                f"{p['value']}{label}均值 {p['avg']}（样本 {p['n']}）。",
+                f"{p['value']}{label}{_metric_value_text(metric, p['avg'])}（样本 {p['n']}）。",
                 metric=f"compare_{metric}",
                 number=p["avg"],
                 unit="",
@@ -1635,10 +1783,10 @@ async def build_comparison_claims(
         bottom = min(per_value, key=lambda x: x["avg"])
         claims.append(
             _claim(
-                f"对比：{top['value']}最高（{top['avg']}），{bottom['value']}最低（{bottom['avg']}），"
-                f"相差 {round(top['avg'] - bottom['avg'], 2)}。",
+                f"对比：{top['value']}{label}{_metric_value_text(metric, top['avg'])}，"
+                f"{bottom['value']}{label}{_metric_value_text(metric, bottom['avg'])}。",
                 metric="compare_spread",
-                number=round(top["avg"] - bottom["avg"], 2),
+                number=round(top["avg"] - bottom["avg"], 2) if metric not in _SCORE_METRICS else None,
                 unit="",
                 table=trace_table,
                 field=trace_field,
@@ -1699,7 +1847,7 @@ async def build_ranking_claims(
                 return (
                     [
                         _claim(
-                            "暂无有效综合评分样本，无法排名。",
+                            "当前范围内有效经营样本不足，暂无法排名。",
                             metric="sample_count",
                             number=0,
                             unit="家",
@@ -1712,7 +1860,7 @@ async def build_ranking_claims(
                 )
             claims = [
                 _claim(
-                    f"第{i + 1}{ordinal}：{s['group']}，{label}均值 {s['avg']}（样本 {s['n']}）。",
+                    f"第{i + 1}{ordinal}：{s['group']}，综合经营表现{business_level(float(s['avg']))}（样本 {s['n']} 家）。",
                     metric=f"rank_{metric}",
                     number=s["avg"],
                     unit="分",
@@ -1762,7 +1910,7 @@ async def build_ranking_claims(
         stats = stats[:limit]
         claims = [
             _claim(
-                f"第{i + 1}{ordinal}：{s['group']}，{label}均值 {s['avg']}（样本 {s['n']}）。",
+                f"第{i + 1}{ordinal}：{s['group']}，{label}{_metric_value_text(metric, s['avg'])}（样本 {s['n']}）。",
                 metric=f"rank_{metric}",
                 number=s["avg"],
                 unit="",
@@ -1790,8 +1938,8 @@ async def build_ranking_claims(
     items = items[:limit]
     claims = [
         _claim(
-            f"第{i + 1}{ordinal}：匿名样本 #{it['enterprise_id'][:8]}（{it.get('display_label') or '—'}），"
-            f"综合评分 {float(it.get('overall_score') or 0):.1f}。",
+            f"第{i + 1}{ordinal}：{it.get('display_name') or it.get('enterprise_name') or it.get('display_label') or '—'}，"
+            f"综合经营表现{business_level(float(it.get('overall_score') or 0))}。",
             metric="rank_overall_score",
             number=round(float(it.get("overall_score") or 0), 2),
             unit="分",
@@ -1806,8 +1954,8 @@ async def build_ranking_claims(
     chart = {
         "type": "bar",
         "data": {
-            "labels": [f"#{it['enterprise_id'][:8]}" for it in items],
-            "series": [{"name": "综合评分", "values": [float(it.get("overall_score") or 0) for it in items]}],
+            "labels": [it.get("display_name") or it.get("enterprise_name") or it.get("display_label") or "—" for it in items],
+            "series": [{"name": "综合经营表现", "values": [float(it.get("overall_score") or 0) for it in items]}],
         },
     }
     return claims, {"ranking": items, "charts": chart}
@@ -1818,7 +1966,9 @@ async def build_distribution_claims(
 ) -> tuple[list[Claim], dict[str, Any]]:
     metric = (sq.metrics or ["risk_level"])[0]
     if metric == "signal_total":
-        return await build_signal_claims(db, province=_sq_province(sq))
+        return await build_signal_claims(
+            db, industry_l1=_sq_industry(sq), province=_sq_province(sq)
+        )
 
     from app.services import assessment
 
@@ -1887,7 +2037,8 @@ async def build_segmentation_claims(
             stats.append({"group": ind, "avg": avg, "n": n})
             claims.append(
                 _claim(
-                    f"{ind}行业真实性均分 {avg}（样本 {n}）。",
+                    f"{zh_industry(ind) or ind}行业收入真实性整体{business_level(float(avg or 0))}（样本 {n} 家），"
+                    f"建议对申报、开票、财报口径不一致的企业进一步核查收入真实性。",
                     metric="seg_authenticity_score",
                     number=avg,
                     unit="分",
@@ -1904,7 +2055,7 @@ async def build_segmentation_claims(
             rows = await _load_metrics(db, ind)
             if not rows:
                 continue
-            tuples = [(m.enterprise_id, m.display_label, m.industry_l1) for m in rows[:40]]
+            tuples = [(m.enterprise_id, m.display_label, m.industry_l1, m.display_name) for m in rows[:40]]
             try:
                 out = await run_blocking(fraud_engine.analyze_metrics_batch, tuples, max_n=40)
             except Exception:
@@ -1913,13 +2064,15 @@ async def build_segmentation_claims(
                 continue
             avg = out.get("avg_composite")
             n = out.get("sample_count") or 0
+            flagged = out.get("flagged_count") or 0
             stats.append({"group": ind, "avg": avg, "n": n})
             claims.append(
                 _claim(
-                    f"{ind}行业舞弊综合均分 {avg}（样本 {n}）。",
+                    f"{zh_industry(ind) or ind}行业 {n} 家主体中，{flagged} 家存在进销错配、红字发票异常等"
+                    f"发票舞弊迹象，建议核查票据交易背景与货物凭证。",
                     metric="seg_fraud_composite",
-                    number=avg,
-                    unit="分",
+                    number=flagged,
+                    unit="家",
                     table="syx_invoice_details",
                     field="scbm",
                     query_id="Q_seg_fraud",
@@ -2004,14 +2157,14 @@ async def build_correlation_claims(
 SEMANTIC_FOLLOWUPS: dict[str, list[str]] = {
     "lookup": ["按行业拆分看", "生成报告", "查看风险预警"],
     "aggregation": ["分析各行业趋势走向", "查看风险预警", "生成报告"],
-    "comparison": ["对比这两个群体的真实性", "看综合评分排名", "生成报告"],
+    "comparison": ["对比这两个群体的真实性", "看经营表现排名", "生成报告"],
     "trend": ["进一步看真实性交叉验证", "按地区拆分趋势", "生成报告"],
     "ranking": ["深入分析第一名群体", "看排名背后的风险信号", "生成报告"],
     "distribution": ["看舞弊信号分布", "按行业拆风险等级", "生成报告"],
     "segmentation": ["看各行业舞弊信号", "做行业对标", "生成报告"],
     "correlation": ["看行业趋势", "查看风险预警", "生成报告"],
     "faq": ["这个系统能做什么", "数据怎么导入", "报告怎么生成"],
-    "methodology": ["综合评分怎么算的", "真实性得分怎么算的", "报告怎么生成"],
+    "methodology": ["如何判断收入真实性", "如何识别发票舞弊", "报告怎么生成"],
 }
 
 

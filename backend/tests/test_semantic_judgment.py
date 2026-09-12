@@ -38,8 +38,9 @@ async def test_comparison_two_values_and_spread(monkeypatch):
 
     values = [c for c in claims if c.value and c.value.metric == "compare_credit_score"]
     assert len(values) == 2
-    spread = next(c for c in claims if c.value and c.value.metric == "compare_spread")
-    assert spread.value.number == pytest.approx(15.0)
+    spread = next(c for c in claims if c.trace and c.trace.query_id == "Q_comparison_spread")
+    assert spread.value is None  # 评分类指标不暴露原始分差（业务语言）
+    assert "信用表现" in spread.claim
     assert meta["charts"]["type"] == "bar"
 
 
@@ -286,7 +287,7 @@ async def test_segmentation_fraud(monkeypatch):
         return [_row(enterprise_id="e1", display_label="样本1", industry_l1="制造")]
 
     def fake_fraud(tuples, max_n=40):
-        return {"avg_composite": 60.0, "sample_count": len(tuples)}
+        return {"avg_composite": 60.0, "sample_count": len(tuples), "flagged_count": 2}
 
     monkeypatch.setattr(judgment_service, "_distinct_industries", fake_industries)
     monkeypatch.setattr(judgment_service, "_load_metrics", fake_load)
@@ -297,7 +298,8 @@ async def test_segmentation_fraud(monkeypatch):
 
     segs = [c for c in claims if c.value and c.value.metric == "seg_fraud_composite"]
     assert len(segs) == 1
-    assert segs[0].value.number == pytest.approx(60.0)
+    assert segs[0].value.number == 2  # 业务语言：报告舞弊迹象主体数，而非原始均分
+    assert "进销错配" in segs[0].claim
 
 
 @pytest.mark.asyncio
@@ -346,7 +348,7 @@ async def test_run_semantic_query_dispatches_comparison(monkeypatch):
 
     assert meta["query_type"] == "comparison"
     assert meta["function"] == "benchmark"
-    assert any(c.value and c.value.metric == "compare_spread" for c in claims)
+    assert any(c.trace and c.trace.query_id == "Q_comparison_spread" for c in claims)
     assert meta["semantic_query"]["query_type"] == "comparison"
     assert len(followups) > 0
 

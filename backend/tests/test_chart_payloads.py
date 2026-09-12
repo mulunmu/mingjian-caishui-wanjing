@@ -23,6 +23,25 @@ def test_attribution_radar_chart():
     assert len(chart["data"]["values"]) == 2
 
 
+def test_attribution_radar_dims_filter():
+    """雷达按章节裁剪：dims 非空时只展示给定维度（铁律：雷达 ⊆ 正文解析维度）。"""
+    from app.services.chart_payloads import attribution_radar_chart
+
+    attr = {
+        "dimensions": {
+            "tax_health": {"label": "税务健康", "score": 55},
+            "authenticity": {"label": "经营真实性", "score": 40},
+            "legal": {"label": "法律合规", "score": 98},
+        },
+    }
+    chart = attribution_radar_chart(attr, dims=["tax_health", "authenticity"])
+    assert chart is not None
+    names = [i["name"] for i in chart["data"]["indicators"]]
+    assert "税务健康" in names
+    assert "经营真实性" in names
+    assert "法律合规" not in names  # 无对应章节 → 不画
+
+
 def test_attribution_radar_legal_low_coverage_caveat():
     from app.services.chart_payloads import attribution_radar_chart
 

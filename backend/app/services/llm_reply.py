@@ -12,17 +12,33 @@ import re
 
 from dotenv import load_dotenv
 
+from pydantic import BaseModel, Field
+
 from app.schemas.claim import Claim, ClaimBundle, claims_to_public_reply, filter_claims
 from app.services.hallucination_guard import (
+    claims_have_risk_verdict,
     collect_allowed_numbers,
     filter_unanchored_sentences,
     sentence_has_anchor,
+    sentence_has_risk_direction,
 )
 from app.services.report_templates import BANNED_AI_PHRASES
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+
+class NarrationPlan(BaseModel):
+    """A.4 章节解读 document plan：只允许改写句列表（禁止自由散文）。"""
+
+    sentences: list[str] = Field(default_factory=list, max_length=5)
+
+
+class SummaryPlan(BaseModel):
+    """A.4 执行摘要 document plan：只允许改写句列表。"""
+
+    sentences: list[str] = Field(default_factory=list, max_length=6)
 
 TEMPLATE_PREFIX = "[规则模板生成] "
 FALLBACK_REPLY = TEMPLATE_PREFIX + "分析完成，请查看结论与追问建议。"
@@ -153,9 +169,18 @@ def _extract_llm_content(response) -> str:
 
 
 def _sanitize_narration(text: str, claims: list[Claim]) -> str:
-    """报告解读段：拆句后丢弃引入未授权数字的句子。"""
+    """报告解读段：拆句后丢弃引入未授权数字的句子，及全达标章的风险方向话术。
+
+    双重校验（claim 唯一化铁律）：
+    1) 数字锚点——句中数字必须能在给定 claim 中找到；
+    2) 结论方向——全达标章（无任何风险结论）不得出现「承压/越线/预警」等风险措辞，
+       否则复现「指标达标却说偿债承压」的文字与数据打架。
+    """
+    from app.services.report_templates import sanitize_surface_industry_terms
+
     allowed_claims = filter_claims(claims)
     allowed = collect_allowed_numbers(allowed_claims)
+    has_risk = claims_have_risk_verdict(allowed_claims)
     kept_sentences: list[str] = []
     for sentence in re.split(r"(?<=[。！？；])", text or ""):
         s = sentence.strip()
@@ -164,8 +189,106 @@ def _sanitize_narration(text: str, claims: list[Claim]) -> str:
         if not sentence_has_anchor(s, allowed):
             logger.info("drop hallucinated narration sentence: %r", s[:60])
             continue
-        kept_sentences.append(s)
+        if not has_risk and sentence_has_risk_direction(s):
+            logger.info("drop risk-direction narration on达标 chapter: %r", s[:60])
+            continue
+        kept_sentences.append(sanitize_surface_industry_terms(s))
     return "".join(kept_sentences).strip()
+
+
+def materialize_plan_sentences(sentences: list[str], claims: list[Claim]) -> str | None:
+    """A.4：把 schema 句列表拼成表面文本，再过数字/方向 sanitize；全丢则弃权。"""
+    parts: list[str] = []
+    for raw in sentences or []:
+        s = (raw or "").strip()
+        if not s:
+            continue
+        if not s.endswith(("。", "！", "？", "；")):
+            s += "。"
+        parts.append(s)
+    if not parts:
+        return None
+    cleaned = _sanitize_narration("".join(parts), claims)
+    return cleaned or None
+
+
+def _tone_prompt(tone: dict | None) -> str:
+    """L2 语气：把场景人格/文风 + 去 AI 味注入 system prompt。"""
+    if not tone:
+        return ""
+    parts: list[str] = []
+    if tone.get("persona"):
+        parts.append(f"你的身份是：{tone['persona']}。")
+    if tone.get("style"):
+        parts.append(f"文风要求：{tone['style']}。")
+    parts.append(f"禁用套话与 AI 过渡词（如：{BANNED_AI_PHRASES}），直接给结论，不客套。")
+    return " ".join(parts)
+
+
+async def generate_narration(title: str, claims: list[Claim], tone: dict | None = None) -> str | None:
+    """报告章节解读：A.4 schema 句列表润色；失败则弃权（不回落自由散文顶替）。
+
+    DeepSeek Chat 仅保证 json_object 语法，不保证 token 级 schema——本地用
+    NarrationPlan + sanitize 硬约束；不引入 Outlines（需自托管推理）。
+    """
+    if not llm_available():
+        return None
+    kept = filter_claims(claims)
+    claim_lines = [c.claim for c in kept if c.claim]
+    if not claim_lines:
+        return None
+    system = (
+        "你只做表面润色：把给定结论改写成 1-2 句中文解读（精简，禁止写成执行摘要）。"
+        "必须输出 JSON 对象，格式严格为 {\"sentences\":[\"句1\",\"句2\"]}。"
+        "第一句给风险结论方向（承压/稳健/越线/达标），可用一两处关键数字点睛；"
+        "最后一句给可执行建议。禁止逐条罗列各类信号命中家数（数字已在关键数字表中）。"
+        "禁用内部开发词（如「积木」），改用「预警类型/信号类型」。"
+        "只能使用给定结论中的数字与事实，禁止新增任何数字、企业名或未经给定的事实。"
+        + _tone_prompt(tone)
+    )
+    user = f"章节标题：{title}\n给定结论（唯一事实来源）：\n" + "\n".join(
+        f"- {line}" for line in claim_lines
+    )
+    plan = await _structured_response(
+        system, user, NarrationPlan, '{"sentences":["解读句1","解读句2"]}'
+    )
+    if isinstance(plan, NarrationPlan) and plan.sentences:
+        return materialize_plan_sentences(plan.sentences, kept)
+    logger.info("narration schema path empty/failed, abstain (no free-text fallback)")
+    return None
+
+
+async def generate_executive_summary(
+    kpis: list[dict[str, str]],
+    chapter_titles: list[str],
+    claims: list[Claim],
+    tone: dict | None = None,
+) -> str | None:
+    """报告执行摘要：A.4 schema 句列表；失败弃权，不自由散文顶替。"""
+    if not llm_available():
+        return None
+    kept = filter_claims(claims)
+    claim_lines = [c.claim for c in kept if c.claim][:12]
+    fact_lines = [f"{k.get('label', '')}{k.get('value', '')}{k.get('unit', '')}" for k in kpis]
+    system = (
+        "你只做表面润色：用 3-5 句概括报告。"
+        "必须输出 JSON 对象，格式严格为 {\"sentences\":[\"句1\",\"句2\"]}。"
+        "第一句给整体风险判断，随后点出最需关注的风险点，最后给一句可执行建议。"
+        "只能使用给定的事实与结论，禁止新增任何数字、企业名或未经给定的事实。"
+        + _tone_prompt(tone)
+    )
+    user = (
+        "报告章节：" + "、".join(chapter_titles) + "\n"
+        "关键指标：" + "；".join(fact_lines) + "\n"
+        "给定结论（唯一事实来源）：\n" + "\n".join(f"- {line}" for line in claim_lines)
+    )
+    plan = await _structured_response(
+        system, user, SummaryPlan, '{"sentences":["摘要句1","摘要句2"]}'
+    )
+    if isinstance(plan, SummaryPlan) and plan.sentences:
+        return materialize_plan_sentences(plan.sentences, kept)
+    logger.info("executive summary schema path empty/failed, abstain")
+    return None
 
 
 def _record_llm_usage() -> None:
@@ -214,71 +337,6 @@ async def _plain_completion(
     except Exception as exc:
         logger.warning("plain completion failed: %s", exc)
         return ""
-
-
-def _tone_prompt(tone: dict | None) -> str:
-    """L2 语气：把场景人格/文风 + 去 AI 味注入 system prompt。"""
-    if not tone:
-        return ""
-    parts: list[str] = []
-    if tone.get("persona"):
-        parts.append(f"你的身份是：{tone['persona']}。")
-    if tone.get("style"):
-        parts.append(f"文风要求：{tone['style']}。")
-    parts.append(f"禁用套话与 AI 过渡词（如：{BANNED_AI_PHRASES}），直接给结论，不客套。")
-    return " ".join(parts)
-
-
-async def generate_narration(title: str, claims: list[Claim], tone: dict | None = None) -> str | None:
-    """报告章节解读段：锚定 computed 结论，禁止新增数字；按场景语气去 AI 味。失败返回 None。"""
-    if not llm_available():
-        return None
-    kept = filter_claims(claims)
-    claim_lines = [c.claim for c in kept if c.claim]
-    if not claim_lines:
-        return None
-    system = (
-        "你为报告章节写 2-3 句专业解读，说明该章节的发现与风险含义。"
-        "只能使用给定结论中的数字与事实，禁止新增任何数字、企业名或未经给定的事实。"
-        + _tone_prompt(tone)
-    )
-    user = f"章节标题：{title}\n给定结论（唯一事实来源）：\n" + "\n".join(
-        f"- {line}" for line in claim_lines
-    )
-    text = await _plain_completion(system, user, max_tokens=220)
-    if not text:
-        return None
-    cleaned = _sanitize_narration(text, kept)
-    return cleaned or None
-
-
-async def generate_executive_summary(
-    kpis: list[dict[str, str]],
-    chapter_titles: list[str],
-    claims: list[Claim],
-    tone: dict | None = None,
-) -> str | None:
-    """报告执行摘要：锚定 computed 结论与 KPI，禁止新增数字；按场景语气去 AI 味。失败返回 None。"""
-    if not llm_available():
-        return None
-    kept = filter_claims(claims)
-    claim_lines = [c.claim for c in kept if c.claim][:12]
-    fact_lines = [f"{k.get('label', '')}{k.get('value', '')}{k.get('unit', '')}" for k in kpis]
-    system = (
-        "你用 3-5 句中文概括整份报告的核心发现、整体风险判断与建议关注点。"
-        "只能使用给定的事实与结论，禁止新增任何数字、企业名或未经给定的事实。"
-        + _tone_prompt(tone)
-    )
-    user = (
-        "报告章节：" + "、".join(chapter_titles) + "\n"
-        "关键指标：" + "；".join(fact_lines) + "\n"
-        "给定结论（唯一事实来源）：\n" + "\n".join(f"- {line}" for line in claim_lines)
-    )
-    text = await _plain_completion(system, user, max_tokens=320)
-    if not text:
-        return None
-    cleaned = _sanitize_narration(text, kept)
-    return cleaned or None
 
 
 async def classify_intent_llm(query: str) -> dict | None:
@@ -475,21 +533,26 @@ async def llm_custom_report_turn(state: dict) -> "object | None":
             det_parts.append(f"行业:{spec['industry_l1']}")
         if spec.get("province"):
             det_parts.append(f"地区:{spec['province']}")
+        if spec.get("enterprises"):
+            det_parts.append(f"企业:{'、'.join(spec['enterprises'])}")
         determined = "；".join(det_parts) or "（暂未确定任何槽位）"
     else:
         determined = "（暂未确定任何槽位）"
 
     system = (
-        "你是明鉴风控报告的定制顾问，通过对话收集用户诉求，最终产出定制报告方案。"
+        "你是明鉴风控报告的定制顾问。定制本意是：从用户对话识别场景意图，"
+        "再组合相应章节生成报告——不是把用户锁死在「画像/预警」两快捷模板里。"
         f"可组合章节（key:说明）：{chapters_vocab}。"
         f"行业白名单：[{industries}]；地区白名单：[{provinces}]。"
         "规则："
-        "1) 一次只问一个简短自然的问题，且只问缺失的关键槽位，绝不重复询问已经回答过/已确定的问题；"
-        "2) 问题必须基于白名单（章节/行业/地区），不要问开放式、无法被识别的宽泛问题；"
-        "3) 根据已有信息逐步推断 chapters（有序子集，只从上述 key 选）、industry_l1、province、title、purpose；"
-        "4) 只要 chapters 与范围基本确定就立即置 propose=true 并填 spec，不要为了凑问题而追问。"
-        "industry_l1/province 只从白名单取值，无则 null。只输出 JSON："
-        '{next_question, propose, spec:{chapters, industry_l1, province, title, tone, purpose}}。'
+        "1) 一次只问一个简短问题；优先弄清「想解决什么风险/关注什么」以选定 chapters；"
+        "2) chapters 可从上述全部 key 自由有序组合（财务/税务/发票/真实性/信号/评分/对标/趋势均可）；"
+        "3) industry_l1 / province / enterprises 只决定数据范围滤镜，不要用范围去删减已识别的章节；"
+        "4) 根据已有信息推断 chapters、industry_l1、province、enterprises、title、purpose；"
+        "5) chapters 与诉求基本对齐就 propose=true；enterprises 只填明确的「企业N」；"
+        "industry_l1/province 只从白名单取值，无则 null。"
+        "只输出 JSON："
+        '{next_question, propose, spec:{chapters, industry_l1, province, enterprises, title, tone, purpose}}。'
     )
     user = (
         f"已确定的槽位：{determined}\n"

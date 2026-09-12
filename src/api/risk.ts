@@ -48,6 +48,7 @@ export function normalizeFraudRows(res: unknown): FraudAnalysisItem[] {
     return {
       enterprise_id: String(f.enterprise_id || `flag-${i}`),
       display_label: (f.display_label as string) || undefined,
+      display_name: (f.display_name as string) || undefined,
       industry_l1: (f.industry_l1 as string) || undefined,
       fraud_composite_score: Number.isFinite(score) ? score : undefined,
       fraud_risk_level: mapRiskLevel(f.fraud_risk_level ?? f.risk_level),
@@ -106,6 +107,7 @@ export function normalizeAuthenticityRows(res: unknown): AuthenticityItem[] {
   return rows.map((r, i) => ({
     enterprise_id: String(r.enterprise_id || `susp-${i}`),
     display_label: (r.display_label as string) || undefined,
+    display_name: (r.display_name as string) || undefined,
     industry_l1: (r.industry_l1 as string) || undefined,
     authenticity_score: r.authenticity_score != null ? Number(r.authenticity_score) : undefined,
     cross_avg_deviation:
@@ -149,6 +151,14 @@ export interface IndustryItem {
   n: number;
 }
 
+/** 单企业通道可选项（「企业N」可读名 + 行业/地区） */
+export interface EnterpriseOption {
+  enterprise_id: string;
+  display_name: string;
+  industry_l1: string;
+  province: string;
+}
+
 export const riskApi = {
   /** Dashboard KPI + 风险等级分布 */
   getSummary: (): Promise<Record<string, unknown>> =>
@@ -157,6 +167,13 @@ export const riskApi = {
   /** 行业大类列表（含样本计数） */
   getIndustries: async (): Promise<IndustryItem[]> => {
     const res = (await client.get('/risk/industries')) as { items?: IndustryItem[] };
+    return Array.isArray(res?.items) ? res.items : [];
+  },
+
+  /** 企业清单（「企业N」可读名 + 行业/地区），供报告向导「指定企业」选择 */
+  getEnterprises: async (q?: string): Promise<EnterpriseOption[]> => {
+    const qs = q ? `?q=${encodeURIComponent(q)}` : '';
+    const res = (await client.get(`/risk/enterprises${qs}`)) as { items?: EnterpriseOption[] };
     return Array.isArray(res?.items) ? res.items : [];
   },
 

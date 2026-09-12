@@ -1,4 +1,5 @@
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
@@ -8,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user_optional, require_plan
 from app.db.session import get_db
 from app.services import auth_service, email_service, slice_report
-from app.services.report_templates import PremiumReportLocked, get_scenario_label
+from app.services.report_templates import PremiumReportLocked, get_scenario_label, zh_report_title
 from app.services.slice_report import (
     build_report_detail,
     can_access_report,
@@ -22,6 +23,12 @@ from app.services.slice_report import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/report", tags=["report"])
+
+
+def _safe_filename(name: str) -> str:
+    """清洗报告标题为合法文件名：去 Windows/Unix 非法字符、控制符与首尾空白。"""
+    cleaned = re.sub(r'[\\/:*?"<>|\r\n\t]+', "", name or "").strip()
+    return cleaned or "评估报告"
 
 
 def _premium_locked() -> HTTPException:
@@ -50,6 +57,13 @@ class GenerateSliceReportRequest(BaseModel):
 
 class GenerateEnterpriseReportRequest(BaseModel):
     enterprise_id: str
+
+
+class ValidateWizardRequest(BaseModel):
+    scenario: str | None = None
+    industry_l1: str | None = None
+    province: str | None = None
+    enterprise_id: str | None = None
 
 
 class EmailReportRequest(BaseModel):
@@ -122,10 +136,28 @@ async def generate_report(
     _user: dict | None = Depends(require_plan("subscriber")),
 ):
     if body.enterprise_id:
-        raise HTTPException(
-            status_code=400,
-            detail="匿名切片模式已停用具名企业报告，请使用 POST /api/v1/report/slice 或对话「生成报告」。",
-        )
+        # 统一入口：带 enterprise_id 走单企业风险披露报告（脱敏、无 LLM），不再报 400。
+        try:
+            from app.services.slice_report import generate_enterprise_report
+
+            report_id, _, ctx = await generate_enterprise_report(
+                db, body.enterprise_id, owner=_owner_email(_user)
+            )
+        except ValueError as exc:
+            msg = str(exc)
+            if "未找到" in msg or "不存在" in msg:
+                raise HTTPException(status_code=404, detail=msg) from exc
+            raise HTTPException(status_code=422, detail=msg) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"个体深度报告生成失败: {exc}") from exc
+        return {
+            "report_id": report_id,
+            "status": "completed",
+            "title": ctx.get("title"),
+            "scenario": ctx.get("scenario"),
+            "validation": ctx.get("validation"),
+            "download_url": f"/api/v1/report/{report_id}/download",
+        }
 
     try:
         report_id, _, ctx = await generate_slice_report(
@@ -183,6 +215,28 @@ async def generate_slice(
         "validation": ctx.get("validation"),
         "download_url": f"/api/v1/report/{report_id}/download",
     }
+
+
+@router.post("/validate-wizard")
+async def validate_wizard(
+    body: ValidateWizardRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: dict | None = Depends(require_plan("subscriber")),
+):
+    """固定场景向导预校验：无样本 / 无可用章时 ok=false + reason，前端拦截生成。"""
+    from app.services.slice_report import validate_wizard_report
+
+    try:
+        return await validate_wizard_report(
+            db,
+            scenario=body.scenario,
+            industry_l1=body.industry_l1,
+            province=body.province,
+            enterprise_id=body.enterprise_id,
+        )
+    except Exception as exc:
+        logger.warning("validate-wizard failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"预校验失败: {exc}") from exc
 
 
 @router.post("/email")
@@ -252,7 +306,11 @@ async def generate_enterprise(
             db, body.enterprise_id, owner=_owner_email(_user)
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        msg = str(exc)
+        # 预/后置校验失败 → 422；真正找不到样本 → 404
+        if "未找到" in msg or "不存在" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=422, detail=msg) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"个体深度报告生成失败: {exc}") from exc
     return {
@@ -320,7 +378,9 @@ async def download_report(report_id: str, _user: dict | None = Depends(require_p
         raise HTTPException(status_code=404, detail="报告不存在")
     if not can_access_report(report_id, _user, auth_required=auth_service.AUTH_REQUIRED):
         raise HTTPException(status_code=403, detail="无权下载该报告")
-    filename = f"评估报告_{report_id}.pdf"
+    snap = read_report_snapshot(report_id)
+    title = (snap or {}).get("title") or zh_report_title(report_id) or "评估报告"
+    filename = f"{_safe_filename(title)}.pdf"
     return FileResponse(
         path,
         media_type="application/pdf",

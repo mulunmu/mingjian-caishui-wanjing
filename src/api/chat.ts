@@ -1,5 +1,5 @@
 import client from './client';
-import type { ChartConfig, ChatAction } from '@/types/chat';
+import type { ChartConfig, ChatAction, GuidanceCard } from '@/types/chat';
 
 /** 后端 Chat 请求体 */
 export interface ChatRequest {
@@ -60,6 +60,7 @@ export interface ChatBackendResponse {
     claims?: BackendClaim[];
     followups?: string[];
     actions?: ChatAction[];
+    guidance_cards?: GuidanceCard[];
     [key: string]: unknown;
   };
   charts?: unknown;
@@ -75,6 +76,7 @@ export interface ChatResponse {
   trace: string;
   followups: string[];
   actions?: ChatAction[];
+  guidanceCards?: GuidanceCard[];
   function?: string;
   dimension?: string;
   chart?: ChartConfig;
@@ -176,6 +178,9 @@ export const chatApi = {
     const backendData = res.data;
     const followups = backendData?.followups || [];
     const actions = Array.isArray(backendData?.actions) ? backendData.actions : [];
+    const guidanceCards = Array.isArray(backendData?.guidance_cards)
+      ? (backendData.guidance_cards as GuidanceCard[])
+      : [];
     const evidence = claimsToEvidence(backendData?.claims);
 
     return {
@@ -185,6 +190,7 @@ export const chatApi = {
       trace: res.intent || '',
       followups,
       actions,
+      guidanceCards,
       function: res.function,
       dimension: res.dimension,
       chart: normalizeChart(res.charts),

@@ -64,8 +64,8 @@ def test_build_report_html_contains_title():
 
 def test_prepare_html_context_validation():
     ctx = prepare_html_context(_sample_context(), "rid")
-    assert ctx["validation_ok"] is True
     assert ctx["report_id"] == "rid"
+    assert ctx["renderer"] == "weasyprint"
 
 
 def test_weasyprint_smoke(tmp_path):

@@ -35,6 +35,12 @@ export interface ChatAction {
   target: string;
 }
 
+/** 强拦截引导卡片（方案 A）：定制报告无可用数据时给出可点击调整项 */
+export interface GuidanceCard {
+  label: string;
+  description: string;
+}
+
 export interface Message {
   id: string;
   role: MessageRole;
@@ -46,6 +52,8 @@ export interface Message {
   followups?: string[];
   /** 引导动作（跳转功能页，区别于追问文本） */
   actions?: ChatAction[];
+  /** 强拦截引导卡片（方案 A）：无可用数据时的结构化调整项 */
+  guidanceCards?: GuidanceCard[];
   /** 证据链（仅报告使用，对话中隐藏） */
   evidence_chain?: string[];
   /** 结构化溯源证据 */

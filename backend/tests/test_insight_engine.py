@@ -239,6 +239,12 @@ def test_multiple_high_risk_stacks_r03():
     assert "R-03" in _ids(ins)
     r03 = next(i for i in ins if i.rule_id == "R-03")
     assert r03.severity == "高危"
+    # 用户可见面不得露出 rule_id（T-01/A-02 等）
+    fact = r03.fact_text()
+    assert "T-01" not in fact
+    assert "A-02" not in fact
+    assert "R-01" not in fact
+    assert "存在欠税" in fact or "失信" in fact or "叠加" in fact
 
 
 def test_insights_to_claims_traceable():

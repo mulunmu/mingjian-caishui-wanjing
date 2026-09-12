@@ -47,6 +47,7 @@ export default function AuthenticityPage() {
   const filteredData = data.filter((item) => {
     if (!searchTerm) return true;
     return (
+      (item.display_name || '').includes(searchTerm) ||
       (item.display_label || '').includes(searchTerm) ||
       (item.industry_l1 || '').includes(searchTerm)
     );
@@ -58,7 +59,7 @@ export default function AuthenticityPage() {
     <div className="h-full flex flex-col bg-warm-50">
       <div className="bg-white border-b border-warm-200 px-6 py-4">
         <h1 className="text-xl font-semibold text-warm-800">经营真实性验证</h1>
-        <p className="text-sm text-warm-500 mt-1">多口径交叉验证 · Benford 分析 · 异常检测</p>
+        <p className="text-sm text-warm-500 mt-1">多口径交叉验证 · 本福特定律分析 · 异常检测</p>
       </div>
 
       <div className="bg-white border-b border-warm-200 px-6 py-3 flex items-center gap-4">
@@ -158,7 +159,7 @@ export default function AuthenticityPage() {
                     className={`grid grid-cols-5 gap-2 px-5 py-3 border-t border-warm-100 transition-colors ${canNavigate ? 'hover:bg-warm-50 cursor-pointer' : ''}`}
                     onClick={() => canNavigate && navigate(`/enterprise/${item.enterprise_id}`)}
                   >
-                    <div className="text-sm text-warm-800 font-medium">{item.display_label || item.enterprise_id}</div>
+                    <div className="text-sm text-warm-800 font-medium">{item.display_name || item.display_label || item.enterprise_id}</div>
                     <div className="text-sm text-warm-600">{item.industry_l1 || '-'}</div>
                     <div className="text-sm text-warm-800 font-mono">{item.authenticity_score?.toFixed(1) ?? '-'}</div>
                     <div className="text-sm text-warm-600 font-mono">

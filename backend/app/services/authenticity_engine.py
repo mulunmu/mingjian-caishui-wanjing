@@ -66,7 +66,7 @@ def benford_test(values: Iterable[float], min_n: int = 50) -> dict[str, Any]:
             "chi2": None,
             "p_value": None,
             "mad": None,
-            "label": f"样本量不足（n={n}，需≥{min_n}）",
+            "label": f"样本量不足（{n} 家，需≥{min_n} 家）",
             "confidence": "inferred",
             "observed": {},
             "expected": {str(d): round(float(BENFORD_PROBS[d - 1]), 4) for d in range(1, 10)},
@@ -98,7 +98,7 @@ def benford_test(values: Iterable[float], min_n: int = 50) -> dict[str, Any]:
         "chi2": round(float(chi2), 4),
         "p_value": round(float(p_value), 6),
         "mad": round(mad, 6),
-        "label": "Benford 违例（数字分布异常）" if violation else "Benford 符合（未见明显操纵）",
+        "label": "本福特定律违例（数字分布异常）" if violation else "本福特定律符合（未见明显操纵）",
         "confidence": "computed",
         "observed": {str(d): int(counts.get(d, 0)) for d in range(1, 10)},
         "expected": {str(d): round(float(BENFORD_PROBS[d - 1] * n), 2) for d in range(1, 10)},
@@ -160,8 +160,10 @@ def cross_source_deviation(
 
     avg_d = sum(p["deviation"] for p in pairs) / len(pairs)
     max_d = max(p["deviation"] for p in pairs)
-    # 平均偏差 > 25% 或最大 > 40% → 疑似
-    suspicious = avg_d >= 0.25 or max_d >= 0.40
+    from app.services.metric_registry import CROSS_AVG_DEVIATION_WARN, CROSS_MAX_DEVIATION_WARN
+
+    # 平均偏差或最大偏差越线 → 疑似（阈值见 metric_registry，禁止写死）
+    suspicious = avg_d >= CROSS_AVG_DEVIATION_WARN or max_d >= CROSS_MAX_DEVIATION_WARN
 
     return {
         "source_count": len(present),
@@ -200,6 +202,7 @@ def analyze_authenticity_from_metrics(m: Any) -> dict[str, Any]:
 
     return {
         "enterprise_id": getattr(m, "enterprise_id", None),
+        "display_name": getattr(m, "display_name", None),
         "display_label": getattr(m, "display_label", None) or getattr(m, "enterprise_name", None),
         "industry_l1": getattr(m, "industry_l1", None),
         "authenticity_score": round(max(0.0, score), 2),
@@ -292,6 +295,7 @@ def analyze_authenticity_batch(metrics: list[Any], industry_l1: str | None = Non
             [
                 {
                     "enterprise_id": a.get("enterprise_id"),
+                    "display_name": a.get("display_name"),
                     "display_label": a.get("display_label"),
                     "industry_l1": a.get("industry_l1"),
                     "authenticity_score": a["authenticity_score"],

@@ -14,6 +14,7 @@ class CoreMetrics(Base):
 
     enterprise_id: Mapped[str] = mapped_column(String(64), primary_key=True)  # MD5(taxpayer_id)
     display_label: Mapped[str] = mapped_column(String(120))  # 地区·行业大类·规模
+    display_name: Mapped[str | None] = mapped_column(String(32), nullable=True)  # 可读名「企业N」（匿名但仍可串联单企业分析）
     industry_l1: Mapped[str] = mapped_column(String(50))  # 6 大类
     industry_l2: Mapped[str] = mapped_column(String(80))  # 原始行业细类
     province: Mapped[str] = mapped_column(String(50))
@@ -82,10 +83,10 @@ class CoreMetrics(Base):
 
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # 兼容旧代码读取 enterprise_name
+    # 兼容旧代码读取 enterprise_name：优先可读名「企业N」，缺失回退 地区·行业·规模
     @property
     def enterprise_name(self) -> str:
-        return self.display_label
+        return self.display_name or self.display_label
 
     # 兼容旧 assessment 中的 z_score_level（roe 现为真实列，见上方四能力比率）
     @property

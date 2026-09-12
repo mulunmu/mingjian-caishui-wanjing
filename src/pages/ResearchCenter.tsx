@@ -9,6 +9,8 @@ import ChatPanel from '@/components/chat/ChatPanel';
 import { ResearchAssistantCharacter } from '@/components/ui/ResearchAssistantCharacter';
 import { DimensionIcons, FunctionIcons, ComboIcons } from '@/components/ui/SketchIcons';
 import { buildQueryText } from '@/utils/intentParser';
+import { riskApi, type EnterpriseOption } from '@/api/risk';
+import { Search, ChevronRight } from 'lucide-react';
 import type { DimensionType, FunctionType, DimensionItem, FunctionItem, ComboItem } from '@/types/chat';
 
 const dimensions: DimensionItem[] = [
@@ -62,6 +64,28 @@ export default function ResearchCenter() {
 
   const [inputValue, setInputValue] = useState('');
   const [assistantState, setAssistantState] = useState<'idle' | 'typing' | 'answering'>('idle');
+
+  // 单企业研判入口：搜索「企业N」→ 选中即跳企业风险披露页（复用 /enterprise/:id）
+  const [enterpriseQuery, setEnterpriseQuery] = useState('');
+  const [enterpriseOptions, setEnterpriseOptions] = useState<EnterpriseOption[]>([]);
+
+  useEffect(() => {
+    riskApi
+      .getEnterprises()
+      .then(setEnterpriseOptions)
+      .catch(() => setEnterpriseOptions([]));
+  }, []);
+
+  useEffect(() => {
+    if (!enterpriseQuery.trim()) return;
+    const t = setTimeout(() => {
+      riskApi
+        .getEnterprises(enterpriseQuery)
+        .then(setEnterpriseOptions)
+        .catch(() => setEnterpriseOptions([]));
+    }, 200);
+    return () => clearTimeout(t);
+  }, [enterpriseQuery]);
 
   // ?custom=1：来自报告中心/对话的「AI 定制报告」入口 → 自动发起定制对话
   const [searchParams, setSearchParams] = useSearchParams();
@@ -145,6 +169,14 @@ export default function ResearchCenter() {
     [sendMessage]
   );
 
+  // 单企业研判：选中某企业 → 跳转企业风险披露页
+  const handleEnterpriseSelect = useCallback(
+    (id: string) => {
+      navigate(`/enterprise/${id}`);
+    },
+    [navigate]
+  );
+
   return (
     <div className="flex h-full overflow-hidden">
       {/* 左侧：对话区 */}
@@ -157,13 +189,47 @@ export default function ResearchCenter() {
         />
       </div>
 
-      {/* 右侧面板：卡片引导 + 动画角色 */}
-      <aside className="w-[300px] flex-shrink-0 border-l border-warm-200 bg-white overflow-y-auto flex flex-col">
-        <div className="p-4 space-y-5 flex-1">
+      {/* 右侧面板：上半截独立滚动，底栏固定角色 */}
+      <aside className="w-[300px] flex-shrink-0 border-l border-warm-200 bg-white flex flex-col h-full min-h-0 overflow-hidden">
+        <div className="p-3 space-y-3 flex-1 min-h-0 overflow-y-auto">
           <div>
             <h2 className="text-base font-semibold text-warm-800 mb-1">风险评估</h2>
             <p className="text-xs text-warm-400">选择维度和功能，开始分析</p>
           </div>
+
+          {/* 单企业研判入口：搜索「企业N」→ 跳企业风险披露 */}
+          <CardGroup title="单企业研判">
+            <div className="space-y-2">
+              <div className="relative">
+                <Search size={14} className="absolute left-2.5 top-2.5 text-warm-400" />
+                <input
+                  value={enterpriseQuery}
+                  onChange={(e) => setEnterpriseQuery(e.target.value)}
+                  placeholder="搜索「企业N」或行业/地区…"
+                  className="w-full h-8 pl-8 pr-2 rounded-lg border border-warm-200 bg-warm-50 text-sm text-warm-800 placeholder:text-warm-400 focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber"
+                />
+              </div>
+              <div className="max-h-44 overflow-y-auto space-y-1">
+                {enterpriseOptions.length === 0 ? (
+                  <p className="text-xs text-warm-400 py-1">未匹配到企业</p>
+                ) : (
+                  enterpriseOptions.slice(0, 8).map((e) => (
+                    <button
+                      key={e.enterprise_id}
+                      onClick={() => handleEnterpriseSelect(e.enterprise_id)}
+                      className="w-full flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-amber-50 transition-colors"
+                    >
+                      <span className="text-[13px] text-warm-800 truncate">{e.display_name}</span>
+                      <span className="text-[10px] text-warm-400 flex-shrink-0 truncate max-w-[110px]">
+                        {e.industry_l1} · {e.province}
+                      </span>
+                      <ChevronRight size={12} className="text-warm-300 flex-shrink-0" />
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </CardGroup>
 
           {/* 维度卡 */}
           <CardGroup title="分析维度">
@@ -226,16 +292,18 @@ export default function ResearchCenter() {
           )}
         </div>
 
-        {/* 动画角色 */}
-        <div className="p-4 border-t border-warm-100">
-          <div className="flex items-end justify-center gap-4">
+        {/* 底栏固定：不随上半截滚动，首屏始终可见 */}
+        <div className="flex-shrink-0 px-3 pb-2 pt-2 border-t border-warm-100 bg-white">
+          <div className="flex items-end justify-center gap-3">
             {/* 主角色 */}
             <div className="flex flex-col items-center">
-              <div className="scale-75 origin-bottom">
-                <ResearchAssistantCharacter state={assistantState} variant="main" />
+              <div className="overflow-hidden" style={{ height: '110px', width: '60px' }}>
+                <div style={{ transform: 'scale(0.5)', transformOrigin: 'top left' }}>
+                  <ResearchAssistantCharacter state={assistantState} variant="main" />
+                </div>
               </div>
-              <div className="text-center mt-1">
-                <span className="text-xs text-warm-400">
+              <div className="text-center -mt-1">
+                <span className="text-[10px] text-warm-400">
                   {assistantState === 'idle' && '待机中'}
                   {assistantState === 'typing' && '输入中'}
                   {assistantState === 'answering' && '分析中'}
@@ -243,9 +311,11 @@ export default function ResearchCenter() {
               </div>
             </div>
             {/* 副角色 */}
-            <div className="flex flex-col items-center">
-              <div className="scale-50 origin-bottom">
-                <ResearchAssistantCharacter state={assistantState} variant="secondary" />
+            <div className="flex flex-col items-end">
+              <div className="overflow-hidden" style={{ height: '88px', width: '48px' }}>
+                <div style={{ transform: 'scale(0.4)', transformOrigin: 'top left' }}>
+                  <ResearchAssistantCharacter state={assistantState} variant="secondary" />
+                </div>
               </div>
             </div>
           </div>

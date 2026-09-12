@@ -132,7 +132,7 @@ export default function ReportPage() {
                 }
                 setDownloading(true);
                 try {
-                  await downloadPdf(id);
+                  await downloadPdf(id, currentReport?.title);
                 } finally {
                   setDownloading(false);
                 }

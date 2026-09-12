@@ -354,9 +354,9 @@ def analyze_enterprise(enterprise_id: str) -> dict[str, Any] | None:
     return result
 
 
-def analyze_metrics_batch(rows: list[tuple[str, str, str]], max_n: int = 60) -> dict[str, Any]:
+def analyze_metrics_batch(rows: list[tuple[str, str, str, str | None]], max_n: int = 60) -> dict[str, Any]:
     """
-    rows: [(enterprise_id, display_label, industry_l1), ...]
+    rows: [(enterprise_id, display_label, industry_l1, display_name), ...]
     优先读 PG 预计算；缺失项回退 MySQL。
     """
     from app.services.engine_features_store import load_fraud_features_batch
@@ -377,7 +377,7 @@ def analyze_metrics_batch(rows: list[tuple[str, str, str]], max_n: int = 60) -> 
     results = []
     features = []
     mysql_fallback_n = 0
-    for eid, label, ind in batch:
+    for eid, label, ind, name in batch:
         r = pre.get(eid)
         if not r:
             if not allow_mysql:
@@ -393,6 +393,7 @@ def analyze_metrics_batch(rows: list[tuple[str, str, str]], max_n: int = 60) -> 
         r = dict(r)
         r["display_label"] = label
         r["industry_l1"] = ind
+        r["display_name"] = name
         results.append(r)
         if r.get("_precomputed") and r.get("pyod_score") is not None:
             features.append(None)  # placeholder
@@ -463,6 +464,7 @@ def analyze_metrics_batch(rows: list[tuple[str, str, str]], max_n: int = 60) -> 
             {
                 "enterprise_id": r.get("enterprise_id"),
                 "display_label": r.get("display_label"),
+                "display_name": r.get("display_name"),
                 "industry_l1": r.get("industry_l1"),
                 "fraud_composite_score": _score(r),
                 "composite_score": _score(r),
@@ -500,14 +502,14 @@ def analyze_industry_slice(industry_l1: str | None = None, limit: int = 60) -> d
     from app.db.urls import get_sync_engine
 
     engine = get_sync_engine()
-    sql = "SELECT enterprise_id, display_label, industry_l1 FROM core_metrics"
+    sql = "SELECT enterprise_id, display_label, industry_l1, display_name FROM core_metrics"
     args: dict = {}
     if industry_l1:
         sql += " WHERE industry_l1 = :ind"
         args["ind"] = industry_l1
     sql += f" LIMIT {int(limit)}"
     with engine.connect() as conn:
-        rows = [(r[0], r[1], r[2]) for r in conn.execute(text(sql), args)]
+        rows = [(r[0], r[1], r[2], r[3]) for r in conn.execute(text(sql), args)]
     return analyze_metrics_batch(rows, max_n=limit)
 
 

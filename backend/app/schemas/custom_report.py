@@ -13,6 +13,7 @@ class CustomReportSpec(BaseModel):
     chapters: list[str] = Field(default_factory=list)  # CUSTOM_CHAPTERS 的有序子集
     industry_l1: str | None = None
     province: str | None = None
+    enterprises: list[str] = Field(default_factory=list)  # 指定企业（「企业N」可读名或企业 id）
     title: str = "定制风控报告"
     tone: str | None = None  # 语气提示（可选，未用则回退 custom 语气）
     purpose: str = ""  # 用户诉求的原文摘要

@@ -1,7 +1,8 @@
 """财务四能力比率阈值口径（对齐洞察引擎 F-01~F-10 与《报告设计规范》§5.2）。
 
-客观评级三态：达标 / 预警 / 无数据（0=弃权）。铁律：评级由本表统一决定，与场景无关；
+客观评级四态：账务异常 / 预警 / 达标 / 无数据（0=弃权）。铁律：评级由本表统一决定，与场景无关；
 语气层只改表达，不改评级。比率口径 0-1（is_pct=True 展示 ×100），周转率/流动比率为倍数。
+负数负债率等业务不可能值 → 账务异常，禁止走普通达标逻辑。
 """
 from __future__ import annotations
 
@@ -74,8 +75,8 @@ FINANCIAL_RATIOS: dict[str, dict[str, Any]] = {
     },
     "profit_yoy": {
         "group": "成长能力", "label": "净利润同比", "unit": "%", "is_pct": True,
-        "warn_dir": None, "warn_threshold": None, "good_threshold": 0.0,
-        "rule_id": None,
+        "warn_dir": "lt", "warn_threshold": -0.2, "good_threshold": 0.0,
+        "rule_id": "F-04b",
     },
 }
 
@@ -87,14 +88,36 @@ def _to_float(value: Any) -> float:
         return 0.0
 
 
-def assess_financial_ratio(field: str, value: Any) -> str:
-    """客观评级：预警 / 达标 / 无数据（0=弃权）。"""
+def is_equity_based_ratio_invalid(field: str, *, owner_equity: Any = None) -> bool:
+    """所有者权益为负时，ROE 等权益分母指标计算失效，不得作达标/优势/对标。"""
+    if field not in ("roe",):
+        return False
+    if owner_equity is None:
+        return False
+    return _to_float(owner_equity) < 0
+
+
+def assess_financial_ratio(
+    field: str, value: Any, *, owner_equity: Any = None
+) -> str:
+    """客观评级：计算失效 / 账务异常 / 预警 / 达标 / 无数据（0=弃权）。
+
+    账务异常：比率/负债类出现业务上不可能的负值等，禁止走普通达标逻辑。
+    计算失效：权益为负时 ROE 分母失效，禁止采信。
+    """
     cfg = FINANCIAL_RATIOS.get(field)
     if not cfg:
         return "无数据"
+    if is_equity_based_ratio_invalid(field, owner_equity=owner_equity):
+        return "计算失效"
     v = _to_float(value)
     if v == 0.0:
         return "无数据"
+    # 资产负债率/流动/速动等出现负数 → 账务异常（数据质量问题，非普通达标）
+    if field in ("debt_ratio", "current_ratio", "quick_ratio") and v < 0:
+        return "账务异常"
+    if cfg.get("is_pct") and v < -1.0:  # 比率存 0-1，<-100% 视为脏数据
+        return "账务异常"
     warn_dir = cfg.get("warn_dir")
     threshold = cfg.get("warn_threshold")
     if warn_dir is None or threshold is None:
@@ -104,6 +127,35 @@ def assess_financial_ratio(field: str, value: Any) -> str:
     if warn_dir == "lt" and v < threshold:
         return "预警"
     return "达标"
+
+
+def is_anomalous_amount(field: str, value: Any) -> bool:
+    """报表金额异常：负债类为负等反常业务数据。"""
+    v = _to_float(value)
+    if v >= 0:
+        return False
+    return field in {
+        "total_liab",
+        "current_liab",
+        "noncurrent_liab",
+        "total_liabilities",
+        "current_liabilities",
+    }
+
+
+def format_financial_ratio(
+    field: str, value: Any, *, owner_equity: Any = None
+) -> str:
+    """展示值：is_pct 比率 ×100，倍数保留 2 位；0=「无数据」；权益为负 ROE=计算失效。"""
+    if is_equity_based_ratio_invalid(field, owner_equity=owner_equity):
+        return "—"  # 详情见评级「计算失效」与参考标准列，避免数值格长文折行
+    cfg = FINANCIAL_RATIOS.get(field)
+    v = _to_float(value)
+    if v == 0.0:
+        return "无数据"
+    if cfg and cfg.get("is_pct"):
+        return f"{v * 100:.1f}%"
+    return f"{v:.2f}"
 
 
 def FINANCIAL_THRESHOLD_TABLE() -> list[dict[str, str]]:
@@ -132,17 +184,6 @@ def FINANCIAL_THRESHOLD_TABLE() -> list[dict[str, str]]:
             }
         )
     return rows
-
-
-def format_financial_ratio(field: str, value: Any) -> str:
-    """展示值：is_pct 比率 ×100，倍数保留 2 位；0=「无数据」。"""
-    cfg = FINANCIAL_RATIOS.get(field)
-    v = _to_float(value)
-    if v == 0.0:
-        return "无数据"
-    if cfg and cfg.get("is_pct"):
-        return f"{v * 100:.1f}%"
-    return f"{v:.2f}"
 
 
 def _fmt_factor(is_pct: bool, value: float | None) -> str | None:
@@ -195,5 +236,5 @@ def dupont_breakdown(
         "factors": factors,
         "roe": roe_v if roe_v != 0.0 else None,
         "roe_disp": _fmt_factor(True, roe_v) if roe_v != 0.0 else None,
-        "formula": "ROE = 净利率 × 总资产周转率 × 权益乘数",
+        "formula": "净资产收益率 = 净利率 × 总资产周转率 × 权益乘数",
     }

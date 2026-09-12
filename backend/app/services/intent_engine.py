@@ -60,7 +60,7 @@ _FUNC_PATTERNS: list[tuple[str, list[str]]] = [
     ("report", [r"报告", r"出报告", r"生成报告", r"pdf", r"导出", r"评估报告", r"\breport\b"]),
     ("authenticity", [r"真伪", r"真实性", r"造假", r"虚开", r"benford", r"可信度", r"经营真实", r"authenticity", r"verification"]),
     ("fraud", [r"舞弊", r"欺诈", r"发票异常", r"红冲", r"集中度", r"异常检测", r"进销错配", r"\bfraud\b", r"anomaly", r"mismatch"]),
-    ("benchmark", [r"对标", r"同业", r"行业对比", r"基准", r"percentile", r"跟同行", r"benchmark", r"\bpeer\b", r"comparison"]),
+    ("benchmark", [r"对标", r"同业", r"行业对比", r"基准", r"percentile", r"[跟和与]同行", r"benchmark", r"\bpeer\b", r"comparison"]),
     ("trend", [r"趋势", r"走向", r"同比", r"环比", r"变化", r"走势", r"\btrend\b", r"yoy", r"mom"]),
     ("score", [r"评分", r"风险分(?!布)", r"打分", r"综合分", r"风险等级", r"税务健康", r"纳税", r"\bscore\b", r"rating", r"credit score"]),
     ("signal", [r"预警", r"信号", r"告警", r"风险点", r"风险预警", r"风险分布", r"\bwarning\b", r"\bsignal\b", r"\balert\b"]),

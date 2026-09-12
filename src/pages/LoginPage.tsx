@@ -30,7 +30,7 @@ export default function LoginPage() {
 
     const success = await login(formData.email, formData.password);
     if (success) {
-      navigate('/overview');
+      navigate('/ingest');
     }
   };
 
@@ -182,7 +182,7 @@ export default function LoginPage() {
                 clearError();
                 setFormError('');
                 const success = await demoLogin();
-                if (success) navigate('/overview');
+                if (success) navigate('/ingest');
               }}
               icon={
                 <svg

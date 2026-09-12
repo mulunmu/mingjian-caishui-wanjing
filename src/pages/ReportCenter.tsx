@@ -10,6 +10,30 @@ import type { ReportScenarioDef } from '@/constants/reportScenarios';
 import type { ReportListItem } from '@/types/report';
 import { reportApi } from '@/api/report';
 
+function formatValidationWarn(validation: Record<string, unknown>): string {
+  const parts = [
+    '报告已生成，但未完全通过溯源校验（不可信表述已剥离）。请人工复核后再对外分发。',
+  ];
+  const nums: string[] = [];
+  const unanchored = Number(validation.unanchored || 0);
+  const numberUn = Number(validation.number_unanchored || 0);
+  const risk = Number(validation.risk_contradictions || 0);
+  if (unanchored) nums.push(`无溯源结论 ${unanchored}`);
+  if (numberUn) nums.push(`无锚点数字句 ${numberUn}`);
+  if (risk) nums.push(`风险话术矛盾 ${risk}`);
+  const enf = validation.enforced as Record<string, unknown> | undefined;
+  if (enf) {
+    const dropped = Number(enf.dropped_claims || 0);
+    const stripped = Number(enf.stripped_sentences || 0);
+    if (dropped) nums.push(`已剥离结论 ${dropped}`);
+    if (stripped) nums.push(`已剥离解读句 ${stripped}`);
+  }
+  const cross = validation.cross_surface as Record<string, unknown> | undefined;
+  if (cross && cross.ok === false) nums.push('跨面数字未对齐');
+  if (nums.length) parts.push(`明细：${nums.join('；')}。`);
+  return parts.join('');
+}
+
 export default function ReportCenter() {
   const { reportList, isLoadingList, listError, fetchReportList, downloadPdf, generateSlice } =
     useReportStore();
@@ -24,6 +48,7 @@ export default function ReportCenter() {
   const [showGenerate, setShowGenerate] = useState(false);
   const [generatingScenario, setGeneratingScenario] = useState<string | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [validationWarn, setValidationWarn] = useState<string | null>(null);
   const [searchParams] = useSearchParams();
   const highlightId = searchParams.get('highlight');
   const wizardParam = searchParams.get('wizard');
@@ -95,13 +120,13 @@ export default function ReportCenter() {
     }
   };
 
-  const handleDownload = async (e: React.MouseEvent, reportId: string) => {
+  const handleDownload = async (e: React.MouseEvent, report: ReportListItem) => {
     e.stopPropagation();
     if (needsUpgrade(user)) {
       setShowUpgrade(true);
       return;
     }
-    await downloadPdf(reportId);
+    await downloadPdf(report.report_id, report.title);
   };
 
   /** 向导完成 → 生成切片报告；付费模块 / 非定制用户触发升级提示 */
@@ -112,21 +137,36 @@ export default function ReportCenter() {
     }
     setGeneratingScenario(scenario.key);
     setGenerateError(null);
+    setValidationWarn(null);
     try {
-      const reportId = await generateSlice({
-        scenario: scenario.key,
-        industry_l1: prefs.industry_l1 || undefined,
-      });
+      let reportId: string;
+      let validation: Record<string, unknown> | undefined;
+      if (prefs.enterprise_id) {
+        // 单企业通道：指定企业 → 走个体深度报告（脱敏、无 LLM）
+        const res = await reportApi.enterprise(prefs.enterprise_id);
+        reportId = res.report_id;
+        validation = res.validation;
+      } else {
+        const out = await generateSlice({
+          scenario: scenario.key,
+          industry_l1: prefs.industry_l1 || undefined,
+        });
+        reportId = out.reportId;
+        validation = out.validation as Record<string, unknown> | undefined;
+      }
       await fetchReportList();
       // 选中并预览新生成的报告
       const item = useReportStore.getState().reportList.find((r) => r.report_id === reportId);
       setShowGenerate(false);
+      if (validation && validation.ok === false) {
+        setValidationWarn(formatValidationWarn(validation));
+      }
       if (item) {
         setViewingId(reportId);
         loadPreview(item);
       }
-    } catch {
-      setGenerateError('报告生成失败，请稍后重试');
+    } catch (e) {
+      setGenerateError(e instanceof Error ? e.message : '报告生成失败，请稍后重试');
     } finally {
       setGeneratingScenario(null);
     }
@@ -196,6 +236,21 @@ export default function ReportCenter() {
         </div>
       </div>
 
+      {validationWarn && (
+        <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber mt-0.5 flex-shrink-0" />
+          <p className="text-xs text-warm-700 flex-1">{validationWarn}</p>
+          <button
+            type="button"
+            onClick={() => setValidationWarn(null)}
+            className="text-warm-400 hover:text-warm-600"
+            aria-label="关闭提示"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* 主体：列表 + 预览 */}
       <div className="flex-1 flex overflow-hidden justify-center">
         {/* 左侧：报告列表 */}
@@ -258,7 +313,7 @@ export default function ReportCenter() {
                         <Eye className="w-3.5 h-3.5 text-warm-400" />
                       </button>
                       <button
-                        onClick={(e) => handleDownload(e, report.report_id)}
+                        onClick={(e) => handleDownload(e, report)}
                         className="p-1 rounded hover:bg-warm-100 transition-colors flex-shrink-0"
                         title="下载"
                       >
@@ -353,6 +408,7 @@ export default function ReportCenter() {
         onConfirm={handleWizardConfirm}
         busy={generatingScenario !== null}
         error={generateError}
+        onOpenCustom={() => navigate('/?custom=1')}
       />
 
       <UpgradeModal

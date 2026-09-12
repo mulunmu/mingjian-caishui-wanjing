@@ -887,6 +887,11 @@ def build_metrics() -> tuple[
             )
         )
 
+    # 可读名「企业N」：按 enterprise_id（MD5）稳定排序，保证同名跨报告一致、可串联单企业分析
+    metrics.sort(key=lambda m: m.enterprise_id)
+    for i, m in enumerate(metrics, 1):
+        m.display_name = f"企业{i}"
+
     events = [
         LegalEvent(
             enterprise_id=e["enterprise_id"],
@@ -991,6 +996,7 @@ def _migrate_columns(engine) -> None:
         ("core_metrics", "change_cnt", "INTEGER NOT NULL DEFAULT 0"),
         ("core_metrics", "void_invoice_cnt", "INTEGER NOT NULL DEFAULT 0"),
         ("core_metrics", "unit_price_ratio", "NUMERIC(18,4) NOT NULL DEFAULT 0"),
+        ("core_metrics", "display_name", "VARCHAR(32)"),
         ("industry_benchmark", "avg_current_ratio", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
         ("industry_benchmark", "avg_quick_ratio", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
         ("industry_benchmark", "avg_gross_margin", "NUMERIC(12,4) NOT NULL DEFAULT 0"),
@@ -1004,6 +1010,13 @@ def _migrate_columns(engine) -> None:
     with engine.begin() as conn:
         for table, col, ddl in _add:
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {ddl}"))
+        # 回填可读名「企业N」（幂等，只处理 display_name 为空的存量行，与 ETL 的 enterprise_id 排序一致）
+        conn.execute(text(
+            "UPDATE core_metrics SET display_name = '企业' || sub.rn FROM ("
+            "SELECT enterprise_id, ROW_NUMBER() OVER (ORDER BY enterprise_id) AS rn "
+            "FROM core_metrics WHERE display_name IS NULL"
+            ") sub WHERE core_metrics.enterprise_id = sub.enterprise_id"
+        ))
 
 
 def write_to_pg(

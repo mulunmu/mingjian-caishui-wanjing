@@ -72,34 +72,65 @@ def render_bar_chart_png(chart: dict[str, Any], output_path: Path, *, title: str
         return False
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(7.2, 3.4), dpi=120)
-    x = range(len(labels))
-    width = 0.8 / max(len(series), 1)
-    for si, s in enumerate(series):
-        vals = s.get("values") or []
-        if len(vals) != len(labels):
-            return False
-        offset = (si - (len(series) - 1) / 2) * width
-        positions = [xi + offset for xi in x]
-        ax.bar(
-            positions,
-            vals,
-            width=width * 0.92,
-            label=s.get("name") or f"序列{si + 1}",
-            color=_bar_colors(len(series))[si % 6],
-        )
-    ax.set_xticks(list(x))
-    ax.set_xticklabels(labels, fontsize=10, rotation=18 if len(labels) > 5 else 0, ha="right")
-    ylabel = series[0].get("name") or "数值" if len(series) == 1 else "数值"
-    ax.set_ylabel(ylabel, fontsize=10)
-    if len(series) > 1:
-        ax.legend(fontsize=9, loc="upper right")
+    n = len(labels)
+    horizontal = chart.get("orientation") == "horizontal" or n > 10
+    if horizontal:
+        fig_h = max(3.6, 0.32 * n + 1.2)
+        fig, ax = plt.subplots(figsize=(7.2, fig_h), dpi=120)
+        y = range(n)
+        width = 0.7 / max(len(series), 1)
+        for si, s in enumerate(series):
+            vals = s.get("values") or []
+            if len(vals) != len(labels):
+                return False
+            offset = (si - (len(series) - 1) / 2) * width
+            positions = [yi + offset for yi in y]
+            ax.barh(
+                positions,
+                vals,
+                height=width * 0.92,
+                label=s.get("name") or f"序列{si + 1}",
+                color=_bar_colors(len(series))[si % 6],
+            )
+        ax.set_yticks(list(y))
+        ax.set_yticklabels(labels, fontsize=8 if n > 14 else 9)
+        ax.invert_yaxis()
+        xlabel = series[0].get("name") or "数值" if len(series) == 1 else "数值"
+        ax.set_xlabel(xlabel, fontsize=10)
+        if len(series) > 1:
+            ax.legend(fontsize=9, loc="lower right")
+        ax.grid(axis="x", linestyle="--", alpha=0.35)
+    else:
+        fig, ax = plt.subplots(figsize=(7.2, 3.4), dpi=120)
+        x = range(n)
+        width = 0.8 / max(len(series), 1)
+        for si, s in enumerate(series):
+            vals = s.get("values") or []
+            if len(vals) != len(labels):
+                return False
+            offset = (si - (len(series) - 1) / 2) * width
+            positions = [xi + offset for xi in x]
+            ax.bar(
+                positions,
+                vals,
+                width=width * 0.92,
+                label=s.get("name") or f"序列{si + 1}",
+                color=_bar_colors(len(series))[si % 6],
+            )
+        ax.set_xticks(list(x))
+        rot = 45 if n > 8 else (18 if n > 5 else 0)
+        fontsize = 8 if n > 10 else 10
+        ax.set_xticklabels(labels, fontsize=fontsize, rotation=rot, ha="right" if rot else "center")
+        ylabel = series[0].get("name") or "数值" if len(series) == 1 else "数值"
+        ax.set_ylabel(ylabel, fontsize=10)
+        if len(series) > 1:
+            ax.legend(fontsize=9, loc="upper right")
+        ax.grid(axis="y", linestyle="--", alpha=0.35)
     t = _fmt_title(title, subtitle)
     if t:
         ax.set_title(t, fontsize=12, pad=8)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.grid(axis="y", linestyle="--", alpha=0.35)
     fig.tight_layout()
     fig.savefig(output_path, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -212,7 +243,7 @@ def render_pie_chart_png(chart: dict[str, Any], output_path: Path, *, title: str
 
 
 def render_dimension_attribution_png(attribution: dict[str, Any], output_path: Path) -> bool:
-    """六维加权贡献水平条形图 + 归因摘要配套。"""
+    """六维经营表现水平条形图（稳健/中等/偏弱，业务语言）。"""
     dims = attribution.get("dimensions") or {}
     if not dims:
         return False
@@ -228,15 +259,19 @@ def render_dimension_attribution_png(attribution: dict[str, Any], output_path: P
         return False
 
     from app.services.assessment_weights import DIMENSION_WEIGHTS
+    from app.services.report_templates import business_level
+
+    _LEVEL_ORDER = {"偏弱": 1, "中等": 2, "稳健": 3}
 
     labels: list[str] = []
-    values: list[float] = []
+    values: list[int] = []
     for key in DIMENSION_WEIGHTS:
         d = dims.get(key)
         if not d:
             continue
+        lvl = business_level(float(d.get("score") or 0))
         labels.append(d.get("label") or key)
-        values.append(float(d.get("net_contribution") or 0))
+        values.append(_LEVEL_ORDER.get(lvl, 2))
 
     if not labels:
         return False
@@ -244,12 +279,13 @@ def render_dimension_attribution_png(attribution: dict[str, Any], output_path: P
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(7.2, 3.0), dpi=120)
     y_pos = range(len(labels))
-    colors = ["#dc2626" if v < 15 else "#2563eb" for v in values]
+    colors = ["#dc2626" if v == 1 else "#f59e0b" if v == 2 else "#2563eb" for v in values]
     ax.barh(list(y_pos), values, color=colors, height=0.55)
     ax.set_yticks(list(y_pos))
     ax.set_yticklabels(labels, fontsize=10)
-    ax.set_xlabel("加权贡献（分）", fontsize=10)
-    ax.set_title("六维归因 · 加权贡献", fontsize=12, pad=8)
+    ax.set_xticks([1, 2, 3])
+    ax.set_xticklabels(["偏弱", "中等", "稳健"], fontsize=10)
+    ax.set_title("六维经营表现", fontsize=12, pad=8)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(axis="x", linestyle="--", alpha=0.35)

@@ -36,6 +36,21 @@ export const reportApi = {
   enterprise: (enterpriseId: string): Promise<ReportGenerateResponse> =>
     client.post('/report/enterprise', { enterprise_id: enterpriseId }),
 
+  /** 向导预校验：生成前判定样本/章节是否可用 */
+  validateWizard: (params: {
+    scenario?: string;
+    industry_l1?: string;
+    province?: string;
+    enterprise_id?: string;
+  }): Promise<{
+    ok: boolean;
+    reason?: string;
+    mode?: string;
+    scenario?: string;
+    scope_sample_count?: number;
+    available_chapter_count?: number;
+  }> => client.post('/report/validate-wizard', params),
+
   /** HTML 预览 */
   preview: (params: ReportParams): Promise<string> =>
     client.post('/report/preview', {

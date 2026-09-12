@@ -247,6 +247,7 @@ export interface EnterpriseProfileResponse {
 export interface FraudAnalysisItem {
   enterprise_id: string;
   display_label?: string;
+  display_name?: string;
   industry_l1?: string;
   fraud_composite_score?: number;
   fraud_risk_level?: string;
@@ -261,6 +262,7 @@ export interface FraudAnalysisItem {
 export interface AuthenticityItem {
   enterprise_id: string;
   display_label?: string;
+  display_name?: string;
   industry_l1?: string;
   authenticity_score?: number;
   cross_avg_deviation?: number;

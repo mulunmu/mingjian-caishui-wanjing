@@ -1,6 +1,15 @@
 import { create } from 'zustand';
-import type { Report, ReportListItem, ReportParams, EmailReportParams } from '@/types/report';
+import type { Report, ReportListItem, ReportParams, EmailReportParams, ReportValidation } from '@/types/report';
 import { reportApi } from '@/api/report';
+
+function apiErrorMessage(e: unknown, fallback: string): string {
+  if (e && typeof e === 'object' && 'response' in e) {
+    const detail = (e as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+    if (typeof detail === 'string' && detail.trim()) return detail;
+  }
+  if (e instanceof Error && e.message) return e.message;
+  return fallback;
+}
 
 interface ReportStore {
   currentReport: Report | null;
@@ -11,9 +20,13 @@ interface ReportStore {
 
   fetchReportList: () => Promise<void>;
   generateReport: (params: ReportParams) => Promise<string>;
-  generateSlice: (params: { scenario: string; industry_l1?: string; province?: string }) => Promise<string>;
+  generateSlice: (params: {
+    scenario: string;
+    industry_l1?: string;
+    province?: string;
+  }) => Promise<{ reportId: string; validation?: ReportValidation }>;
   fetchReport: (id: string) => Promise<void>;
-  downloadPdf: (id: string) => Promise<void>;
+  downloadPdf: (id: string, title?: string) => Promise<void>;
   sendEmail: (params: EmailReportParams) => Promise<boolean>;
   clearReport: () => void;
 }
@@ -45,9 +58,9 @@ const useReportStore = create<ReportStore>((set) => ({
       const res = await reportApi.generate(params);
       set({ isGenerating: false });
       return res.report_id;
-    } catch {
+    } catch (e) {
       set({ isGenerating: false });
-      throw new Error('报告生成失败');
+      throw new Error(apiErrorMessage(e, '报告生成失败'));
     }
   },
 
@@ -56,10 +69,10 @@ const useReportStore = create<ReportStore>((set) => ({
     try {
       const res = await reportApi.slice(params);
       set({ isGenerating: false });
-      return res.report_id;
-    } catch {
+      return { reportId: res.report_id, validation: res.validation as ReportValidation | undefined };
+    } catch (e) {
       set({ isGenerating: false });
-      throw new Error('报告生成失败');
+      throw new Error(apiErrorMessage(e, '报告生成失败'));
     }
   },
 
@@ -68,13 +81,13 @@ const useReportStore = create<ReportStore>((set) => ({
     set({ currentReport: report });
   },
 
-  downloadPdf: async (id) => {
+  downloadPdf: async (id, title) => {
     try {
       const blob = await reportApi.downloadPdf(id);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `report-${id}.pdf`;
+      a.download = `${title || '评估报告'}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {

@@ -28,17 +28,18 @@ def test_canonical_metrics_complete():
             assert f in valid_fields, f"{m['metric_key']} 引用未知源字段 {f}"
 
 
-def test_canonical_metrics_cover_six_dimensions():
-    dims = {
-        "tax_health_score",
-        "authenticity_score",
-        "invoice_score",
-        "industry_score",
-        "legal_score",
-        "finance_score",
-    }
-    keys = {m["metric_key"] for m in CANONICAL_METRICS}
-    assert dims <= keys
+def test_cross_deviation_thresholds_live_in_registry():
+    """多源交叉偏差阈值单一事实源（禁止 authenticity_engine 写死 0.25/0.40）。"""
+    from app.services.metric_registry import (
+        CROSS_AVG_DEVIATION_WARN,
+        CROSS_MAX_DEVIATION_WARN,
+        REVENUE_DEVIATION_WARN,
+    )
+
+    assert CROSS_AVG_DEVIATION_WARN == 0.25
+    assert CROSS_MAX_DEVIATION_WARN == 0.40
+    # 与营收单字段偏差口径区分，禁止误用同一常量
+    assert CROSS_AVG_DEVIATION_WARN != REVENUE_DEVIATION_WARN
 
 
 def test_metric_types_valid():

@@ -4,10 +4,11 @@ import { CuteEyeLogo } from '@/components/ui/CuteEyeLogo';
 import useAuthStore from '@/stores/authStore';
 import useOverviewStore from '@/stores/overviewStore';
 
+/** 演示/业务叙事：先接入数据，再监测与研判、出报告 */
 const navItems = [
+  { path: '/ingest', label: '数据接入' },
   { path: '/overview', label: '风险态势' },
   { path: '/', label: '风险评估' },
-  { path: '/ingest', label: '数据接入' },
   { path: '/report', label: '报告中心' },
   { path: '/risk/fraud', label: '反欺诈' },
   { path: '/risk/authenticity', label: '真实性' },

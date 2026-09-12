@@ -64,6 +64,34 @@ def test_sanitize_accepts_normalized_decimal_variants():
     assert "85.20" in kept
 
 
+def test_sanitize_drops_risk_direction_on_clean_chapter():
+    """达标章（无风险结论）的解读段不得出现「承压/需核查」等风险措辞（claim 唯一化铁律）。"""
+    from app.services.llm_reply import _sanitize_narration
+
+    clean_claims = [
+        Claim(
+            claim="流动比率均值 1.80（达标，样本 1）。",
+            value=ClaimValue(metric="current_ratio", number=1.8, unit=""),
+            confidence="computed",
+        )
+    ]
+    # 数字有锚点但结论方向矛盾（达标却说承压）→ 整句丢弃
+    kept = _sanitize_narration("流动比率 1.80，偿债能力承压，需核查再融资。", clean_claims)
+    assert "承压" not in kept
+    assert "需核查" not in kept
+
+    risk_claims = [
+        Claim(
+            claim="流动比率均值 0.90（预警，样本 1）。",
+            value=ClaimValue(metric="current_ratio", number=0.9, unit=""),
+            confidence="computed",
+        )
+    ]
+    # 有风险结论 → 允许风险措辞
+    kept_risk = _sanitize_narration("流动比率 0.90，短期偿债承压，需核查。", risk_claims)
+    assert "承压" in kept_risk
+
+
 def test_conclusion_store_roundtrip():
     claims = [
         Claim(

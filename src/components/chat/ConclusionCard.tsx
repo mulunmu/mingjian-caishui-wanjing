@@ -1,7 +1,8 @@
 import { motion } from 'framer-motion';
 import { ArrowRight } from 'lucide-react';
-import type { ChartConfig, ChatAction } from '@/types/chat';
+import type { ChartConfig, ChatAction, GuidanceCard } from '@/types/chat';
 import FollowUpButtons from './FollowUpButtons';
+import GuidanceCards from './GuidanceCards';
 import JudgmentSourceBadge from './JudgmentSourceBadge';
 import BarChart from '@/components/charts/BarChart';
 import LineChart from '@/components/charts/LineChart';
@@ -15,6 +16,7 @@ interface ConclusionCardProps {
   chart?: ChartConfig;
   followups: string[];
   actions?: ChatAction[];
+  guidanceCards?: GuidanceCard[];
   onFollowUp: (q: string) => void;
   onAction?: (target: string) => void;
   replySource?: string;
@@ -48,6 +50,7 @@ export default function ConclusionCard({
   chart,
   followups,
   actions,
+  guidanceCards,
   onFollowUp,
   onAction,
   replySource,
@@ -104,8 +107,12 @@ export default function ConclusionCard({
             </div>
           )}
 
-          {followups.length > 0 && (
-            <FollowUpButtons questions={followups} onClick={onFollowUp} />
+          {guidanceCards && guidanceCards.length > 0 ? (
+            <GuidanceCards cards={guidanceCards} onClick={onFollowUp} />
+          ) : (
+            followups.length > 0 && (
+              <FollowUpButtons questions={followups} onClick={onFollowUp} />
+            )
           )}
         </div>
       </div>

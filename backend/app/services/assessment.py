@@ -1,11 +1,13 @@
 from decimal import Decimal
 import time
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core_metrics import CoreMetrics, LegalEvent
 from app.services.assessment_weights import DIMENSION_LABELS, DIMENSION_WEIGHTS, effective_dimension_weights
+from app.services.metric_registry import REVENUE_DEVIATION_WARN
+from app.services.report_templates import zh_industry
 
 EVENT_DEDUCTIONS: dict[str, float] = {
     "dishonesty": 30,
@@ -248,8 +250,8 @@ def _calc_authenticity(m: CoreMetrics, all_metrics: list[CoreMetrics]) -> dict:
     negative: list[dict] = []
     if cross.get("suspicious"):
         negative.append({"item": "多源营收偏差可疑", "deduction": round(min(40, (cross.get("avg_deviation") or 0) * 100), 2)})
-    if stored_dev > 0.3:
-        negative.append({"item": "营收偏差过大", "deduction": round((stored_dev - 0.3) * 100, 2)})
+    if stored_dev >= REVENUE_DEVIATION_WARN:
+        negative.append({"item": "营收偏差过大", "deduction": round((stored_dev - REVENUE_DEVIATION_WARN) * 100, 2)})
     if m.social_trend == "缩减":
         negative.append({"item": "社保趋势缩减", "deduction": 10})
 
@@ -470,8 +472,8 @@ def _warning_signals(m: CoreMetrics, all_metrics: list[CoreMetrics], legal_score
         signals.append("credit_level_risk")
     if m.social_trend == "缩减":
         signals.append("social_trend_shrink")
-    # 与洞察 A-01 统一阈值 0.3
-    if _present(m.revenue_deviation) and _to_float(m.revenue_deviation) > 0.3:
+    # 与洞察 A-01 统一阈值（见 metric_registry.REVENUE_DEVIATION_WARN）
+    if _present(m.revenue_deviation) and _to_float(m.revenue_deviation) >= REVENUE_DEVIATION_WARN:
         signals.append("revenue_deviation_high")
     if legal_score < 50:
         signals.append("legal_compliance_risk")
@@ -496,22 +498,23 @@ def _attribution_summary(
                 drag.append(f"{label}（{negs[0]['item']}）")
             else:
                 drag.append(f"{label}偏低")
-    label = getattr(m, "display_label", None) or getattr(m, "enterprise_name", "样本")
+    label = getattr(m, "display_name", None) or getattr(m, "display_label", None) or "样本"
+    risk = _risk_level(overall)
     if drag:
         return (
-            f"{label}综合评分{overall:.1f}分，"
+            f"{label}综合风险等级「{risk}」，"
             f"主要拖累因素：{'、'.join(drag[:3])}。"
             f"建议优先排查相关指标。"
         )
     strengths = [label for key, label in DIMENSION_LABELS.items() if dim_scores.get(key, 0) >= 70]
     if strengths:
         return (
-            f"{label}综合评分{overall:.1f}分，"
+            f"{label}综合风险等级「{risk}」，"
             f"{'、'.join(strengths[:2])}表现较好，整体风险可控。"
         )
     return (
-        f"{label}综合评分{overall:.1f}分，"
-        f"各维度表现中等，建议持续关注核心指标变化。"
+        f"{label}综合风险等级「{risk}」，"
+        f"各维度表现中等，建议关注核心指标变化。"
     )
 
 
@@ -668,11 +671,13 @@ def _build_result(
         "summary": _attribution_summary(m, dim_scores, dim_attr, overall),
     }
 
-    display = getattr(m, "display_label", None) or getattr(m, "enterprise_name", m.enterprise_id)
+    display_label = getattr(m, "display_label", None) or "样本"
+    display_name = getattr(m, "display_name", None)
     return {
         "enterprise_id": m.enterprise_id,
-        "enterprise_name": display,  # 匿名标签，兼容旧 API 字段名
-        "display_label": display,
+        "enterprise_name": display_name or display_label,  # 优先可读名「企业N」，回退匿名标签
+        "display_name": display_name,
+        "display_label": display_label,
         "credit_level": m.credit_level,
         "tax_on_time_rate": (
             round(_to_float(m.tax_on_time_rate), 4) if _present(m.tax_on_time_rate) else None
@@ -731,6 +736,20 @@ async def list_all(db: AsyncSession) -> list[dict]:
     return [_build_from_cache(m, all_metrics) for m in all_metrics]
 
 
+async def resolve_enterprise_ids(db: AsyncSession, names: list[str]) -> list[str]:
+    """把「企业N」可读名（或企业 id）解析为企业 id；无法解析的丢弃（弃权，不编造）。"""
+    if not names:
+        return []
+    q = select(CoreMetrics.enterprise_id).where(
+        or_(
+            CoreMetrics.display_name.in_(names),
+            CoreMetrics.enterprise_id.in_(names),
+        )
+    )
+    rows = (await db.execute(q)).scalars().all()
+    return list(rows)
+
+
 async def get_legal_events(db: AsyncSession, enterprise_id: str) -> list[dict]:
     await _ensure_cache(db)
     events = _CACHE.get("legal_by_ent", {}).get(enterprise_id, [])
@@ -758,8 +777,9 @@ async def get_all_warnings(db: AsyncSession) -> list[dict]:
             items.append(
                 {
                     "enterprise_id": built["enterprise_id"],
-                    "display_label": built.get("display_label") or built["enterprise_name"],
-                    "enterprise_name": built.get("display_label") or built["enterprise_name"],
+                    "display_name": built.get("display_name") or built.get("enterprise_name"),
+                    "display_label": built.get("display_label"),
+                    "enterprise_name": built.get("display_name") or built.get("enterprise_name"),
                     "industry_l1": built.get("industry_l1"),
                     "risk_level": built["risk_level"],
                     "overall_score": built["overall_score"],
@@ -773,10 +793,13 @@ async def get_slice_attribution(
     db: AsyncSession,
     *,
     industry_l1: str | None = None,
+    enterprise_ids: list[str] | None = None,
 ) -> dict:
     """样本维度归因聚合，供切片报告「为什么」章节。"""
     all_metrics = await _ensure_cache(db)
     subset = [m for m in all_metrics if not industry_l1 or m.industry_l1 == industry_l1]
+    if enterprise_ids:
+        subset = [m for m in subset if m.enterprise_id in set(enterprise_ids)]
     if not subset:
         return {
             "sample_count": 0,
@@ -790,6 +813,7 @@ async def get_slice_attribution(
     results = [_build_from_cache(m, all_metrics) for m in subset]
     dim_totals = {k: 0.0 for k in DIMENSION_WEIGHTS}
     dim_counts = {k: 0 for k in DIMENSION_WEIGHTS}
+    # 拖累因素按「主体数」计：同一主体跨维度重复出现同一 item（如税务健康+法律合规均挂「税务违法」）只计 1 家
     factor_counts: dict[str, int] = {}
 
     for r in results:
@@ -799,11 +823,14 @@ async def get_slice_attribution(
             if key in dims:
                 dim_totals[key] += float(dims[key])
                 dim_counts[key] += 1
+        items_this_firm: set[str] = set()
         for dim_data in (attr.get("dimensions") or {}).values():
             for neg in dim_data.get("negative") or []:
-                item = neg.get("item") or ""
+                item = str(neg.get("item") or "").strip()
                 if item:
-                    factor_counts[item] = factor_counts.get(item, 0) + 1
+                    items_this_firm.add(item)
+        for item in items_this_firm:
+            factor_counts[item] = factor_counts.get(item, 0) + 1
 
     dim_avg = {
         key: round(dim_totals[key] / dim_counts[key], 2) if dim_counts[key] else 0.0
@@ -812,21 +839,23 @@ async def get_slice_attribution(
     net_contribution = {
         key: round(dim_avg[key] * DIMENSION_WEIGHTS[key], 2) for key in DIMENSION_WEIGHTS
     }
+    sample_n = len(results)
     drag_factors = [
-        {"item": item, "count": cnt}
+        {"item": item, "count": min(int(cnt), sample_n)}
         for item, cnt in sorted(factor_counts.items(), key=lambda x: -x[1])[:6]
     ]
     avg_overall = sum(float(r.get("overall_score") or 0) for r in results) / len(results)
     weak_dims = [DIMENSION_LABELS[k] for k in DIMENSION_WEIGHTS if dim_avg[k] < 45]
 
-    scope = f"{industry_l1}行业" if industry_l1 else f"全样本（{len(results)}家）"
+    scope = f"{zh_industry(industry_l1)}行业" if industry_l1 else f"全样本（{len(results)}家）"
+    risk = _risk_level(avg_overall)
     if drag_factors:
         top = "、".join(d["item"] for d in drag_factors[:3])
-        summary = f"{scope}综合均分{avg_overall:.1f}分，高频拖累因素：{top}。"
+        summary = f"{scope}群体风险判断「{risk}」，高频拖累因素：{top}。"
     elif weak_dims:
-        summary = f"{scope}综合均分{avg_overall:.1f}分，{'、'.join(weak_dims[:3])}维度整体偏弱。"
+        summary = f"{scope}群体风险判断「{risk}」，{'、'.join(weak_dims[:3])}维度整体偏弱。"
     else:
-        summary = f"{scope}综合均分{avg_overall:.1f}分，各维度表现中等，建议持续关注核心指标。"
+        summary = f"{scope}群体风险判断「{risk}」，各维度表现中等，建议关注核心指标。"
 
     dimensions = {
         key: {
@@ -909,7 +938,8 @@ async def get_dashboard_summary(db: AsyncSession) -> dict:
         "enterprises": [
             {
                 "enterprise_id": it["enterprise_id"],
-                "display_label": it.get("display_label") or it.get("enterprise_name"),
+                "display_name": it.get("display_name") or it.get("enterprise_name"),
+                "display_label": it.get("display_label"),
                 "risk_level": it.get("risk_level"),
                 "overall_score": it.get("overall_score"),
                 "industry_l1": it.get("industry_l1"),

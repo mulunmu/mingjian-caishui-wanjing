@@ -80,7 +80,7 @@ function AlertRow({ ent, onClick }: { ent: WarningEnterprise; onClick: () => voi
         <div className="flex items-center gap-2">
           <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
           <span className="text-[13px] text-warm-700 font-medium truncate max-w-[180px]">
-            {ent.display_label}
+            {ent.display_name || ent.enterprise_name || ent.display_label}
           </span>
         </div>
       </td>
