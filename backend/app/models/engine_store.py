@@ -84,4 +84,6 @@ class AppUser(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(32), default="user")
     plan: Mapped[str] = mapped_column(String(32), default="free")
+    # 密码版本：改密时 +1；JWT 携带签发时的值，鉴权时比对，用于「改密后旧 token 立即失效」
+    pwd_ver: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

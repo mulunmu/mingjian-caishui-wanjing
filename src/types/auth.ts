@@ -8,6 +8,51 @@ export interface LoginRequest {
 export interface RegisterRequest {
   email: string;
   password: string;
+  /** 邮箱验证码；后端 REQUIRE_EMAIL_VERIFICATION=false 时可省略 */
+  code?: string;
+}
+
+/** 发送邮箱验证码请求 */
+export interface SendCodeRequest {
+  email: string;
+  purpose: 'register' | 'login' | 'reset';
+  /** 表单令牌，由 getFormToken() 获取，用于防机器 */
+  form_token?: string;
+}
+
+/** 发送邮箱验证码响应 */
+export interface SendCodeResponse {
+  message: string;
+  /** 验证码有效期（秒） */
+  expires_in: number;
+  /** 可重发的冷却时间（秒） */
+  resend_after: number;
+}
+
+/** 表单令牌响应（防机器） */
+export interface FormTokenResponse {
+  token: string;
+  /** 需在表单上停留的最少秒数 */
+  min_age: number;
+  expires_in: number;
+}
+
+/** 校验重置验证码请求 */
+export interface VerifyResetCodeRequest {
+  email: string;
+  code: string;
+}
+
+/** 校验重置验证码响应（一次性票据） */
+export interface VerifyResetCodeResponse {
+  reset_token: string;
+  expires_in: number;
+}
+
+/** 重置密码请求 */
+export interface ResetPasswordRequest {
+  reset_token: string;
+  password: string;
 }
 
 /** 登录响应（JWT Token） */

@@ -114,6 +114,23 @@ async def lifespan(app: FastAPI):
         except Exception as col_exc:
             logger.debug("app_users plan column ensure: %s", col_exc)
 
+        def _ensure_app_user_pwd_ver_column() -> None:
+            """已有库 create_all 不会加列；补 app_users.pwd_ver（改密后旧 token 失效）。"""
+            from sqlalchemy import text
+
+            with eng.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE app_users "
+                        "ADD COLUMN IF NOT EXISTS pwd_ver INTEGER NOT NULL DEFAULT 0"
+                    )
+                )
+
+        try:
+            await asyncio.to_thread(_ensure_app_user_pwd_ver_column)
+        except Exception as col_exc:
+            logger.debug("app_users pwd_ver column ensure: %s", col_exc)
+
         from app.services.auth_service import ensure_demo_user, validate_production_config
 
         auth_check = validate_production_config()

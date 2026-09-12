@@ -10,10 +10,38 @@ interface AuthStore {
 
   login: (email: string, password: string) => Promise<boolean>;
   demoLogin: () => Promise<boolean>;
-  register: (email: string, password: string) => Promise<boolean>;
+  register: (email: string, password: string, code?: string) => Promise<boolean>;
+  fetchFormToken: () => Promise<string>;
+  sendCode: (
+    email: string,
+    purpose?: 'register' | 'login' | 'reset',
+    formToken?: string,
+  ) => Promise<{ ok: boolean; message: string; resendAfter?: number }>;
+  /** 校验重置验证码 → 换取一次性 reset_token；失败返回 ok:false */
+  verifyResetCode: (
+    email: string,
+    code: string,
+  ) => Promise<{ ok: boolean; message: string; resetToken?: string }>;
+  /** 凭 reset_token 重置密码 */
+  resetPassword: (resetToken: string, password: string) => Promise<{ ok: boolean; message: string }>;
   logout: () => void;
   clearError: () => void;
   checkAuth: () => void;
+}
+
+/**
+ * 提取后端错误文案。
+ * FastAPI 的 detail 有两种形状：业务错误是 string，请求校验失败（422）是数组。
+ * 既有代码只按 string 取，遇到 422 会得到 [object Object]，这里做统一收敛。
+ */
+function extractDetail(err: unknown, fallback: string): string {
+  const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+  if (typeof detail === 'string' && detail) return detail;
+  if (Array.isArray(detail)) {
+    const first = detail[0] as { msg?: string } | undefined;
+    if (first?.msg) return first.msg;
+  }
+  return fallback;
 }
 
 /** 从 JWT payload 读取 role/plan（UI 展示）；真正授权仍以服务端 require_plan 为准。 */
@@ -81,8 +109,7 @@ const useAuthStore = create<AuthStore>((set) => ({
       });
       return true;
     } catch (err: unknown) {
-      const message = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '登录失败，请重试';
-      set({ error: message, isLoading: false });
+      set({ error: extractDetail(err, '登录失败，请重试'), isLoading: false });
       return false;
     }
   },
@@ -110,24 +137,60 @@ const useAuthStore = create<AuthStore>((set) => ({
       });
       return true;
     } catch (err: unknown) {
-      const message =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-        '演示登录失败，请确认 DEMO_LOGIN_ENABLED=true';
-      set({ error: message, isLoading: false });
+      set({
+        error: extractDetail(err, '演示登录失败，请确认 DEMO_LOGIN_ENABLED=true'),
+        isLoading: false,
+      });
       return false;
     }
   },
 
-  register: async (email, password) => {
+  register: async (email, password, code) => {
     set({ isLoading: true, error: '' });
     try {
-      await authApi.register({ email, password });
+      await authApi.register(code ? { email, password, code } : { email, password });
       set({ isLoading: false });
       return true;
     } catch (err: unknown) {
-      const message = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '注册失败，请重试';
-      set({ error: message, isLoading: false });
+      set({ error: extractDetail(err, '注册失败，请重试'), isLoading: false });
       return false;
+    }
+  },
+
+  /** 获取防机器表单令牌；失败返回空串（调用方按「令牌缺失」处理，后端会拒绝） */
+  fetchFormToken: async () => {
+    try {
+      const res = await authApi.formToken();
+      return res.token || '';
+    } catch {
+      return '';
+    }
+  },
+
+  sendCode: async (email, purpose = 'register', formToken) => {
+    try {
+      const res = await authApi.sendCode({ email, purpose, form_token: formToken });
+      return { ok: true, message: res.message, resendAfter: res.resend_after };
+    } catch (err: unknown) {
+      return { ok: false, message: extractDetail(err, '验证码发送失败，请重试') };
+    }
+  },
+
+  verifyResetCode: async (email, code) => {
+    try {
+      const res = await authApi.verifyResetCode({ email, code });
+      return { ok: true, message: '验证通过', resetToken: res.reset_token };
+    } catch (err: unknown) {
+      return { ok: false, message: extractDetail(err, '验证码校验失败，请重试') };
+    }
+  },
+
+  resetPassword: async (resetToken, password) => {
+    try {
+      const res = await authApi.resetPassword({ reset_token: resetToken, password });
+      return { ok: true, message: res.message };
+    } catch (err: unknown) {
+      return { ok: false, message: extractDetail(err, '密码重置失败，请重试') };
     }
   },
 

@@ -8,6 +8,7 @@ import ReportPage from './pages/ReportPage';
 import OverviewPage from './pages/OverviewPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ReportCenter from './pages/ReportCenter';
 import FraudPage from './pages/FraudPage';
 import AuthenticityPage from './pages/AuthenticityPage';
@@ -45,8 +46,10 @@ export default function App() {
   const { isLoggedIn, checkAuth } = useAuthStore();
   const kpi = useOverviewStore((s) => s.kpi);
   const fetchOverview = useOverviewStore((s) => s.fetchOverview);
-  const isAuthPage = location.pathname === '/login' || location.pathname === '/register';
-
+  const isAuthPage =
+    location.pathname === '/login' ||
+    location.pathname === '/register' ||
+    location.pathname === '/forgot-password';
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
@@ -75,6 +78,7 @@ export default function App() {
             <Routes location={location}>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/register" element={<RegisterPage />} />
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
               <Route
                 path="/"
                 element={

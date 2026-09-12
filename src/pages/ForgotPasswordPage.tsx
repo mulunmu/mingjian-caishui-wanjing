@@ -6,14 +6,24 @@ import { InteractiveHoverButton } from '@/components/ui/InteractiveHoverButton';
 import { CuteEyeLogo } from '@/components/ui/CuteEyeLogo';
 import useAuthStore from '@/stores/authStore';
 
-export default function RegisterPage() {
+/**
+ * 重置密码页。
+ *
+ * 流程：填邮箱 → 获取验证码 → 回填验证码 → 设新密码。
+ * 提交时先 POST /auth/verify-reset-code 换取一次性 reset_token，
+ * 再 POST /auth/reset-password —— 服务端只认 reset_token，不认验证码本身，
+ * 避免「知道邮箱即可改他人密码」。
+ */
+export default function ForgotPasswordPage() {
   const navigate = useNavigate();
-  const { register, sendCode, fetchFormToken, isLoading, error, clearError } = useAuthStore();
+  const { sendCode, fetchFormToken, verifyResetCode, resetPassword, clearError } =
+    useAuthStore();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [isPasswordFieldFocused, setIsPasswordFieldFocused] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [formToken, setFormToken] = useState('');
   const [formData, setFormData] = useState({
@@ -24,12 +34,10 @@ export default function RegisterPage() {
   });
   const [localError, setLocalError] = useState('');
 
-  // 进入页面即取一次防机器表单令牌（用户停留数秒后才会点「获取验证码」）
   useEffect(() => {
     void fetchFormToken().then(setFormToken);
   }, [fetchFormToken]);
 
-  // 重发倒计时（依赖 countdown，每秒递减一次，卸载时清理）
   useEffect(() => {
     if (countdown <= 0) return;
     const timer = setTimeout(() => setCountdown((c) => c - 1), 1000);
@@ -49,11 +57,10 @@ export default function RegisterPage() {
       return;
     }
     setSendingCode(true);
-    const res = await sendCode(email, 'register', formToken);
+    const res = await sendCode(email, 'reset', formToken);
     setSendingCode(false);
     if (!res.ok) {
       setLocalError(res.message);
-      // 令牌可能已过期：重取一次，让用户下一次点击可用
       void fetchFormToken().then(setFormToken);
       return;
     }
@@ -65,33 +72,40 @@ export default function RegisterPage() {
     clearError();
     setLocalError('');
 
-    if (!formData.email || !formData.password) {
-      setLocalError('请填写邮箱和密码');
+    if (!formData.email || !formData.code.trim()) {
+      setLocalError('请填写邮箱和验证码');
       return;
     }
-
-    if (!formData.code.trim()) {
-      setLocalError('请填写邮箱验证码');
+    if (!formData.password) {
+      setLocalError('请填写新密码');
       return;
     }
-
     if (formData.password !== formData.confirmPassword) {
       setLocalError('两次输入的密码不一致');
       return;
     }
-
     if (formData.password.length < 6) {
       setLocalError('密码长度至少为6位');
       return;
     }
 
-    const success = await register(formData.email, formData.password, formData.code.trim());
-    if (success) {
-      navigate('/login');
+    setSubmitting(true);
+    const verified = await verifyResetCode(formData.email.trim(), formData.code.trim());
+    if (!verified.ok || !verified.resetToken) {
+      setSubmitting(false);
+      setLocalError(verified.message);
+      return;
     }
+    const done = await resetPassword(verified.resetToken, formData.password);
+    setSubmitting(false);
+    if (!done.ok) {
+      setLocalError(done.message);
+      return;
+    }
+    navigate('/login');
   };
 
-  const displayError = localError || error;
+  const displayError = localError;
 
   return (
     <div className="min-h-screen max-h-screen overflow-hidden grid lg:grid-cols-2">
@@ -136,9 +150,9 @@ export default function RegisterPage() {
 
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold tracking-tight mb-2 text-warm-800">
-              创建账号
+              重置密码
             </h1>
-            <p className="text-warm-500 text-sm">开始使用财税票智能风控报告产品</p>
+            <p className="text-warm-500 text-sm">验证邮箱后设置新密码</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -194,7 +208,7 @@ export default function RegisterPage() {
 
             <div className="space-y-2">
               <label htmlFor="password" className="text-sm font-medium text-warm-700">
-                密码 <span className="text-terracotta">*</span>
+                新密码 <span className="text-terracotta">*</span>
               </label>
               <div className="relative">
                 <input
@@ -237,7 +251,7 @@ export default function RegisterPage() {
                 <input
                   id="confirmPassword"
                   type={showConfirmPassword ? 'text' : 'password'}
-                  placeholder="再次输入密码"
+                  placeholder="再次输入新密码"
                   value={formData.confirmPassword}
                   onChange={(e) =>
                     setFormData({ ...formData, confirmPassword: e.target.value })
@@ -275,27 +289,19 @@ export default function RegisterPage() {
             <div className="pt-2">
               <InteractiveHoverButton
                 type="submit"
-                text={isLoading ? '注册中...' : '注册'}
+                text={submitting ? '提交中...' : '重置密码'}
                 className="w-full h-12 text-base font-medium"
-                disabled={isLoading}
+                disabled={submitting}
               />
             </div>
           </form>
 
-          <p className="text-xs text-warm-400 text-center mt-4">
-            注册即表示您同意我们的{' '}
-            <a href="#" className="text-amber hover:underline">服务条款</a>
-            {' '}和{' '}
-            <a href="#" className="text-amber hover:underline">隐私政策</a>
-          </p>
-
-          <div className="text-center text-sm text-warm-500 mt-6">
-            已有账号？{' '}
+          <div className="text-center text-sm text-warm-500 mt-8">
             <Link
               to="/login"
               className="text-warm-800 font-medium hover:text-amber transition-colors"
             >
-              立即登录
+              返回登录
             </Link>
           </div>
         </div>

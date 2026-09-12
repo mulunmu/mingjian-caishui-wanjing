@@ -109,6 +109,7 @@ def _get_user_pg(email: str) -> dict | None:
                 "password_hash": rec.password_hash,
                 "role": rec.role or "user",
                 "plan": rec.plan or "free",
+                "pwd_ver": rec.pwd_ver or 0,
             }
     except Exception as exc:
         logger.debug("auth PG get failed: %s", exc)
@@ -183,12 +184,99 @@ def register_user(email: str, password: str, role: str = "user", plan: str = "fr
         raise ValueError("邮箱已注册")
     ph = hash_password(password)
     if _save_user_pg(email, ph, role=role, plan=plan):
-        _users_fallback[email] = {"email": email, "password_hash": ph, "role": role, "plan": plan}
+        _users_fallback[email] = {
+            "email": email,
+            "password_hash": ph,
+            "role": role,
+            "plan": plan,
+            "pwd_ver": 0,
+        }
         return
     if email in _users_fallback:
         raise ValueError("邮箱已注册")
-    _users_fallback[email] = {"email": email, "password_hash": ph, "role": role, "plan": plan}
+    _users_fallback[email] = {
+        "email": email,
+        "password_hash": ph,
+        "role": role,
+        "plan": plan,
+        "pwd_ver": 0,
+    }
     logger.warning("auth user %s stored in memory only (PG unavailable)", email)
+
+
+def update_password(email: str, new_password: str) -> None:
+    """重置密码：更新哈希并把 pwd_ver +1（使既有 JWT 立即失效）。
+
+    仅用于已通过验证码校验的调用方 —— 本函数不做任何身份校验。
+    失败抛 ValueError（中文）。
+    """
+    email = (email or "").strip().lower()
+    if len(new_password or "") < _MIN_PASSWORD_LEN:
+        raise ValueError(f"密码至少{_MIN_PASSWORD_LEN}位")
+
+    ph = hash_password(new_password)
+
+    def _update_pg() -> bool:
+        from sqlalchemy.orm import Session
+
+        from app.db.urls import get_sync_engine
+        from app.models.engine_store import AppUser
+
+        with Session(get_sync_engine()) as session:
+            rec = session.get(AppUser, email)
+            if not rec:
+                return False
+            rec.password_hash = ph
+            rec.pwd_ver = (rec.pwd_ver or 0) + 1
+            session.commit()
+        return True
+
+    ok = False
+    if _ensure_tables():
+        try:
+            ok = _update_pg()
+        except Exception as exc:
+            logger.debug("auth PG update_password failed: %s", exc)
+            ok = False
+
+    if email in _users_fallback:
+        _users_fallback[email]["password_hash"] = ph
+        _users_fallback[email]["pwd_ver"] = (_users_fallback[email].get("pwd_ver") or 0) + 1
+        return
+
+    if not ok:
+        raise ValueError("账号不存在")
+
+
+def get_user_pwd_ver(email: str) -> int | None:
+    """读取当前 pwd_ver；用户不存在返回 None（用于 token 失效判定）。"""
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+    user = _get_user_pg(email) or _users_fallback.get(email)
+    if not user:
+        return None
+    return int(user.get("pwd_ver") or 0)
+
+
+def verify_token_checked(token: str) -> dict | None:
+    """在 verify_token 基础上校验 pwd_ver。
+
+    仅当 token **携带** pwd_ver 声明时才查库比对；不带声明（旧签发路径 /
+    单测直接构造的 token）视为不受此机制约束，保持既有行为。
+    """
+    payload = verify_token(token)
+    if payload is None:
+        return None
+    if "pwd_ver" not in payload:
+        return payload
+    current = get_user_pwd_ver(str(payload.get("sub") or ""))
+    if current is None:
+        # 用户已不存在 —— 拒绝
+        return None
+    if int(payload.get("pwd_ver") or 0) != current:
+        return None
+    return payload
 
 
 def authenticate_user(email: str, password: str) -> dict | None:
@@ -200,12 +288,20 @@ def authenticate_user(email: str, password: str) -> dict | None:
         "email": user["email"],
         "role": user.get("role") or "user",
         "plan": user.get("plan") or "free",
+        "pwd_ver": int(user.get("pwd_ver") or 0),
     }
 
 
-def create_access_token(email: str, role: str, plan: str = "free") -> str:
+def create_access_token(email: str, role: str, plan: str = "free", *, pwd_ver: int | None = None) -> str:
+    """签发 JWT。
+
+    `pwd_ver` 为 None 时不写入声明 —— 该 token 不受「改密失效」机制约束，
+    用于兼容既有调用方（单测直接构造 token 的场景）。
+    """
     expire = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRE_HOURS)
     payload = {"sub": email, "role": role, "plan": plan, "exp": expire}
+    if pwd_ver is not None:
+        payload["pwd_ver"] = int(pwd_ver)
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
@@ -233,6 +329,7 @@ def ensure_demo_user() -> None:
                 "password_hash": user.get("password_hash", ""),
                 "role": "admin",
                 "plan": "subscriber",
+                "pwd_ver": user.get("pwd_ver") or 0,
             }
             logger.info("demo user upgraded: %s (role=admin, plan=subscriber)", email)
         return
@@ -256,6 +353,7 @@ def get_user_profile(email: str) -> dict | None:
         "email": user["email"],
         "role": user.get("role") or "user",
         "plan": user.get("plan") or "free",
+        "pwd_ver": int(user.get("pwd_ver") or 0),
     }
 
 
@@ -270,7 +368,9 @@ def issue_demo_login_token() -> dict | None:
     profile = get_user_profile(email)
     if not profile:
         return None
-    token = create_access_token(profile["email"], profile["role"], profile["plan"])
+    token = create_access_token(
+        profile["email"], profile["role"], profile["plan"], pwd_ver=profile.get("pwd_ver", 0)
+    )
     return {
         "access_token": token,
         "token_type": "bearer",

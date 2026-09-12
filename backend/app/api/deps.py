@@ -4,11 +4,12 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.services import auth_service
+from app.services.sync_runner import run_blocking
 
 security = HTTPBearer(auto_error=False)
 
 
-def _payload_from_credentials(
+async def _payload_from_credentials(
     credentials: HTTPAuthorizationCredentials | None,
     *,
     required: bool,
@@ -20,7 +21,9 @@ def _payload_from_credentials(
                 detail="需要登录才能访问此接口",
             )
         return None
-    payload = auth_service.verify_token(credentials.credentials)
+    # verify_token_checked 在校验签名之外，还会（仅当 token 携带 pwd_ver 声明时）
+    # 查库比对密码版本 —— 改密后旧 token 立即失效。查库是阻塞 IO，故走线程池。
+    payload = await run_blocking(auth_service.verify_token_checked, credentials.credentials)
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -38,17 +41,17 @@ async def get_current_user_optional(
     require_plan / require_roles（始终强制鉴权）。
     """
     if auth_service.AUTH_REQUIRED:
-        return _payload_from_credentials(credentials, required=True)
+        return await _payload_from_credentials(credentials, required=True)
     if credentials is None:
         return None
-    return _payload_from_credentials(credentials, required=False)
+    return await _payload_from_credentials(credentials, required=False)
 
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> dict:
     """始终要求有效 JWT（注册门禁、管理员操作、写端点等）。"""
-    user = _payload_from_credentials(credentials, required=True)
+    user = await _payload_from_credentials(credentials, required=True)
     assert user is not None
     return user
 

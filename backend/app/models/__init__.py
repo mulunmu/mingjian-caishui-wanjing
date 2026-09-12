@@ -10,6 +10,7 @@ from app.models.engine_store import (
 )
 from app.models.metric_registry import FieldMapping, MetricDefinition
 from app.models.subscription import Subscription
+from app.models.verification import EmailVerificationCode, PasswordResetTicket
 
 __all__ = [
     "CoreMetrics",
@@ -26,4 +27,6 @@ __all__ = [
     "MetricDefinition",
     "FieldMapping",
     "Subscription",
+    "EmailVerificationCode",
+    "PasswordResetTicket",
 ]

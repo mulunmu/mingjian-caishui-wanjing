@@ -216,6 +216,17 @@ export default function LoginPage() {
               立即注册
             </Link>
           </div>
+
+          {/* 忘记密码 */}
+          <div className="text-center text-sm text-warm-500 mt-3">
+            忘记了密码？{' '}
+            <Link
+              to="/forgot-password"
+              className="text-warm-800 font-medium hover:text-amber transition-colors"
+            >
+              重置密码
+            </Link>
+          </div>
         </div>
       </div>
     </div>
