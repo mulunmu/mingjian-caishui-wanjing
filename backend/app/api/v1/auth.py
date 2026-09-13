@@ -1,11 +1,12 @@
 import os
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 
+from app.api.deps import get_current_user_optional
 from app.responses import UTF8JSONResponse
-from app.services import auth_service, email_service, verification_service
+from app.services import auth_service, email_service, trusted_email_service, verification_service
 from app.services.sync_runner import run_blocking
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -35,9 +36,21 @@ class RegisterRequest(BaseModel):
 
 class SendCodeRequest(BaseModel):
     email: EmailStr
-    purpose: Literal["register", "login", "reset"] = "register"
+    purpose: Literal["register", "login", "send_email", "bind_email", "reset"] = "register"
     # 表单令牌：由 GET /auth/form-token 获取，用于挡裸打接口的脚本
     form_token: str | None = None
+
+
+class LoginByCodeRequest(BaseModel):
+    email: EmailStr
+    code: str
+
+
+class VerifyCodeRequest(BaseModel):
+    email: EmailStr
+    purpose: Literal["send_email", "bind_email"] = "send_email"
+    code: str
+    remember: bool = False
 
 
 class VerifyResetCodeRequest(BaseModel):
@@ -71,6 +84,52 @@ async def login(body: LoginRequest):
     }
 
 
+@router.post("/login-by-code", response_class=UTF8JSONResponse)
+async def login_by_code(body: LoginByCodeRequest):
+    """验证码登录：一次性验证码校验通过即签发 JWT。"""
+    email = body.email.strip().lower()
+    try:
+        await run_blocking(verification_service.consume_code, email, "login", body.code)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    user = auth_service.get_user_profile(email)
+    if not user:
+        raise HTTPException(status_code=404, detail="该邮箱尚未注册，请先注册")
+    token = auth_service.create_access_token(
+        user["email"], user["role"], user["plan"], pwd_ver=user.get("pwd_ver", 0)
+    )
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "role": user["role"],
+        "plan": user["plan"],
+    }
+
+
+@router.post("/verify-code", response_class=UTF8JSONResponse)
+async def verify_code(
+    body: VerifyCodeRequest,
+    _user: dict | None = Depends(get_current_user_optional),
+):
+    """受信邮箱验证：校验验证码；bind_email 或勾选「记住」时登记受信邮箱。"""
+    email = body.email.strip().lower()
+    try:
+        await run_blocking(verification_service.consume_code, email, body.purpose, body.code)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    owner = (_user or {}).get("sub") or (_user or {}).get("email")
+    if body.purpose == "bind_email":
+        if not owner:
+            raise HTTPException(status_code=401, detail="请先登录")
+        await run_blocking(trusted_email_service.add_trusted_email, owner, email, "verified")
+    elif body.remember and owner:
+        await run_blocking(trusted_email_service.add_trusted_email, owner, email, "verified")
+
+    trusted = bool(owner) and (body.purpose == "bind_email" or body.remember)
+    return {"message": "验证通过", "email": email, "trusted": trusted}
+
+
 @router.get("/form-token", response_class=UTF8JSONResponse)
 async def form_token():
     """签发防机器用的表单令牌（前端打开注册表单时取一次）。"""
@@ -92,10 +151,9 @@ async def send_code(body: SendCodeRequest, request: Request):
     registered = auth_service.get_user_profile(email) is not None
     if body.purpose == "register" and registered:
         raise HTTPException(status_code=409, detail="该邮箱已注册，请直接登录")
-    if body.purpose == "login" and not registered:
+    if body.purpose in ("login", "reset") and not registered:
         raise HTTPException(status_code=404, detail="该邮箱尚未注册，请先注册")
-    if body.purpose == "reset" and not registered:
-        raise HTTPException(status_code=404, detail="该邮箱尚未注册，请先注册")
+    # send_email / bind_email：受信邮箱验证，不做注册状态判定（防枚举中性处理）
 
     try:
         issued = await run_blocking(
@@ -146,6 +204,9 @@ async def register(body: RegisterRequest):
         await run_blocking(auth_service.register_user, body.email, body.password)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # 注册邮箱即受信（验证码已证明所有权），供邮件交付直达
+    email = body.email.strip().lower()
+    await run_blocking(trusted_email_service.add_trusted_email, email, email, "register")
     return {"message": "注册成功，请登录"}
 
 

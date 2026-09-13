@@ -10,6 +10,7 @@ const navItems = [
   { path: '/overview', label: '风险态势' },
   { path: '/', label: '风险评估' },
   { path: '/report', label: '报告中心' },
+  { path: '/emails', label: '发送记录' },
   { path: '/risk/fraud', label: '反欺诈' },
   { path: '/risk/authenticity', label: '真实性' },
 ];
@@ -66,7 +67,13 @@ export default function Header() {
         </span>
         {isLoggedIn && (
           <div className="flex items-center gap-3">
-            <span className="text-xs text-warm-500">{user?.email || ''}</span>
+            <NavLink
+              to="/account"
+              className="text-xs text-warm-500 hover:text-amber transition-colors"
+              title="账号与受信邮箱管理"
+            >
+              {user?.email || ''}
+            </NavLink>
             <button
               onClick={handleLogout}
               className="flex items-center gap-1 text-xs text-warm-400 hover:text-warm-600 transition-colors"

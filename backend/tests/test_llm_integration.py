@@ -29,9 +29,10 @@ async def test_classify_intent_llm_divergent_query(llm_api_key):
 @pytest.mark.llm
 @pytest.mark.asyncio
 async def test_generate_narration_anchors_numbers(llm_api_key):
+    # 结论含风险方向（承压）→ 本章允许风险措辞，解读段数字须锚定 47/193
     claims = [
         Claim(
-            claim="样本 193 家，综合均分 47.0 分。",
+            claim="样本 193 家，综合均分 47.0 分，整体承压。",
             value=ClaimValue(metric="avg_score", number=47.0, unit="分"),
             confidence="computed",
         )

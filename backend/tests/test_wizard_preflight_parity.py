@@ -1,19 +1,19 @@
-"""向导预校验 vs PDF 硬门禁：禁止「向导通过、生成拒绝」类矛盾。"""
+"""向导预校验 vs PDF 硬门禁：禁止「向导通过、生成拒绝」类矛盾。
+
+依赖真实 PostgreSQL（live_db fixture）；无库时自动 skip。
+"""
 from __future__ import annotations
 
 import pytest
 
 
 @pytest.mark.asyncio
-async def test_score_overall_respects_industry_filter():
+async def test_score_overall_respects_industry_filter(live_db):
     """制造筛选下 overall 章 sample_count 必须 = 行业子集，禁止回落全库。"""
-    pytest.importorskip("asyncpg")
-    from app.db.session import get_async_session_factory
     from app.services import assessment
     from app.services.judgment_service import build_score_claims
 
-    fac = get_async_session_factory()
-    async with fac() as db:
+    async with live_db() as db:
         all_m = await assessment._ensure_cache(db)
         if not all_m:
             pytest.skip("no live metrics")
@@ -26,17 +26,14 @@ async def test_score_overall_respects_industry_filter():
 
 
 @pytest.mark.asyncio
-async def test_portrait_manufacturing_preflight_ok(monkeypatch):
+async def test_portrait_manufacturing_preflight_ok(monkeypatch, live_db):
     """制造×画像：scope_alignment / lexicon 不得硬拒。"""
-    pytest.importorskip("asyncpg")
     monkeypatch.setenv("LLM_API_KEY", "")  # 跳过 LLM，加速干跑
-    from app.db.session import get_async_session_factory
     from app.services import assessment
     from app.services.report_preflight import run_preflight
     from app.services.slice_report import build_slice_report_context, validate_wizard_report
 
-    fac = get_async_session_factory()
-    async with fac() as db:
+    async with live_db() as db:
         mets = await assessment._ensure_cache(db)
         n = sum(1 for m in mets if m.industry_l1 == "制造")
         if n < 5:
@@ -61,18 +58,15 @@ async def test_portrait_manufacturing_preflight_ok(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_alert_it_software_lexicon_sanitized(monkeypatch):
+async def test_alert_it_software_lexicon_sanitized(monkeypatch, live_db):
     """IT软件×预警：claim 表面不得残留禁词，向导与 preflight 同向通过。"""
-    pytest.importorskip("asyncpg")
     monkeypatch.setenv("LLM_API_KEY", "")
-    from app.db.session import get_async_session_factory
     from app.services import assessment
     from app.services.hallucination_guard import collect_context_surface_texts
     from app.services.report_preflight import run_preflight
     from app.services.slice_report import build_slice_report_context, validate_wizard_report
 
-    fac = get_async_session_factory()
-    async with fac() as db:
+    async with live_db() as db:
         mets = await assessment._ensure_cache(db)
         if sum(1 for m in mets if m.industry_l1 == "IT软件") < 1:
             pytest.skip("no IT软件 sample")

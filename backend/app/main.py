@@ -14,6 +14,7 @@ from sqlalchemy import func, select, text
 
 from app.api.v1.auth import router as auth_router
 from app.api.v1.chat import router as chat_router
+from app.api.v1.email import router as email_router
 from app.api.v1.ingest import router as ingest_router
 from app.api.v1.metrics import router as metrics_router
 from app.api.v1.report import router as report_router
@@ -235,6 +236,7 @@ app.add_middleware(RateLimitMiddleware)
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(risk_router, prefix="/api/v1")
 app.include_router(report_router, prefix="/api/v1")
+app.include_router(email_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(metrics_router, prefix="/api/v1")
 app.include_router(ingest_router, prefix="/api/v1")

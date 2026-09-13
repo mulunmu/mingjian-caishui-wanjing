@@ -104,6 +104,7 @@ const useChatStore = create<ChatStore>((set, get) => ({
         replySource: res.replySource,
         analysisMode: res.analysisMode || 'rule',
         parseSource: res.parseSource,
+        report: res.report,
       };
 
       set((s) => ({

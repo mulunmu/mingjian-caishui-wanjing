@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { FileText, Download, Eye, FilePlus2, Search, RefreshCw, Loader2, X, AlertTriangle, Sparkles } from 'lucide-react';
+import { FileText, Download, Eye, FilePlus2, Search, RefreshCw, Loader2, X, AlertTriangle, Sparkles, Trash2, Mail } from 'lucide-react';
 import useReportStore from '@/stores/reportStore';
 import useAuthStore from '@/stores/authStore';
 import { needsUpgrade } from '@/utils/plan';
 import UpgradeModal from '@/components/ui/UpgradeModal';
 import ReportWizard, { type WizardPrefs } from '@/components/report/ReportWizard';
+import SendEmailModal from '@/components/report/SendEmailModal';
 import type { ReportScenarioDef } from '@/constants/reportScenarios';
 import type { ReportListItem } from '@/types/report';
 import { reportApi } from '@/api/report';
@@ -35,7 +36,7 @@ function formatValidationWarn(validation: Record<string, unknown>): string {
 }
 
 export default function ReportCenter() {
-  const { reportList, isLoadingList, listError, fetchReportList, downloadPdf, generateSlice } =
+  const { reportList, isLoadingList, listError, fetchReportList, downloadPdf, generateSlice, deleteReport } =
     useReportStore();
   const user = useAuthStore((s) => s.user);
   const navigate = useNavigate();
@@ -49,6 +50,9 @@ export default function ReportCenter() {
   const [generatingScenario, setGeneratingScenario] = useState<string | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [validationWarn, setValidationWarn] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [sendTarget, setSendTarget] = useState<{ ids: string[]; titles: string[] } | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [searchParams] = useSearchParams();
   const highlightId = searchParams.get('highlight');
   const wizardParam = searchParams.get('wizard');
@@ -129,6 +133,39 @@ export default function ReportCenter() {
     await downloadPdf(report.report_id, report.title);
   };
 
+  const handleDelete = async (e: React.MouseEvent, report: ReportListItem) => {
+    e.stopPropagation();
+    if (!window.confirm(`确定删除报告「${report.title}」吗？删除后不可恢复。`)) return;
+    setDeletingId(report.report_id);
+    try {
+      await deleteReport(report.report_id);
+      if (viewingId === report.report_id) handleClosePreview();
+      setSelectedIds((ids) => ids.filter((id) => id !== report.report_id));
+    } catch (err) {
+      setGenerateError(err instanceof Error ? err.message : '删除失败');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleSend = (e: React.MouseEvent, report: ReportListItem) => {
+    e.stopPropagation();
+    setSendTarget({ ids: [report.report_id], titles: [report.title] });
+  };
+
+  const toggleSelect = (e: React.ChangeEvent<HTMLInputElement>, reportId: string) => {
+    e.stopPropagation();
+    setSelectedIds((ids) =>
+      ids.includes(reportId) ? ids.filter((id) => id !== reportId) : [...ids, reportId]
+    );
+  };
+
+  const handleBatchSend = () => {
+    const selected = reports.filter((r) => selectedIds.includes(r.report_id));
+    if (selected.length === 0) return;
+    setSendTarget({ ids: selected.map((r) => r.report_id), titles: selected.map((r) => r.title) });
+  };
+
   /** 向导完成 → 生成切片报告；付费模块 / 非定制用户触发升级提示 */
   const handleWizardConfirm = async (scenario: ReportScenarioDef, prefs: WizardPrefs) => {
     if (needsUpgrade(user)) {
@@ -145,7 +182,7 @@ export default function ReportCenter() {
         // 单企业通道：指定企业 → 走个体深度报告（脱敏、无 LLM）
         const res = await reportApi.enterprise(prefs.enterprise_id);
         reportId = res.report_id;
-        validation = res.validation;
+        validation = res.validation as Record<string, unknown> | undefined;
       } else {
         const out = await generateSlice({
           scenario: scenario.key,
@@ -236,6 +273,25 @@ export default function ReportCenter() {
         </div>
       </div>
 
+      {selectedIds.length > 0 && (
+        <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 flex items-center gap-3">
+          <span className="text-xs text-warm-700">已选 {selectedIds.length} 份</span>
+          <button
+            onClick={handleBatchSend}
+            className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-amber text-white text-xs hover:bg-amber-dark transition-colors"
+          >
+            <Mail className="w-3.5 h-3.5" />
+            批量发送
+          </button>
+          <button
+            onClick={() => setSelectedIds([])}
+            className="h-7 px-3 rounded-lg border border-warm-200 text-xs text-warm-500 hover:bg-warm-100 transition-colors"
+          >
+            取消选择
+          </button>
+        </div>
+      )}
+
       {validationWarn && (
         <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 text-amber mt-0.5 flex-shrink-0" />
@@ -287,6 +343,13 @@ export default function ReportCenter() {
                     }`}
                   >
                     <div className="flex items-center gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(report.report_id)}
+                        onChange={(e) => toggleSelect(e, report.report_id)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="accent-amber flex-shrink-0"
+                      />
                       <div className={`w-7 h-7 rounded flex items-center justify-center flex-shrink-0 ${
                         isActive ? 'bg-amber-500' : 'bg-warm-100'
                       }`}>
@@ -318,6 +381,21 @@ export default function ReportCenter() {
                         title="下载"
                       >
                         <Download className="w-3.5 h-3.5 text-warm-400" />
+                      </button>
+                      <button
+                        onClick={(e) => handleSend(e, report)}
+                        className="p-1 rounded hover:bg-warm-100 transition-colors flex-shrink-0"
+                        title="发送邮件"
+                      >
+                        <Mail className="w-3.5 h-3.5 text-warm-400" />
+                      </button>
+                      <button
+                        onClick={(e) => handleDelete(e, report)}
+                        disabled={deletingId === report.report_id}
+                        className="p-1 rounded hover:bg-terracotta/10 transition-colors flex-shrink-0 disabled:opacity-50"
+                        title="删除"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-warm-400 hover:text-terracotta" />
                       </button>
                     </div>
                   </div>
@@ -415,6 +493,13 @@ export default function ReportCenter() {
         open={showUpgrade}
         onClose={() => setShowUpgrade(false)}
         feature="报告生成 / 下载"
+      />
+
+      <SendEmailModal
+        open={sendTarget !== null}
+        onClose={() => setSendTarget(null)}
+        reportIds={sendTarget?.ids ?? []}
+        titles={sendTarget?.titles ?? []}
       />
     </div>
   );

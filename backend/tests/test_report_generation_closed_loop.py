@@ -25,18 +25,15 @@ def test_postflight_ignores_css_comment_buduan():
 
 
 @pytest.mark.asyncio
-async def test_enterprise2_and_it_custom_generate(monkeypatch):
+async def test_enterprise2_and_it_custom_generate(live_db):
     """活库冒烟：有库才跑；验证企业生成与 IT 定制不再因 lexicon/CSS 拒出。"""
-    pytest.importorskip("asyncpg")
     from sqlalchemy import select
 
-    from app.db.session import get_async_session_factory
     from app.models.core_metrics import CoreMetrics
     from app.schemas.custom_report import CustomReportSpec
     from app.services.slice_report import generate_custom_report, generate_enterprise_report
 
-    fac = get_async_session_factory()
-    async with fac() as db:
+    async with live_db() as db:
         e2 = (
             await db.execute(select(CoreMetrics).where(CoreMetrics.display_name == "企业2"))
         ).scalar_one_or_none()

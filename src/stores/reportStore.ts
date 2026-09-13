@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import type { Report, ReportListItem, ReportParams, EmailReportParams, ReportValidation } from '@/types/report';
+import type { Report, ReportListItem, ReportParams, ReportValidation } from '@/types/report';
 import { reportApi } from '@/api/report';
+import { emailApi } from '@/api/email';
 
 function apiErrorMessage(e: unknown, fallback: string): string {
   if (e && typeof e === 'object' && 'response' in e) {
@@ -9,6 +10,29 @@ function apiErrorMessage(e: unknown, fallback: string): string {
   }
   if (e instanceof Error && e.message) return e.message;
   return fallback;
+}
+
+/** 发送结果：ok=false 且 needVerify=true 表示收件邮箱未受信、需补验证码。 */
+export interface SendResult {
+  ok: boolean;
+  message: string;
+  needVerify?: boolean;
+  sent?: number;
+  failed?: number;
+}
+
+export interface SendEmailParams {
+  report_id: string;
+  recipient: string;
+  code?: string;
+  remember?: boolean;
+}
+
+export interface BatchEmailParams {
+  report_ids: string[];
+  recipient: string;
+  code?: string;
+  remember?: boolean;
 }
 
 interface ReportStore {
@@ -27,11 +51,13 @@ interface ReportStore {
   }) => Promise<{ reportId: string; validation?: ReportValidation }>;
   fetchReport: (id: string) => Promise<void>;
   downloadPdf: (id: string, title?: string) => Promise<void>;
-  sendEmail: (params: EmailReportParams) => Promise<boolean>;
+  deleteReport: (reportId: string) => Promise<void>;
+  sendEmail: (params: SendEmailParams) => Promise<SendResult>;
+  batchEmail: (params: BatchEmailParams) => Promise<SendResult>;
   clearReport: () => void;
 }
 
-const useReportStore = create<ReportStore>((set) => ({
+const useReportStore = create<ReportStore>((set, get) => ({
   currentReport: null,
   reportList: [],
   isGenerating: false,
@@ -95,13 +121,39 @@ const useReportStore = create<ReportStore>((set) => ({
     }
   },
 
+  deleteReport: async (reportId) => {
+    try {
+      await reportApi.remove(reportId);
+      // 删除后同步列表；若当前正查看该报告则清空
+      if (get().currentReport?.id === reportId) set({ currentReport: null });
+      await get().fetchReportList();
+    } catch (e) {
+      throw new Error(apiErrorMessage(e, '删除失败'));
+    }
+  },
+
   sendEmail: async (params) => {
     try {
-      const res = await reportApi.sendEmail(params);
-      return res.success;
-    } catch {
-      console.error('发送失败');
-      return false;
+      const res = await emailApi.send(params);
+      return { ok: true, message: res.message };
+    } catch (e) {
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      return { ok: false, message: apiErrorMessage(e, '发送失败'), needVerify: status === 428 };
+    }
+  },
+
+  batchEmail: async (params) => {
+    try {
+      const res = await emailApi.batch(params);
+      return {
+        ok: res.failed === 0,
+        message: `成功 ${res.sent} 份，失败 ${res.failed} 份`,
+        sent: res.sent,
+        failed: res.failed,
+      };
+    } catch (e) {
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      return { ok: false, message: apiErrorMessage(e, '批量发送失败'), needVerify: status === 428 };
     }
   },
 

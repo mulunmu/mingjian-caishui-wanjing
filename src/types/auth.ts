@@ -12,12 +12,37 @@ export interface RegisterRequest {
   code?: string;
 }
 
+/** 验证码用途（与后端 VALID_PURPOSES 对齐） */
+export type CodePurpose = 'register' | 'login' | 'send_email' | 'bind_email' | 'reset';
+
 /** 发送邮箱验证码请求 */
 export interface SendCodeRequest {
   email: string;
-  purpose: 'register' | 'login' | 'reset';
+  purpose: CodePurpose;
   /** 表单令牌，由 getFormToken() 获取，用于防机器 */
   form_token?: string;
+}
+
+/** 验证码登录请求 */
+export interface LoginByCodeRequest {
+  email: string;
+  code: string;
+}
+
+/** 受信邮箱验证请求（发送报告到非受信邮箱前，或绑定受信邮箱） */
+export interface VerifyCodeRequest {
+  email: string;
+  purpose: 'send_email' | 'bind_email';
+  code: string;
+  /** 勾选「记住」→ 登记为受信邮箱 */
+  remember?: boolean;
+}
+
+/** 受信邮箱验证响应 */
+export interface VerifyCodeResponse {
+  message: string;
+  email: string;
+  trusted: boolean;
 }
 
 /** 发送邮箱验证码响应 */

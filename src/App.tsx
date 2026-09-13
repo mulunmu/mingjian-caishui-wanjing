@@ -14,6 +14,8 @@ import FraudPage from './pages/FraudPage';
 import AuthenticityPage from './pages/AuthenticityPage';
 import EnterprisePage from './pages/EnterprisePage';
 import DataIngestPage from './pages/DataIngestPage';
+import EmailLogsPage from './pages/EmailLogsPage';
+import AccountPage from './pages/AccountPage';
 import useAuthStore from './stores/authStore';
 import useOverviewStore from './stores/overviewStore';
 
@@ -140,6 +142,22 @@ export default function App() {
                 element={
                   <ProtectedRoute>
                     <EnterprisePage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/emails"
+                element={
+                  <ProtectedRoute>
+                    <EmailLogsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/account"
+                element={
+                  <ProtectedRoute>
+                    <AccountPage />
                   </ProtectedRoute>
                 }
               />

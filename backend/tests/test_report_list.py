@@ -37,6 +37,6 @@ def test_report_list_slice_and_ent(tmp_path, monkeypatch):
     assert "slice_general_20260827_101530" in ids
     assert "ent_abcd1234_20260827_101531_deadbeef" in ids
     titles = {it["report_id"]: it["title"] for it in data["items"]}
-    assert titles["slice_general_20260827_101530"] == "综合尽调（四类全覆盖） · 2026-08-27 10:15"
+    assert titles["slice_general_20260827_101530"] == "风险预警（阈值与命中分布） · 2026-08-27 10:15"
     assert not any(id.startswith("ENT") for id in ids)
     assert not (tmp_path / "ENT001_20260703_120000.pdf").exists()

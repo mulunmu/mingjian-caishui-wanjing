@@ -62,6 +62,10 @@ export const reportApi = {
   /** 报告结构化详情（与下载 PDF 同源快照回读） */
   get: (id: string): Promise<Report> => client.get(`/report/${id}`),
 
+  /** 删除报告（PDF + 附属文件），仅 owner/admin */
+  remove: (id: string): Promise<{ success: boolean; message: string }> =>
+    client.delete(`/report/${id}`),
+
   /** 下载 PDF */
   downloadPdf: (reportId: string): Promise<Blob> =>
     client.get(`/report/${reportId}/download`, { responseType: 'blob' }),

@@ -41,6 +41,13 @@ export interface GuidanceCard {
   description: string;
 }
 
+/** 对话内生成的报告信息（后端 data.report） */
+export interface ChatReportMeta {
+  report_id: string;
+  download_url: string;
+  title?: string;
+}
+
 export interface Message {
   id: string;
   role: MessageRole;
@@ -66,6 +73,8 @@ export interface Message {
   analysisMode?: 'rule' | 'llm' | string;
   /** 意图解析来源：rule | llm | corrected */
   parseSource?: string;
+  /** 对话内生成的报告（可下载 / 跳转详情） */
+  report?: ChatReportMeta;
 }
 
 /** 对话上下文 */

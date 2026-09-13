@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,8 @@ from app.services import (
     metric_registry,
     semantic_query,
     session_store,
+    trusted_email_service,
+    verification_service,
 )
 from app.services.intent_engine import IntentResult, industry_l1_options
 from app.services.judgment_service import without_synthesis_claims
@@ -542,6 +545,121 @@ async def _route_custom_report(
     )
 
 
+_VERIFY_CODE_RE = re.compile(r"^\d{6}$")
+
+
+def _email_flow_response(
+    sid: str,
+    *,
+    reply: str,
+    followups: list[str],
+    meta: dict | None = None,
+    report_meta: dict | None = None,
+) -> dict:
+    """对话内邮件验证/发送分支的响应（与 route_chat 同构，前端零改动渲染）。"""
+    meta = meta or {}
+    data = {
+        "function": "email_report",
+        "dimension": "overall",
+        "query_type": None,
+        "semantic_query": None,
+        "industry_l1": None,
+        "province": None,
+        "enterprise_id": None,
+        "claims": [],
+        "followups": followups,
+        "conclusion_id": None,
+        "evidence_hidden": True,
+        "coverage": [],
+        "report_hint": None,
+        "actions": meta.get("actions", []),
+        "slice": {k: v for k, v in meta.items() if k != "actions"},
+    }
+    if report_meta:
+        data["report"] = report_meta
+    return {
+        "reply": reply,
+        "reply_source": "rule",
+        "analysis_mode": "rule",
+        "parse_source": "rule",
+        "judgment_modes": {"analysis": "rule", "parse": "rule", "narration": "rule"},
+        "intent": "email_report",
+        "function": "email_report",
+        "dimension": "overall",
+        "query_type": None,
+        "enterprise_id": None,
+        "enterprise_label": None,
+        "data": data,
+        "charts": None,
+        "session_id": sid,
+        "conclusion_id": None,
+    }
+
+
+async def _route_email_verify_code(
+    db: AsyncSession,
+    sid: str,
+    query: str,
+    pending: dict,
+    *,
+    user: dict | None,
+    session_context: dict,
+) -> dict:
+    """对话内验证码回复：消费验证码 → 发送报告 → 验证通过即受信。"""
+    recipient = (pending.get("recipient") or "").strip().lower()
+    owner = (pending.get("user_email") or "").strip().lower()
+    report_id = pending.get("report_id")
+    title = pending.get("title") or "风控报告"
+    pdf_path = pending.get("pdf_path")
+    report_meta = pending.get("report_meta")
+
+    # 一次性：无论成败都清空待发态，防止验证码重复消费
+    session_context.pop("pending_email_verification", None)
+
+    if not recipient or not report_id or not pdf_path:
+        return _email_flow_response(
+            sid,
+            reply="会话状态已过期，请重新发起邮件发送。",
+            followups=["重新生成报告", "生成行业趋势风控报告"],
+        )
+
+    try:
+        await run_blocking(
+            verification_service.consume_code, recipient, "send_email", (query or "").strip()
+        )
+    except ValueError as exc:
+        return _email_flow_response(
+            sid,
+            reply=f"验证码校验失败：{exc}。",
+            followups=["重新发送验证码", "从报告中心发送"],
+        )
+
+    try:
+        await email_service.send_report_to(
+            recipient, title, Path(pdf_path), report_id=report_id, identity=owner
+        )
+    except RuntimeError as exc:
+        return _email_flow_response(
+            sid,
+            reply=f"验证码通过，但邮件发送失败：{exc}。",
+            followups=["重新发送验证码", "从报告中心发送"],
+        )
+
+    try:
+        await run_blocking(
+            trusted_email_service.add_trusted_email, owner, recipient, "verified"
+        )
+    except Exception as exc:
+        logger.debug("auto-trust after dialog verify failed: %s", exc)
+
+    return _email_flow_response(
+        sid,
+        reply=f"验证通过，报告已发送至 {recipient}。",
+        followups=["下载报告核对", "切换欺诈场景再出一份"],
+        report_meta=report_meta,
+    )
+
+
 async def route_chat(
     db: AsyncSession,
     query: str,
@@ -553,6 +671,13 @@ async def route_chat(
     session_context = (await run_blocking(session_store.get_session, sid)) or {}
     if not enterprise_id:
         enterprise_id = session_context.get("enterprise_id")
+
+    # 邮件验证码回复拦截：上一轮对「非受信邮箱」发起了待验证，本轮回复 6 位验证码
+    pending = session_context.get("pending_email_verification")
+    if pending and not enterprise_id and _VERIFY_CODE_RE.fullmatch((query or "").strip()):
+        return await _route_email_verify_code(
+            db, sid, query, pending, user=user, session_context=session_context
+        )
 
     report_meta: dict | None = None
     intent_result: IntentResult | None = None
@@ -717,63 +842,137 @@ async def route_chat(
                 user_email = (
                     ((user or {}).get("email") or (user or {}).get("sub") or "")
                 ).strip().lower()
-                if recipient and recipient.strip().lower() != user_email:
-                    report_claims.append(
-                        Claim(
-                            claim="邮件仅可发送至当前登录账号邮箱，请使用报告中心的邮件功能。",
-                            value=ClaimValue(metric="email_denied", number=None, unit=""),
-                            trace=ClaimTrace(
-                                table="auth",
-                                field="email",
-                                query_id="Q_email_report_denied",
-                            ),
-                            confidence="computed",
-                            evidence_chain=["recipient_must_match_login"],
-                        )
-                    )
-                elif recipient and email_service.is_configured():
-                    try:
-                        await run_blocking(
-                            email_service.send_slice_report,
-                            recipient,
-                            ctx.get("title") or "风控报告",
-                            Path(pdf_path),
-                        )
+                recv = (recipient or "").strip().lower()
+                if recv and (recv == user_email or trusted_email_service.is_trusted(user_email, recv)):
+                    # 受信直达（注册邮箱 / 已验证邮箱）
+                    if email_service.is_configured():
+                        try:
+                            await email_service.send_report_to(
+                                recv,
+                                ctx.get("title") or "风控报告",
+                                Path(pdf_path),
+                                report_id=report_id,
+                                identity=user_email,
+                            )
+                            report_claims.append(
+                                Claim(
+                                    claim=f"报告已发送至 {recv}。",
+                                    value=ClaimValue(metric="email_sent", number=None, unit=""),
+                                    trace=ClaimTrace(
+                                        table="conclusion_store",
+                                        field="claims",
+                                        query_id="Q_email_report",
+                                    ),
+                                    confidence="computed",
+                                    evidence_chain=[f"recipient={recv}"],
+                                )
+                            )
+                            meta["email_sent"] = True
+                        except RuntimeError as exc:
+                            logger.warning("email send failed: %s", exc)
+                            report_claims.append(
+                                Claim(
+                                    claim=f"报告已生成，但邮件发送失败：{exc}。请从报告中心下载后手动发送。",
+                                    value=ClaimValue(metric="email_error", number=None, unit=""),
+                                    trace=ClaimTrace(
+                                        table="conclusion_store",
+                                        field="claims",
+                                        query_id="Q_email_report_fail",
+                                    ),
+                                    confidence="inferred",
+                                )
+                            )
+                            meta["email_error"] = str(exc)
+                    else:
                         report_claims.append(
                             Claim(
-                                claim=f"报告已发送至 {recipient}。",
-                                value=ClaimValue(metric="email_sent", number=None, unit=""),
+                                claim=(
+                                    f"报告已生成。邮件服务未配置（{email_service.NOT_CONFIGURED_MSG}），"
+                                    f"无法发送至 {recv}，请从报告中心下载。"
+                                ),
+                                value=ClaimValue(metric="email_skipped", number=None, unit=""),
                                 trace=ClaimTrace(
                                     table="conclusion_store",
                                     field="claims",
-                                    query_id="Q_email_report",
+                                    query_id="Q_email_not_configured",
                                 ),
-                                confidence="computed",
-                                evidence_chain=[f"recipient={recipient}"],
+                                confidence="inferred",
                             )
                         )
-                        meta["email_sent"] = True
-                    except Exception as exc:
-                        logger.warning("email send failed: %s", exc)
+                elif recv and email_service.is_configured():
+                    # 非受信：发验证码，对话内引导输入 6 位码
+                    try:
+                        code_info = await run_blocking(
+                            verification_service.issue_code, recv, "send_email"
+                        )
+                        await run_blocking(
+                            email_service.send_verification_code, recv, code_info["code"], 10
+                        )
+                        session_context["pending_email_verification"] = {
+                            "recipient": recv,
+                            "user_email": user_email,
+                            "report_id": report_id,
+                            "title": ctx.get("title") or "风控报告",
+                            "pdf_path": str(pdf_path),
+                            "report_meta": {
+                                "report_id": report_id,
+                                "download_url": f"/api/v1/report/{report_id}/download",
+                                "title": ctx.get("title"),
+                                "validation": ctx.get("validation"),
+                            },
+                        }
                         report_claims.append(
                             Claim(
-                                claim=f"报告已生成，但邮件发送失败：{exc}。请从报告中心下载后手动发送。",
+                                claim=(
+                                    f"报告已生成。收件邮箱 {recv} 尚未受信，已发送验证码"
+                                    f"（10 分钟内有效），请回复 6 位验证码完成发送。"
+                                ),
+                                value=ClaimValue(metric="email_verify", number=None, unit=""),
+                                trace=ClaimTrace(
+                                    table="conclusion_store",
+                                    field="claims",
+                                    query_id="Q_email_report_verify",
+                                ),
+                                confidence="computed",
+                                evidence_chain=[f"recipient={recv}"],
+                            )
+                        )
+                        meta["email_verify"] = True
+                    except ValueError as exc:
+                        # 冷却 / 发送频率超限
+                        report_claims.append(
+                            Claim(
+                                claim=f"验证码发送失败：{exc}。",
                                 value=ClaimValue(metric="email_error", number=None, unit=""),
                                 trace=ClaimTrace(
                                     table="conclusion_store",
                                     field="claims",
-                                    query_id="Q_email_report_fail",
+                                    query_id="Q_email_report_verify_fail",
                                 ),
                                 confidence="inferred",
                             )
                         )
                         meta["email_error"] = str(exc)
-                elif recipient and not email_service.is_configured():
+                    except RuntimeError as exc:
+                        report_claims.append(
+                            Claim(
+                                claim=f"验证码邮件发送失败：{exc}。",
+                                value=ClaimValue(metric="email_error", number=None, unit=""),
+                                trace=ClaimTrace(
+                                    table="conclusion_store",
+                                    field="claims",
+                                    query_id="Q_email_report_verify_fail",
+                                ),
+                                confidence="inferred",
+                            )
+                        )
+                        meta["email_error"] = str(exc)
+                elif recv and not email_service.is_configured():
                     report_claims.append(
                         Claim(
                             claim=(
                                 f"报告已生成。邮件服务未配置（{email_service.NOT_CONFIGURED_MSG}），"
-                                f"无法发送至 {recipient}，请从报告中心下载。"
+                                f"无法发送至 {recv}，请从报告中心下载。"
                             ),
                             value=ClaimValue(metric="email_skipped", number=None, unit=""),
                             trace=ClaimTrace(

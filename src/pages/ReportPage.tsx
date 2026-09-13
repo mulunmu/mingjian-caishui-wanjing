@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { Trash2, Mail } from 'lucide-react';
 import useReportStore from '@/stores/reportStore';
 import useAuthStore from '@/stores/authStore';
 import { needsUpgrade } from '@/utils/plan';
 import UpgradeModal from '@/components/ui/UpgradeModal';
+import SendEmailModal from '@/components/report/SendEmailModal';
 import Button from '@/components/ui/Button';
 import Skeleton from '@/components/ui/Skeleton';
 import Card from '@/components/ui/Card';
@@ -14,12 +16,27 @@ import type { ReportChapter, ReportKpi } from '@/types/report';
 export default function ReportPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { currentReport, fetchReport, downloadPdf, isLoadingList, reportList, fetchReportList } =
+  const { currentReport, fetchReport, downloadPdf, deleteReport, isLoadingList, reportList, fetchReportList } =
     useReportStore();
   const user = useAuthStore((s) => s.user);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const [sendTarget, setSendTarget] = useState<{ ids: string[]; titles: string[] } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    if (!id) return;
+    if (!window.confirm(`确定删除报告「${title}」吗？删除后不可恢复。`)) return;
+    setDeleting(true);
+    try {
+      await deleteReport(id);
+      navigate('/report');
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : '删除失败');
+      setDeleting(false);
+    }
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -35,7 +52,7 @@ export default function ReportPage() {
   }, [id, fetchReport, fetchReportList, reportList.length]);
 
   const listItem = reportList.find((r) => r.report_id === id);
-  const title = currentReport?.title || listItem?.title || id;
+  const title = currentReport?.title || listItem?.title || id || '风控报告';
   const date = currentReport?.generated_at || listItem?.date;
 
   if (!id) {
@@ -122,7 +139,7 @@ export default function ReportPage() {
             <p className="text-sm text-warm-600 leading-relaxed">{currentReport.summary}</p>
           )}
 
-          <div className="flex gap-3 pt-2">
+          <div className="flex gap-3 pt-2 flex-wrap">
             <Button
               disabled={downloading}
               onClick={async () => {
@@ -139,6 +156,21 @@ export default function ReportPage() {
               }}
             >
               {downloading ? '下载中…' : '下载 PDF'}
+            </Button>
+            <Button
+              variant="secondary"
+              icon={<Mail className="w-3.5 h-3.5" />}
+              onClick={() => setSendTarget({ ids: [id], titles: [title] })}
+            >
+              发送邮件
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={deleting}
+              icon={<Trash2 className="w-3.5 h-3.5" />}
+              onClick={handleDelete}
+            >
+              {deleting ? '删除中…' : '删除'}
             </Button>
           </div>
         </Card>
@@ -250,6 +282,13 @@ export default function ReportPage() {
         open={showUpgrade}
         onClose={() => setShowUpgrade(false)}
         feature="报告下载"
+      />
+
+      <SendEmailModal
+        open={sendTarget !== null}
+        onClose={() => setSendTarget(null)}
+        reportIds={sendTarget?.ids ?? []}
+        titles={sendTarget?.titles ?? []}
       />
     </div>
   );

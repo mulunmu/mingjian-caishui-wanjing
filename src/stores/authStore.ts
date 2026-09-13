@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { authApi } from '@/api/auth';
-import type { UserInfo } from '@/types/auth';
+import type { CodePurpose, UserInfo } from '@/types/auth';
 
 interface AuthStore {
   isLoggedIn: boolean;
@@ -9,14 +9,22 @@ interface AuthStore {
   error: string;
 
   login: (email: string, password: string) => Promise<boolean>;
+  loginByCode: (email: string, code: string) => Promise<boolean>;
   demoLogin: () => Promise<boolean>;
   register: (email: string, password: string, code?: string) => Promise<boolean>;
   fetchFormToken: () => Promise<string>;
   sendCode: (
     email: string,
-    purpose?: 'register' | 'login' | 'reset',
+    purpose?: CodePurpose,
     formToken?: string,
   ) => Promise<{ ok: boolean; message: string; resendAfter?: number }>;
+  /** 受信邮箱验证：校验验证码；成功可登记受信邮箱 */
+  verifyCode: (
+    email: string,
+    purpose: 'send_email' | 'bind_email',
+    code: string,
+    remember?: boolean,
+  ) => Promise<{ ok: boolean; message: string; trusted?: boolean }>;
   /** 校验重置验证码 → 换取一次性 reset_token；失败返回 ok:false */
   verifyResetCode: (
     email: string,
@@ -114,6 +122,29 @@ const useAuthStore = create<AuthStore>((set) => ({
     }
   },
 
+  loginByCode: async (email, code) => {
+    set({ isLoading: true, error: '' });
+    try {
+      const res = await authApi.loginByCode({ email, code });
+      localStorage.setItem('access_token', res.access_token);
+      localStorage.setItem('isLoggedIn', 'true');
+      const user =
+        userFromToken(res.access_token, email) || {
+          email,
+          role: res.role || 'user',
+          plan: res.plan || 'free',
+        };
+      localStorage.setItem('userEmail', user.email);
+      localStorage.setItem('userRole', user.role);
+      localStorage.setItem('userPlan', user.plan);
+      set({ isLoggedIn: true, user, isLoading: false });
+      return true;
+    } catch (err: unknown) {
+      set({ error: extractDetail(err, '验证码登录失败，请重试'), isLoading: false });
+      return false;
+    }
+  },
+
   demoLogin: async () => {
     set({ isLoading: true, error: '' });
     try {
@@ -173,6 +204,15 @@ const useAuthStore = create<AuthStore>((set) => ({
       return { ok: true, message: res.message, resendAfter: res.resend_after };
     } catch (err: unknown) {
       return { ok: false, message: extractDetail(err, '验证码发送失败，请重试') };
+    }
+  },
+
+  verifyCode: async (email, purpose, code, remember) => {
+    try {
+      const res = await authApi.verifyCode({ email, purpose, code, remember });
+      return { ok: true, message: res.message, trusted: res.trusted };
+    } catch (err: unknown) {
+      return { ok: false, message: extractDetail(err, '验证码校验失败，请重试') };
     }
   },
 

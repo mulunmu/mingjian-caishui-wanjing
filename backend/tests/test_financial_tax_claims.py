@@ -166,10 +166,14 @@ async def test_tax_claims_on_time_burden_and_counts(monkeypatch):
 def test_scenario_chapters_use_aggregate_builders():
     from app.services.report_templates import get_scenario
 
+    # 旧财务/税务 key 归一到「风险预警」，首章为信号聚合章
     fin_first = get_scenario("financial")["chapters"][0]
-    assert fin_first["function"] == "financial"
+    assert fin_first["function"] == "signal"
     tax_first = get_scenario("tax")["chapters"][0]
-    assert tax_first["function"] == "tax"
+    assert tax_first["function"] == "signal"
+    # 预警场景的聚合章覆盖 信号/发票/税务（不串个体 builder）
+    alert_fns = {c["function"] for c in get_scenario("alert")["chapters"]}
+    assert {"signal", "fraud", "tax"} <= alert_fns
 
 
 def test_analysis_functions_include_financial_tax():

@@ -1,5 +1,5 @@
 import client from './client';
-import type { ChartConfig, ChatAction, GuidanceCard } from '@/types/chat';
+import type { ChartConfig, ChatAction, GuidanceCard, ChatReportMeta } from '@/types/chat';
 
 /** 后端 Chat 请求体 */
 export interface ChatRequest {
@@ -83,6 +83,8 @@ export interface ChatResponse {
   replySource?: string;
   analysisMode?: string;
   parseSource?: string;
+  /** 对话内生成的报告信息 */
+  report?: ChatReportMeta;
 }
 
 /** 将后端 claims 转换为前端 EvidenceItem 数组 */
@@ -197,6 +199,7 @@ export const chatApi = {
       replySource: res.reply_source || res.judgment_modes?.narration,
       analysisMode: res.analysis_mode || res.judgment_modes?.analysis || 'rule',
       parseSource: res.parse_source || res.judgment_modes?.parse,
+      report: (backendData?.report as ChatReportMeta | undefined) || undefined,
     };
   },
 };

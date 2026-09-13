@@ -1,4 +1,6 @@
 import { motion } from 'framer-motion';
+import { Link } from 'react-router-dom';
+import { FileText } from 'lucide-react';
 import type { Message } from '@/types/chat';
 import ConclusionCard from './ConclusionCard';
 import EvidenceDrawer from './EvidenceDrawer';
@@ -13,11 +15,22 @@ interface AIMessageProps {
 export default function AIMessage({ message, onFollowUp, onAction }: AIMessageProps) {
   const hasEvidence = message.evidence && message.evidence.length > 0;
   const showSource = Boolean(message.replySource || message.analysisMode || message.parseSource);
+  const report = message.report;
   const hasCard =
     message.chart ||
     (message.followups && message.followups.length > 0) ||
     (message.actions && message.actions.length > 0) ||
     (message.guidanceCards && message.guidanceCards.length > 0);
+
+  const reportCard = report ? (
+    <Link
+      to={`/report/${report.report_id}`}
+      className="mt-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-warm-700 hover:bg-amber-100 transition-colors"
+    >
+      <FileText className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
+      <span className="truncate">已生成《{report.title || '风控报告'}》——点击查看 / 下载 / 发送</span>
+    </Link>
+  ) : null;
 
   // 如果有图表、追问或引导动作，使用 ConclusionCard 渲染
   if (hasCard) {
@@ -36,6 +49,7 @@ export default function AIMessage({ message, onFollowUp, onAction }: AIMessagePr
             analysisMode={message.analysisMode || 'rule'}
             parseSource={message.parseSource}
           />
+          {reportCard}
           {hasEvidence && <EvidenceDrawer evidence={message.evidence!} />}
         </div>
       </div>
@@ -64,6 +78,7 @@ export default function AIMessage({ message, onFollowUp, onAction }: AIMessagePr
           <div className="px-4 py-2.5 rounded-xl rounded-bl-sm bg-white border border-warm-200 text-warm-800 text-sm leading-relaxed shadow-warm-sm">
             {message.content}
           </div>
+          {reportCard}
           {hasEvidence && <EvidenceDrawer evidence={message.evidence!} />}
         </div>
       </div>

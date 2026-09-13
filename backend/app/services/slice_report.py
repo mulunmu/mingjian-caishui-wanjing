@@ -3789,3 +3789,35 @@ def get_report_path(report_id: str) -> Path | None:
     if not str(path).startswith(str(REPORTS_DIR.resolve())):
         return None
     return path if path.exists() else None
+
+
+def delete_report(report_id: str, user: dict | None, *, auth_required: bool) -> bool:
+    """删除报告及附属文件（PDF + meta + context + 图表目录）。
+
+    - 无权限 / 文件不存在返回 False（调用方据此映射 403/404，不暴露存在性）。
+    - EmailLog 留痕不动：发送记录中的 report_id 由发送内核统一置空标记已删。
+    """
+    if not _SAFE_REPORT_ID.match(report_id):
+        return False
+    if not can_access_report(report_id, user, auth_required=auth_required):
+        return False
+    pdf = get_report_path(report_id)
+    if pdf is None:
+        return False
+
+    removed = False
+    try:
+        pdf.unlink()
+        removed = True
+    except OSError as exc:
+        logger.warning("report delete failed %s: %s", report_id, exc)
+    for suffix in (".meta.json", ".context.json"):
+        p = REPORTS_DIR / f"{report_id}{suffix}"
+        try:
+            if p.exists():
+                p.unlink()
+                removed = True
+        except OSError as exc:
+            logger.warning("report meta delete failed %s: %s", p.name, exc)
+    _cleanup_chart_dir(report_id)
+    return removed

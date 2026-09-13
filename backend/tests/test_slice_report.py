@@ -22,15 +22,16 @@ from app.services.slice_report import (
 
 
 def test_resolve_scenario_general():
-    # 默认（未命中关键词）→ 综合尽调
-    assert resolve_scenario(query="生成报告") == "due_diligence"
-    assert resolve_scenario(query="欺诈报告") == "fraud"
-    assert resolve_scenario(query="财务健康体检") == "financial"
-    assert resolve_scenario(query="税务合规") == "tax"
-    assert resolve_scenario(query="企业画像") == "profile"
+    # 默认（未命中关键词）→ 组合画像
+    assert resolve_scenario(query="生成报告") == "portrait"
+    # 旧场景关键词归一化到 画像|预警
+    assert resolve_scenario(query="欺诈报告") == "alert"
+    assert resolve_scenario(query="财务健康体检") == "alert"
+    assert resolve_scenario(query="税务合规") == "alert"
+    assert resolve_scenario(query="企业画像") == "portrait"
     # 旧场景 key 归一化（历史文件名 / 旧 API 兼容）
-    assert resolve_scenario(scenario="general") == "due_diligence"
-    assert resolve_scenario(scenario="fundamental") == "financial"
+    assert resolve_scenario(scenario="general") == "alert"
+    assert resolve_scenario(scenario="fundamental") == "alert"
 
 
 def test_resolve_scenario_rejects_unknown_explicit():
@@ -39,13 +40,13 @@ def test_resolve_scenario_rejects_unknown_explicit():
 
 
 def test_resolve_scenario_overview():
-    """总览/汇总 → overview，且「综合总览」须先于「综合」命中（避免归到 due_diligence）。"""
-    assert resolve_scenario(query="生成总览报告") == "overview"
-    assert resolve_scenario(query="生成综合总览报告") == "overview"
-    assert resolve_scenario(query="生成汇总报告") == "overview"
-    assert resolve_scenario(scenario="overview") == "overview"
+    """总览/汇总 旧 key 归一化到 画像（overview 已并入 portrait），且「综合总览」须先于「综合」命中。"""
+    assert resolve_scenario(query="生成总览报告") == "portrait"
+    assert resolve_scenario(query="生成综合总览报告") == "portrait"
+    assert resolve_scenario(query="生成汇总报告") == "portrait"
+    assert resolve_scenario(scenario="overview") == "portrait"
     spec = get_scenario("overview")
-    assert spec["title"] == "综合总览报告"
+    assert spec["title"] == "样本库画像报告"
 
 
 def test_financial_threshold_table_disclosed():
@@ -126,15 +127,26 @@ def test_scenario_tone_profiles():
         get_scenario_tone,
     )
 
-    # 五场景 + 个体报告均有人格与文风
-    for key in ("financial", "tax", "fraud", "due_diligence", "profile", "enterprise"):
+    # 两主题 + 旧 key 别名 + 个体报告均有人格与文风
+    for key in (
+        "portrait",
+        "alert",
+        "financial",
+        "tax",
+        "fraud",
+        "due_diligence",
+        "profile",
+        "overview",
+        "enterprise",
+    ):
         assert TONE_PROFILES[key]["persona"], key
         assert TONE_PROFILES[key]["style"], key
-    # 回退：旧 key → 综合尽调语气
-    assert get_scenario_tone("general")["persona"] == TONE_PROFILES["due_diligence"]["persona"]
-    assert get_scenario_tone("financial")["persona"] == "资深财务分析师"
-    assert get_scenario_tone("tax")["persona"] == "税务合规顾问"
-    # 去 AI 味禁用词覆盖常见套话
+    # 回退：旧 key → 对应主题语气（画像/预警）
+    assert get_scenario_tone("general")["persona"] == TONE_PROFILES["alert"]["persona"]
+    assert get_scenario_tone("financial")["persona"] == "风险预警分析师"
+    assert get_scenario_tone("tax")["persona"] == "风险预警分析师"
+    assert get_scenario_tone("portrait")["persona"] == "组合画像分析师"
+    # 去 AI 味禁用词覆盖常见套话（BANNED_AI_PHRASES 为逗号拼接串）
     for kw in ("综上所述", "首先", "值得注意的是", "总而言之"):
         assert kw in BANNED_AI_PHRASES
 
@@ -349,7 +361,7 @@ def test_assert_report_renderable_rejects_empty():
     from app.services.slice_report import _assert_report_renderable
     import pytest
 
-    with pytest.raises(ValueError, match="无可溯源"):
+    with pytest.raises(ValueError, match="报告预校验未通过"):
         _assert_report_renderable({"validation": {"empty": True, "total_claims": 0}})
     _assert_report_renderable({"validation": {"empty": False, "total_claims": 3}})
 

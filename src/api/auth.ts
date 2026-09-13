@@ -1,12 +1,15 @@
 import client from './client';
 import type {
   LoginRequest,
+  LoginByCodeRequest,
   TokenResponse,
   RegisterRequest,
   RegisterResponse,
   SendCodeRequest,
   SendCodeResponse,
   FormTokenResponse,
+  VerifyCodeRequest,
+  VerifyCodeResponse,
   VerifyResetCodeRequest,
   VerifyResetCodeResponse,
   ResetPasswordRequest,
@@ -16,6 +19,10 @@ export const authApi = {
   /** 登录：获取 JWT Token */
   login: (params: LoginRequest): Promise<TokenResponse> =>
     client.post('/auth/login', params),
+
+  /** 验证码登录：邮箱 + 一次性验证码 → JWT */
+  loginByCode: (params: LoginByCodeRequest): Promise<TokenResponse> =>
+    client.post('/auth/login-by-code', params),
 
   /** 演示一键登录（服务端签发，前端不携带口令） */
   demoLogin: (): Promise<TokenResponse & { email?: string }> =>
@@ -27,6 +34,10 @@ export const authApi = {
   /** 发送邮箱验证码 */
   sendCode: (params: SendCodeRequest): Promise<SendCodeResponse> =>
     client.post('/auth/send-code', params),
+
+  /** 校验受信邮箱验证码（发送报告前 / 绑定受信邮箱） */
+  verifyCode: (params: VerifyCodeRequest): Promise<VerifyCodeResponse> =>
+    client.post('/auth/verify-code', params),
 
   /** 校验重置验证码，换取一次性 reset_token */
   verifyResetCode: (params: VerifyResetCodeRequest): Promise<VerifyResetCodeResponse> =>

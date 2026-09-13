@@ -14,6 +14,7 @@ from app.services.slice_report import (
     build_report_detail,
     can_access_report,
     cleanup_legacy_reports,
+    delete_report,
     generate_slice_report,
     get_report_path,
     preview_enterprise_report_html,
@@ -386,3 +387,23 @@ async def download_report(report_id: str, _user: dict | None = Depends(require_p
         media_type="application/pdf",
         filename=filename,
     )
+
+
+@router.delete("/{report_id}")
+async def delete_report_endpoint(
+    report_id: str,
+    _user: dict | None = Depends(require_plan("subscriber")),
+):
+    """删除报告及附属文件（订阅用户，仅 owner/admin）。"""
+    ok = delete_report(report_id, _user, auth_required=auth_service.AUTH_REQUIRED)
+    if not ok:
+        # 不暴露「是否存在」：无权限与不存在统一 404
+        raise HTTPException(status_code=404, detail="报告不存在或无权删除")
+    # 审计留痕不动，仅断链：把引用该报告的发送记录 report_id 置空
+    try:
+        from app.services.email_log_service import mark_report_deleted
+
+        mark_report_deleted(report_id)
+    except Exception as exc:
+        logger.warning("mark_report_deleted failed for %s: %s", report_id, exc)
+    return {"success": True, "message": "报告已删除"}

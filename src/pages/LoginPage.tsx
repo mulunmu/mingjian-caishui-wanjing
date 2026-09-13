@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import { AnimatedCharacters } from '@/components/ui/AnimatedCharacters';
@@ -6,22 +6,50 @@ import { InteractiveHoverButton } from '@/components/ui/InteractiveHoverButton';
 import { CuteEyeLogo } from '@/components/ui/CuteEyeLogo';
 import useAuthStore from '@/stores/authStore';
 
+type LoginMode = 'password' | 'code';
+
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { login, demoLogin, isLoading, error, clearError } = useAuthStore();
+  const { login, loginByCode, demoLogin, sendCode, fetchFormToken, isLoading, error, clearError } =
+    useAuthStore();
+  const [loginMode, setLoginMode] = useState<LoginMode>('password');
   const [showPassword, setShowPassword] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [isPasswordFieldFocused, setIsPasswordFieldFocused] = useState(false);
+  const [sendingCode, setSendingCode] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+  const [formToken, setFormToken] = useState('');
   const [formData, setFormData] = useState({
     email: '',
     password: '',
+    code: '',
   });
   const [formError, setFormError] = useState('');
+
+  useEffect(() => {
+    void fetchFormToken().then(setFormToken);
+  }, [fetchFormToken]);
+
+  useEffect(() => {
+    if (countdown <= 0) return;
+    const timer = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [countdown]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     clearError();
     setFormError('');
+
+    if (loginMode === 'code') {
+      if (!formData.email || !formData.code.trim()) {
+        setFormError('请输入邮箱和验证码');
+        return;
+      }
+      const success = await loginByCode(formData.email.trim(), formData.code.trim());
+      if (success) navigate('/ingest');
+      return;
+    }
 
     if (!formData.email || !formData.password) {
       setFormError('请输入邮箱和密码');
@@ -32,6 +60,29 @@ export default function LoginPage() {
     if (success) {
       navigate('/ingest');
     }
+  };
+
+  const handleSendCode = async () => {
+    clearError();
+    setFormError('');
+    const email = formData.email.trim();
+    if (!email) {
+      setFormError('请先填写邮箱');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setFormError('邮箱格式不正确');
+      return;
+    }
+    setSendingCode(true);
+    const res = await sendCode(email, 'login', formToken);
+    setSendingCode(false);
+    if (!res.ok) {
+      setFormError(res.message);
+      void fetchFormToken().then(setFormToken);
+      return;
+    }
+    setCountdown(res.resendAfter ?? 60);
   };
 
   return (
@@ -83,11 +134,43 @@ export default function LoginPage() {
           </div>
 
           {/* 标题 */}
-          <div className="text-center mb-10">
+          <div className="text-center mb-8">
             <h1 className="text-3xl font-bold tracking-tight mb-2 text-warm-800">
               欢迎回来！
             </h1>
             <p className="text-warm-500 text-sm">请输入您的账号信息</p>
+          </div>
+
+          {/* 登录方式切换 */}
+          <div className="flex rounded-lg bg-warm-100 p-1 mb-6">
+            <button
+              type="button"
+              onClick={() => {
+                setLoginMode('password');
+                setFormError('');
+              }}
+              className={`flex-1 h-9 rounded-md text-sm font-medium transition-colors ${
+                loginMode === 'password'
+                  ? 'bg-white text-warm-800 shadow-sm'
+                  : 'text-warm-500 hover:text-warm-700'
+              }`}
+            >
+              密码登录
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setLoginMode('code');
+                setFormError('');
+              }}
+              className={`flex-1 h-9 rounded-md text-sm font-medium transition-colors ${
+                loginMode === 'code'
+                  ? 'bg-white text-warm-800 shadow-sm'
+                  : 'text-warm-500 hover:text-warm-700'
+              }`}
+            >
+              验证码登录
+            </button>
           </div>
 
           {/* 登录表单 */}
@@ -111,42 +194,77 @@ export default function LoginPage() {
               />
             </div>
 
-            <div className="space-y-2">
-              <label htmlFor="password" className="text-sm font-medium text-warm-700">
-                密码
-              </label>
-              <div className="relative">
-                <input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="••••••••"
-                  value={formData.password}
-                  onChange={(e) =>
-                    setFormData({ ...formData, password: e.target.value })
-                  }
-                  onFocus={() => {
-                    setIsTyping(true);
-                    setIsPasswordFieldFocused(true);
-                  }}
-                  onBlur={() => {
-                    setIsTyping(false);
-                    setIsPasswordFieldFocused(false);
-                  }}
-                  className="h-12 w-full rounded-lg border border-warm-200 bg-white px-4 py-2 pr-12 text-warm-800 placeholder:text-warm-400 focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-colors"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-warm-400 hover:text-warm-600 transition-colors"
-                >
-                  {showPassword ? (
-                    <EyeOff className="size-5" />
-                  ) : (
-                    <Eye className="size-5" />
-                  )}
-                </button>
+            {loginMode === 'password' && (
+              <div className="space-y-2">
+                <label htmlFor="password" className="text-sm font-medium text-warm-700">
+                  密码
+                </label>
+                <div className="relative">
+                  <input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    value={formData.password}
+                    onChange={(e) =>
+                      setFormData({ ...formData, password: e.target.value })
+                    }
+                    onFocus={() => {
+                      setIsTyping(true);
+                      setIsPasswordFieldFocused(true);
+                    }}
+                    onBlur={() => {
+                      setIsTyping(false);
+                      setIsPasswordFieldFocused(false);
+                    }}
+                    className="h-12 w-full rounded-lg border border-warm-200 bg-white px-4 py-2 pr-12 text-warm-800 placeholder:text-warm-400 focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-colors"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-warm-400 hover:text-warm-600 transition-colors"
+                  >
+                    {showPassword ? (
+                      <EyeOff className="size-5" />
+                    ) : (
+                      <Eye className="size-5" />
+                    )}
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
+
+            {loginMode === 'code' && (
+              <div className="space-y-2">
+                <label htmlFor="code" className="text-sm font-medium text-warm-700">
+                  邮箱验证码
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="code"
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="6 位数字"
+                    autoComplete="off"
+                    value={formData.code}
+                    onChange={(e) =>
+                      setFormData({ ...formData, code: e.target.value.replace(/\D/g, '') })
+                    }
+                    onFocus={() => setIsTyping(true)}
+                    onBlur={() => setIsTyping(false)}
+                    className="h-12 flex-1 min-w-0 rounded-lg border border-warm-200 bg-white px-4 py-2 text-warm-800 placeholder:text-warm-400 focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-colors"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSendCode}
+                    disabled={countdown > 0 || sendingCode || !formData.email}
+                    className="h-12 shrink-0 rounded-lg border border-warm-200 bg-white px-4 text-sm font-medium text-warm-700 transition-colors hover:border-amber hover:text-amber disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {countdown > 0 ? `${countdown}s 后重发` : sendingCode ? '发送中...' : '获取验证码'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {(error || formError) && (
               <div className="p-3 text-sm text-terracotta bg-terracotta/10 border border-terracotta/30 rounded-lg">
@@ -156,7 +274,7 @@ export default function LoginPage() {
 
             <InteractiveHoverButton
               type="submit"
-              text={isLoading ? '登录中...' : '登录'}
+              text={isLoading ? '登录中...' : loginMode === 'code' ? '验证码登录' : '登录'}
               className="w-full h-12 text-base font-medium"
               disabled={isLoading}
             />
