@@ -42,6 +42,7 @@ export interface OverviewData {
   industryDistribution: RiskDistItem[];
   industryProfiles: IndustryProfileItem[];
   warnings: WarningEnterprise[];
+  topWarningsTotal: number;
 }
 
 /** 空态：不伪造演示数据。失败时由 getData 抛错，由 store 展示错误态。 */
@@ -53,30 +54,48 @@ export class OverviewUnavailableError extends Error {
 }
 
 export const overviewApi = {
-  getData: async (): Promise<OverviewData> => {
+  getData: async (topN = 10): Promise<OverviewData> => {
     try {
-      const summary: RiskSummaryResponse = await client.get('/risk/summary');
+      const summary: RiskSummaryResponse = await client.get(`/risk/summary?top_n=${topN}`);
 
-      let warnings: WarningEnterprise[] = [];
-      try {
-        const res = await client.get('/risk/warnings');
-        warnings = Array.isArray(res) ? res : [];
-      } catch {
-        // 预警接口可选：summary 成功即可渲染 KPI
+      // 优先用 summary.top_warnings；缺省时再拉 /warnings?limit（兼容旧后端）
+      let warnings: WarningEnterprise[] = Array.isArray(summary.top_warnings)
+        ? summary.top_warnings
+        : [];
+      let topWarningsTotal =
+        typeof summary.top_warnings_total === 'number'
+          ? summary.top_warnings_total
+          : warnings.length;
+
+      if (warnings.length === 0) {
+        try {
+          const res = await client.get(`/risk/warnings?high_risk_only=true&limit=${topN}`);
+          warnings = Array.isArray(res) ? res : [];
+          topWarningsTotal = warnings.length;
+        } catch {
+          // 预警接口可选：summary 成功即可渲染 KPI
+        }
       }
 
       const riskDistribution = Object.entries(summary.risk_distribution || {}).map(
         ([name, value]) => ({ name, value }),
       );
 
-      const indMap = new Map<string, number>();
-      for (const e of summary.enterprises || []) {
-        const key = e.industry_l1 || '其他';
-        indMap.set(key, (indMap.get(key) || 0) + 1);
+      let industryDistribution: RiskDistItem[] = [];
+      if (summary.industry_distribution && Object.keys(summary.industry_distribution).length) {
+        industryDistribution = Object.entries(summary.industry_distribution)
+          .map(([name, value]) => ({ name, value }))
+          .sort((a, b) => b.value - a.value);
+      } else {
+        const indMap = new Map<string, number>();
+        for (const e of summary.enterprises || []) {
+          const key = e.industry_l1 || '其他';
+          indMap.set(key, (indMap.get(key) || 0) + 1);
+        }
+        industryDistribution = Array.from(indMap.entries())
+          .map(([name, value]) => ({ name, value }))
+          .sort((a, b) => b.value - a.value);
       }
-      const industryDistribution = Array.from(indMap.entries())
-        .map(([name, value]) => ({ name, value }))
-        .sort((a, b) => b.value - a.value);
 
       return {
         kpi: {
@@ -84,18 +103,26 @@ export const overviewApi = {
           high_risk_count: summary.high_risk_count,
           avg_score: summary.avg_score,
           warning_count: summary.warning_count,
+          conclusion: summary.conclusion,
+          top_warnings_total: topWarningsTotal,
         },
         riskDistribution,
         industryDistribution,
         industryProfiles: summary.industry_profiles || [],
         warnings,
+        topWarningsTotal,
       };
     } catch (e) {
-      // 信任线：不返回全 0 伪装「空库」；向上抛出由 UI 展示错误
       if (e instanceof OverviewUnavailableError) throw e;
       throw new OverviewUnavailableError(
         e instanceof Error ? e.message : '风控总览暂不可用，请稍后重试。',
       );
     }
+  },
+
+  /** 展开「查看全部」时再拉全量高风险（仍可带 limit 上限） */
+  getAllHighRisk: async (limit = 200): Promise<WarningEnterprise[]> => {
+    const res = await client.get(`/risk/warnings?high_risk_only=true&limit=${limit}`);
+    return Array.isArray(res) ? res : [];
   },
 };

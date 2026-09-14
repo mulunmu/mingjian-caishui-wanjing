@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { authApi } from '@/api/auth';
 import type { CodePurpose, UserInfo } from '@/types/auth';
+import useChatStore, { clearChatLocalCache } from '@/stores/chatStore';
 
 interface AuthStore {
   isLoggedIn: boolean;
@@ -235,12 +236,16 @@ const useAuthStore = create<AuthStore>((set) => ({
   },
 
   logout: () => {
+    const email = localStorage.getItem('userEmail');
     localStorage.removeItem('access_token');
     localStorage.removeItem('isLoggedIn');
     localStorage.removeItem('userEmail');
     localStorage.removeItem('userName');
     localStorage.removeItem('userRole');
     localStorage.removeItem('userPlan');
+    // M0：登出清聊天 localStorage，并重置内存会话（不删服务端历史）
+    clearChatLocalCache(email);
+    useChatStore.getState().resetLocalChat();
     set({ isLoggedIn: false, user: null });
   },
 

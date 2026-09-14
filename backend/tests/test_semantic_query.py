@@ -174,8 +174,10 @@ def test_detect_faq_or_methodology_routes_questions_not_commands():
     # 产品说明问句 → faq（含被「报告*」关键词劫持的「报告怎么生成」）
     faq = semantic_query.detect_faq_or_methodology("报告怎么生成")
     assert faq is not None and faq.query_type == QueryType.faq
+    # 「能做什么」归范围协商，不再走 FAQ
     usage = semantic_query.detect_faq_or_methodology("这个系统能做什么")
-    assert usage is not None and usage.query_type == QueryType.faq
+    assert usage is None
+    assert semantic_query.detect_faq_or_methodology("我可以分析哪些企业") is None
     # 口径问句 → methodology
     meth = semantic_query.detect_faq_or_methodology("综合评分怎么算的")
     assert meth is not None and meth.query_type == QueryType.methodology
@@ -189,3 +191,30 @@ def test_detect_faq_or_methodology_routes_questions_not_commands():
     assert semantic_query.detect_faq_or_methodology("各地区数据怎么样") is None
     assert semantic_query.detect_faq_or_methodology("营收数据可以对比吗") is None
     assert semantic_query.detect_faq_or_methodology("报告覆盖了哪些维度") is None
+
+
+def test_prefer_trend_over_spurious_region_comparison():
+    from types import SimpleNamespace
+
+    from app.schemas.semantic_query import QueryType, SemanticQuery
+
+    fake = SemanticQuery(
+        query_type=QueryType.comparison,
+        metrics=["credit_score"],
+        dimensions=["province"],
+        compare=[],
+    )
+    intent = SimpleNamespace(function="trend", dimension="industry", industry_l1=None, province=None)
+    # monkey: intent_to_semantic_query needs a real IntentResult-like; use engine
+    from app.services import intent_engine
+
+    ir = intent_engine.recognize("行业趋势对比")
+    fixed = semantic_query.prefer_trend_over_spurious_comparison(fake, "行业趋势对比", intent=ir)
+    assert fixed.query_type == QueryType.trend
+    assert "province" not in (fixed.dimensions or [])
+    assert "industry_l1" in (fixed.dimensions or [])
+    # 显式按地区则不改写
+    kept = semantic_query.prefer_trend_over_spurious_comparison(
+        fake, "按地区看行业趋势", intent=ir
+    )
+    assert kept.query_type == QueryType.comparison

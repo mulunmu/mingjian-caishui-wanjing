@@ -26,9 +26,21 @@ data/*.xlsx
 
 # 生成产物（不提交）
 backend/reports/
+backend/_rpt_preview/
+backend/_smoke_*.pdf
+backend/_suite_*.json
+backend/_contract_rotate_*
+backend/_dialog_boundary_*
+backend/_pdf_*
+backend/_cover_*.png
+backend/_sum_*.png
 
 # 临时调研/提取文件（不提交）
 _tmp_ref/
+_tmp_*
+_gen_*
+_cover_preview.png
+*.pdf
 _fin_names.txt
 _ref_report.txt
 _render_pdf.py
@@ -36,6 +48,9 @@ backend/_ent.pdf
 backend/_ent.txt
 backend/_downloaded.pdf
 backend/_downloaded.txt
+# 根目录封面草稿（正式资源在 backend/app/templates/assets/）
+/cover_frame_*.svg
+/cover_ornament.svg
 企划书/_render/
 企划书/_extract_design.py
 企划书/*.pdf

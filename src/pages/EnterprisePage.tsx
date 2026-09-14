@@ -726,13 +726,13 @@ export default function EnterprisePage() {
                   type="button"
                   onClick={() => {
                     useChatStore.getState().setEnterpriseId(p.enterprise_id);
-                    navigate('/');
+                    navigate('/research');
                   }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
                     bg-amber-500 text-white hover:bg-amber-600 transition-colors"
                 >
                   <MessageSquare size={13} />
-                  深入评估
+                  风险研判
                 </button>
                 <button
                   type="button"

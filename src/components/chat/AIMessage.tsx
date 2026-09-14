@@ -1,23 +1,22 @@
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { FileText } from 'lucide-react';
-import type { Message } from '@/types/chat';
+import type { FollowUpItem, Message } from '@/types/chat';
 import ConclusionCard from './ConclusionCard';
 import EvidenceDrawer from './EvidenceDrawer';
-import JudgmentSourceBadge from './JudgmentSourceBadge';
 
 interface AIMessageProps {
   message: Message;
-  onFollowUp: (q: string) => void;
+  onFollowUp: (q: string | FollowUpItem) => void;
   onAction?: (target: string) => void;
 }
 
 export default function AIMessage({ message, onFollowUp, onAction }: AIMessageProps) {
   const hasEvidence = message.evidence && message.evidence.length > 0;
-  const showSource = Boolean(message.replySource || message.analysisMode || message.parseSource);
   const report = message.report;
   const hasCard =
     message.chart ||
+    (message.followupItems && message.followupItems.length > 0) ||
     (message.followups && message.followups.length > 0) ||
     (message.actions && message.actions.length > 0) ||
     (message.guidanceCards && message.guidanceCards.length > 0);
@@ -32,7 +31,6 @@ export default function AIMessage({ message, onFollowUp, onAction }: AIMessagePr
     </Link>
   ) : null;
 
-  // 如果有图表、追问或引导动作，使用 ConclusionCard 渲染
   if (hasCard) {
     return (
       <div className="flex justify-start max-w-[85%]">
@@ -41,13 +39,11 @@ export default function AIMessage({ message, onFollowUp, onAction }: AIMessagePr
             conclusion={message.content}
             chart={message.chart}
             followups={message.followups || []}
+            followupItems={message.followupItems}
             actions={message.actions}
             guidanceCards={message.guidanceCards}
             onFollowUp={onFollowUp}
             onAction={onAction}
-            replySource={message.replySource}
-            analysisMode={message.analysisMode || 'rule'}
-            parseSource={message.parseSource}
           />
           {reportCard}
           {hasEvidence && <EvidenceDrawer evidence={message.evidence!} />}
@@ -56,7 +52,6 @@ export default function AIMessage({ message, onFollowUp, onAction }: AIMessagePr
     );
   }
 
-  // 纯文本 AI 回复
   return (
     <motion.div
       initial={{ opacity: 0, x: -8 }}
@@ -67,14 +62,6 @@ export default function AIMessage({ message, onFollowUp, onAction }: AIMessagePr
       <div className="flex">
         <div className="w-[3px] bg-amber rounded-full flex-shrink-0" />
         <div className="ml-3">
-          {showSource && (
-            <JudgmentSourceBadge
-              analysisMode={message.analysisMode || 'rule'}
-              replySource={message.replySource}
-              parseSource={message.parseSource}
-              className="mb-1.5"
-            />
-          )}
           <div className="px-4 py-2.5 rounded-xl rounded-bl-sm bg-white border border-warm-200 text-warm-800 text-sm leading-relaxed shadow-warm-sm">
             {message.content}
           </div>

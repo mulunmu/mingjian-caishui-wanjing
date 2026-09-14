@@ -1,9 +1,8 @@
 import { motion } from 'framer-motion';
 import { ArrowRight } from 'lucide-react';
-import type { ChartConfig, ChatAction, GuidanceCard } from '@/types/chat';
+import type { ChartConfig, ChatAction, FollowUpItem, GuidanceCard } from '@/types/chat';
 import FollowUpButtons from './FollowUpButtons';
 import GuidanceCards from './GuidanceCards';
-import JudgmentSourceBadge from './JudgmentSourceBadge';
 import BarChart from '@/components/charts/BarChart';
 import LineChart from '@/components/charts/LineChart';
 import PieChart from '@/components/charts/PieChart';
@@ -15,9 +14,10 @@ interface ConclusionCardProps {
   conclusion: string;
   chart?: ChartConfig;
   followups: string[];
+  followupItems?: FollowUpItem[];
   actions?: ChatAction[];
   guidanceCards?: GuidanceCard[];
-  onFollowUp: (q: string) => void;
+  onFollowUp: (q: string | FollowUpItem) => void;
   onAction?: (target: string) => void;
   replySource?: string;
   analysisMode?: string;
@@ -49,14 +49,15 @@ export default function ConclusionCard({
   conclusion,
   chart,
   followups,
+  followupItems,
   actions,
   guidanceCards,
   onFollowUp,
   onAction,
-  replySource,
-  analysisMode = 'rule',
-  parseSource,
 }: ConclusionCardProps) {
+  const hasFollowups =
+    (followupItems && followupItems.length > 0) || followups.length > 0;
+
   return (
     <motion.div
       initial={{ opacity: 0, x: -8 }}
@@ -67,12 +68,6 @@ export default function ConclusionCard({
       <div className="flex">
         <div className="w-[3px] bg-amber flex-shrink-0" />
         <div className="flex-1 p-4">
-          <JudgmentSourceBadge
-            analysisMode={analysisMode}
-            replySource={replySource}
-            parseSource={parseSource}
-            className="mb-2"
-          />
           <p className="text-warm-800 text-sm leading-relaxed">{conclusion}</p>
 
           {chart && (
@@ -108,10 +103,14 @@ export default function ConclusionCard({
           )}
 
           {guidanceCards && guidanceCards.length > 0 ? (
-            <GuidanceCards cards={guidanceCards} onClick={onFollowUp} />
+            <GuidanceCards cards={guidanceCards} onClick={(q) => onFollowUp(q)} />
           ) : (
-            followups.length > 0 && (
-              <FollowUpButtons questions={followups} onClick={onFollowUp} />
+            hasFollowups && (
+              <FollowUpButtons
+                questions={followups}
+                items={followupItems}
+                onClick={onFollowUp}
+              />
             )
           )}
         </div>

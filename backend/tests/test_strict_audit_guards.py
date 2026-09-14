@@ -211,8 +211,8 @@ async def test_chat_custom_report_guides_not_generates():
     # 引导动作：固定向导 + AI 定制两个入口
     actions = out["data"].get("actions") or []
     targets = [a.get("target") for a in actions]
-    assert "/report?wizard=1" in targets
-    assert "/?custom=1" in targets
+    assert "/?wizard=1" in targets
+    assert "/research?custom=1" in targets
 
 
 @pytest.mark.asyncio

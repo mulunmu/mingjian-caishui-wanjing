@@ -417,6 +417,58 @@ def detect_rule_comparison(query: str) -> SemanticQuery | None:
     return None
 
 
+def prefer_trend_over_spurious_comparison(
+    sq: SemanticQuery,
+    query: str | None,
+    *,
+    intent: Any | None = None,
+) -> SemanticQuery:
+    """行业/趋势意图被 LLM 误判成地区对比时，拉回 trend（根契约：听 intent，非词表堆砌）。"""
+    q = (query or "").strip()
+    if not q:
+        return sq
+    region_ask = bool(re.search(r"地区|省份|各省|分省|按地区", q))
+    if region_ask:
+        return sq
+
+    intent_fn = getattr(intent, "function", None) if intent is not None else None
+    intent_dim = getattr(intent, "dimension", None) if intent is not None else None
+    phrase_hit = bool(
+        re.search(r"(各行业|行业).{0,8}(趋势|走向|走势|同比|对比)|趋势走向|同比趋势|行业趋势", q)
+    )
+    intent_hit = intent_fn == "trend" and intent_dim in (
+        None,
+        "",
+        "industry",
+        "industry_l1",
+        "time",
+    )
+    if not (phrase_hit or intent_hit):
+        return sq
+
+    dims = list(sq.dimensions or [])
+    looks_region = (
+        sq.query_type == QueryType.comparison
+        or "province" in dims
+        or any(getattr(c, "dimension", None) == "province" for c in (sq.compare or []))
+    )
+    if not looks_region and sq.query_type == QueryType.trend:
+        return sq
+
+    if intent is not None:
+        fixed = intent_to_semantic_query(intent)
+        fixed.source = "corrected"
+        return fixed
+    out = sq.model_copy(deep=True)
+    out.query_type = QueryType.trend
+    out.dimensions = (
+        ["industry_l1"] if "industry_l1" not in (out.dimensions or []) else out.dimensions
+    )
+    out.compare = []
+    out.source = "corrected"
+    return out
+
+
 def merge_followup(sq: SemanticQuery, prev: SemanticQuery | None, query: str | None = None) -> SemanticQuery:
     """追问：从上一轮继承缺失槽位，覆盖当前句显式声明的槽位。"""
     if prev is None:

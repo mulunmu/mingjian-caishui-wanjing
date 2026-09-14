@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 from pydantic import BaseModel, Field
 
-from app.schemas.claim import Claim, ClaimBundle, claims_to_public_reply, filter_claims
+from app.schemas.claim import Claim, ClaimBundle, filter_claims
 from app.services.hallucination_guard import (
     claims_have_risk_verdict,
     collect_allowed_numbers,
@@ -40,8 +40,8 @@ class SummaryPlan(BaseModel):
 
     sentences: list[str] = Field(default_factory=list, max_length=6)
 
-TEMPLATE_PREFIX = "[规则模板生成] "
-FALLBACK_REPLY = TEMPLATE_PREFIX + "分析完成，请查看结论与追问建议。"
+TEMPLATE_PREFIX = ""  # M3：去掉「[规则模板生成]」前缀；保留常量名兼容旧引用
+FALLBACK_REPLY = "分析完成。整体判断请结合关键数字；可继续追问放贷、评级、预警或稽查场景。"
 
 # 兼容旧测试/调用
 WARNING_LABELS = {
@@ -94,35 +94,47 @@ def _sanitize_conclusions(conclusions: list[str], claims: list[Claim]) -> list[s
 def _template_from_claims(
     claims: list[Claim],
     followups: list[str],
-    with_prefix: bool = True,
+    with_prefix: bool = False,
     report_hint: str | None = None,
+    query: str | None = None,
 ) -> str:
-    prefix = TEMPLATE_PREFIX if with_prefix else ""
-    body = claims_to_public_reply(claims, followups=None)
-    if report_hint:
-        body += "\n" + report_hint
-    if followups:
-        body += "\n\n可继续追问：" + "；".join(followups[:3])
-    return _ensure_reply(prefix + body)
+    from app.services.plain_language import build_advisor_reply, translate_terms
+
+    # with_prefix 保留参数兼容旧调用；M3 起不再添加机器前缀
+    _ = with_prefix
+    body = build_advisor_reply(
+        claims,
+        query=query,
+        followups=followups,
+        report_hint=translate_terms(report_hint) if report_hint else None,
+    )
+    return _ensure_reply(body)
 
 
-def _template_reply(intent: str, data: dict, with_prefix: bool = True) -> str:
+def _template_reply(intent: str, data: dict, with_prefix: bool = False) -> str:
     """兼容旧接口：优先 data['claims']，否则用 message。"""
-    prefix = TEMPLATE_PREFIX if with_prefix else ""
+    _ = with_prefix
     if data.get("claims"):
         claims = [Claim.model_validate(c) if isinstance(c, dict) else c for c in data["claims"]]
-        return _template_from_claims(claims, data.get("followups") or [], with_prefix=with_prefix, report_hint=data.get("report_hint"))
+        return _template_from_claims(
+            claims,
+            data.get("followups") or [],
+            with_prefix=False,
+            report_hint=data.get("report_hint"),
+            query=data.get("query") or data.get("user_query"),
+        )
+    from app.services.plain_language import translate_terms
+
     if data.get("message"):
-        return _ensure_reply(prefix + str(data["message"]))
+        return _ensure_reply(translate_terms(str(data["message"])))
     if data.get("conclusions"):
-        text = "\n".join(str(x) for x in data["conclusions"])
+        text = "\n".join(translate_terms(str(x)) for x in data["conclusions"])
         fus = data.get("followups") or []
         if fus:
-            text += "\n\n可继续追问：" + "；".join(fus[:3])
-        return _ensure_reply(prefix + text)
+            text += "\n\n（下方按钮可继续追问）"
+        return _ensure_reply(text)
     return _ensure_reply(
-        prefix
-        + "您好，我是明鉴风控引擎。可提问：各行业趋势、真实性、舞弊、对标、预警或生成报告。"
+        "你好，我是明鉴风控顾问。可以直接问：这家能贷吗？信用怎么样？哪里不对劲？哪里可疑要查？"
     )
 
 
@@ -387,33 +399,43 @@ async def generate_claim_reply(
     report_hint: str | None = None,
 ) -> tuple[str, ClaimBundle, str]:
     """返回 (用户可见回复, ClaimBundle, reply_source)。reply_source ∈ {"llm","template"}。证据链不写入回复正文。"""
+    from app.services.plain_language import (
+        build_advisor_reply,
+        detect_scenario,
+        scenario_system_prompt,
+        translate_terms,
+    )
+
     kept = filter_claims(claims)
     seed = ClaimBundle(
         conclusions=[c.claim for c in kept],
         followups=list(followups)[:3],
         report_hint=report_hint,
     )
+    scenario = detect_scenario(query)
 
     if not llm_available():
-        reply = _template_from_claims(kept, seed.followups, with_prefix=False, report_hint=report_hint)
-        return reply, seed, "template"
+        reply = build_advisor_reply(
+            kept,
+            query=query,
+            followups=seed.followups,
+            report_hint=report_hint,
+        )
+        return _ensure_reply(reply), seed, "template"
 
     claim_payload = [
         {
-            "claim": c.claim,
+            "claim": translate_terms(c.claim),
             "value": c.value.model_dump() if c.value else None,
             "confidence": c.confidence,
         }
         for c in kept
     ]
 
-    system = (
-        "你是风控分析引擎。只能改写已给定结论的措辞，禁止新增任何数字或事实。"
-        "输出 conclusions（改写后的结论句）、followups（追问建议）、可选 report_hint。"
-        "若无法改写，原样返回给定结论。"
-    )
+    system = scenario_system_prompt(scenario) + " 输出 conclusions、followups（追问建议）、可选 report_hint。"
     user = (
         f"用户问题：{query}\n"
+        f"场景侧重：{scenario}\n"
         f"给定结论（唯一事实来源）：{json.dumps(claim_payload, ensure_ascii=False)}\n"
         f"建议追问：{json.dumps(followups[:5], ensure_ascii=False)}"
     )
@@ -422,21 +444,34 @@ async def generate_claim_reply(
         bundle = await _instructor_bundle(system, user)
         if bundle is None:
             raise RuntimeError("instructor unavailable")
-        conclusions = _sanitize_conclusions(bundle.conclusions or [], kept) or [c.claim for c in kept]
+        conclusions = _sanitize_conclusions(bundle.conclusions or [], kept) or [
+            translate_terms(c.claim) for c in kept
+        ]
+        conclusions = [translate_terms(s) for s in conclusions]
+        # 硬结构：确保至少结论 + 建议两层；不足则回落顾问模板
+        if len(conclusions) < 2:
+            raise RuntimeError("advisor structure too short")
         fus = (bundle.followups or followups)[:3]
         hint = bundle.report_hint or report_hint
         out = ClaimBundle(conclusions=conclusions, followups=fus, report_hint=hint)
         text = "\n".join(out.conclusions)
         if hint:
-            text += "\n" + hint
+            text += "\n" + translate_terms(hint)
         if fus:
-            text += "\n\n可继续追问：" + "；".join(fus)
+            text += "\n\n（下方按钮可继续追问）"
+        if "规则模板生成" in text:
+            text = text.replace("[规则模板生成]", "").replace("规则模板生成", "").strip()
         _record_llm_usage()
         return _ensure_reply(text), out, "llm"
     except Exception as exc:
         logger.warning("structured LLM failed: %s", exc)
-        reply = _template_from_claims(kept, followups, with_prefix=False, report_hint=report_hint)
-        return reply, seed, "template"
+        reply = build_advisor_reply(
+            kept,
+            query=query,
+            followups=followups,
+            report_hint=report_hint,
+        )
+        return _ensure_reply(reply), seed, "template"
 
 
 async def _structured_response(system: str, user: str, response_model, json_hint: str):
@@ -575,7 +610,7 @@ async def generate_reply(query: str, intent: str, data: dict) -> str:
         )
         return reply
     if not llm_available():
-        return _template_reply(intent, data, with_prefix=True)
+        return _template_reply(intent, data, with_prefix=False)
     try:
         import litellm
 
@@ -605,9 +640,9 @@ async def generate_reply(query: str, intent: str, data: dict) -> str:
         response = litellm.completion(**completion_kwargs)
         raw = _extract_llm_content(response)
         if not raw:
-            return _template_reply(intent, data, with_prefix=True)
+            return _template_reply(intent, data, with_prefix=False)
         _record_llm_usage()
         return _ensure_reply(raw[:400])
     except Exception as exc:
         logger.warning("LLM reply failed: %s", exc)
-        return _template_reply(intent, data, with_prefix=True)
+        return _template_reply(intent, data, with_prefix=False)

@@ -1,4 +1,4 @@
-/** 报告场景/模块（与后端 report_templates.SCENARIOS 对齐：全量/行业 = 画像 + 预警） */
+/** 报告场景/模块（与后端 report_templates.SCENARIOS 对齐：全量/行业 = 放贷/评级/预警/稽查） */
 export type ScenarioMotif = 'ledger' | 'seal' | 'magnifier' | 'compass' | 'badge';
 
 export interface ReportScenarioDef {
@@ -24,32 +24,58 @@ export interface ReportScenarioDef {
   audience: 'portfolio' | 'enterprise' | 'both';
 }
 
-/** 全量 / 行业：仅两主题 */
+/** 全量 / 行业：四业务场景 */
 export const PORTFOLIO_SCENARIOS: ReportScenarioDef[] = [
   {
-    key: 'portrait',
-    label: '样本库画像',
-    title: '样本库画像报告',
-    subtitle: '结构分布 · 均值分布 · 信用与规模画像',
+    key: 'loan',
+    label: '放贷研判',
+    title: '放贷研判报告',
+    subtitle: '能不能贷 · 额度逻辑 · 附加条件',
     tier: 'general',
-    description: '监管/机构组合视角：刻画样本结构与分布，不作单户定性。',
+    description: '面向信贷：用经营与发票信号回答能不能贷、额度要不要收紧、附加条件写什么。',
+    dataFocus: ['财务数据', '发票数据', '税务数据', '企业基础信息'],
+    motif: 'compass',
+    accent: '#3A6EA5',
+    chapters: ['放贷综合判断', '发票与进销信号', '收入真实性', '同业对照与额度参考'],
+    audience: 'portfolio',
+  },
+  {
+    key: 'rating',
+    label: '评级研判',
+    title: '评级研判报告',
+    subtitle: '信用结构 · 等级信号 · 六维经营表现',
+    tier: 'general',
+    description: '面向评级/授信：说明信用处在什么水平、结构强弱在哪。',
     dataFocus: ['企业基础信息', '财务数据', '税务数据'],
     motif: 'badge',
-    accent: '#6d28d9',
+    accent: '#A18A5F',
     chapters: ['地区信用结构', '行业规模与趋势', '行业基准定位', '六维经营表现画像'],
     audience: 'portfolio',
   },
   {
-    key: 'alert',
+    key: 'warn',
     label: '风险预警',
     title: '风险预警报告',
     subtitle: '预警阈值 · 命中家数 · 信号分布（匿名）',
     tier: 'general',
-    description: '监管/稽查预警：阈值、匿名命中家数与信号分布（不含具名名单）。',
+    description: '面向监测：阈值、匿名命中家数与信号分布（不含具名名单）。',
     dataFocus: ['税务数据', '发票数据', '财务数据', '企业基础信息'],
     motif: 'magnifier',
-    accent: '#d32f2f',
+    accent: '#C87F1F',
     chapters: ['预警信号总览', '发票异常预警', '税务合规预警', '真实性交叉预警'],
+    audience: 'portfolio',
+  },
+  {
+    key: 'audit',
+    label: '稽查线索',
+    title: '稽查线索报告',
+    subtitle: '可疑点 · 优先核查 · 可照做动作',
+    tier: 'general',
+    description: '面向稽查：指出哪里可疑、该先查什么，给出可照做的核查动作。',
+    dataFocus: ['发票数据', '税务数据', '财务数据'],
+    motif: 'seal',
+    accent: '#A03C35',
+    chapters: ['优先核查：发票异常', '优先核查：账票不一致', '税务合规疑点', '信号叠加与名单策略'],
     audience: 'portfolio',
   },
 ];
@@ -67,7 +93,7 @@ export const ENTERPRISE_SCENARIO: ReportScenarioDef = {
   description: '单户财税票健康体检（付费主路径）。',
   dataFocus: ['财务数据', '税务数据', '发票数据', '企业基础信息'],
   motif: 'compass',
-  accent: '#003366',
+  accent: '#152446',
   chapters: ['评级摘要', '六维风险分析', '财务能力明细', '主要财务数据'],
   audience: 'enterprise',
 };

@@ -52,8 +52,8 @@ export default function BarChart({ data, horizontal = false, height = 260 }: Bar
               x2: horizontal ? 1 : 0,
               y2: 0,
               colorStops: [
-                { offset: 0, color: '#C08B30' },
-                { offset: 1, color: '#D4763A' },
+                { offset: 0, color: '#152446' },
+                { offset: 1, color: '#A18A5F' },
               ],
             },
       },

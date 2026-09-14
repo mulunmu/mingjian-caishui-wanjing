@@ -63,7 +63,7 @@ export default function ChatInput({
         disabled={disabled}
         className="flex-1 resize-none px-3 py-2.5 text-sm bg-warm-50 border border-warm-200
           rounded-lg outline-none text-warm-800 placeholder:text-warm-400
-          focus:border-amber focus:shadow-[0_0_0_3px_rgba(192,139,48,0.1)]
+          focus:border-amber focus:shadow-[0_0_0_3px_rgba(161,138,95,0.12)]
           transition-all duration-200
           disabled:opacity-50 disabled:cursor-not-allowed"
         style={{ maxHeight: 120 }}

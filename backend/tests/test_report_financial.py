@@ -217,14 +217,16 @@ def test_statements_none_without_fin():
     assert _build_statements(None, False) is None
 
 
-def test_statements_zero_rows_show_placeholder():
-    """零值行显式输出【暂无可用数据】，禁止空白单元格。"""
+def test_statements_zero_rows_omitted():
+    """零值行整行省略（决策备忘录：禁止「暂无可用数据」刷屏）。"""
     fin = _fin(revenue=Decimal("1000"), cost=Decimal("0"), net_profit=Decimal("100"))
     st = _build_statements(fin, True)
     rows = {r[0]: r[1] for r in st["income"]["rows"]}
     assert "营业收入" in rows
-    assert rows["营业成本"] == "【暂无可用数据】"
+    assert "营业成本" not in rows
     assert "净利润" in rows
+    assert "【暂无可用数据】" not in rows.values()
+    assert st["income"]["empty"] is False
 
 
 def test_collect_advantages_and_advice_no_placeholder():

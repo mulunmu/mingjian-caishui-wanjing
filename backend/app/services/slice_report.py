@@ -427,8 +427,9 @@ def _claims_to_ctx(claims: list[Claim]) -> list[dict[str, Any]]:
 
 
 def _numeric_table_rows(claims: list[dict[str, Any]]) -> list[list[str]]:
-    """关键数字表：固定 4 列（指标/数值/单位/说明）；空格填【暂无可用数据】，禁止短行错位。"""
+    """关键数字表：固定 5 列（指标/数值/单位/研判/说明）；空格填【暂无可用数据】，禁止短行错位。"""
     from app.services.metric_registry import format_surface_number, zh_metric_label
+    from app.services.report_templates import metric_level
 
     empty = "【暂无可用数据】"
     rows: list[list[str]] = []
@@ -449,11 +450,15 @@ def _numeric_table_rows(claims: list[dict[str, Any]]) -> list[list[str]]:
         if len(note) < 8:
             note = f"{label}为 {format_surface_number(num, unit, metric=metric)}{unit}，见本章结论。"
         num_disp = format_surface_number(num, unit, metric=metric)
+        flagged = any(k in claim_text for k in ("预警", "异常", "偏低", "超阈", "命中", "可疑", "承压"))
+        strong = any(k in claim_text for k in ("稳健", "达标", "良好", "偏强", "充足"))
+        lvl = "预警" if flagged else ("偏强" if strong else metric_level(None))
         rows.append(
             [
                 label or empty,
                 num_disp if str(num_disp).strip() else empty,
                 unit if str(unit).strip() else "—",
+                lvl,
                 note[:120] if note else empty,
             ]
         )
@@ -884,25 +889,11 @@ def _scenario_summary_block(
     high_risk_ids: set[str],
     scenario: str | None = None,
 ) -> dict[str, Any]:
-    """切片执行摘要「结论前置」块（场景化版）。
+    """从章节提炼优势/风险支撑点（供决策备忘录 BLUF 分轨使用）。
 
-    - 结论：综合均分 → 群体风险判断 + 样本规模（L1 统一评级，场景无关，铁律）；
-      专项场景再补一句「维度主语」（L2 语气层，纯表达，不改评级）。
-    - 优势/风险：从本报告实际装配的章节按 function 提炼（L3 场景化），每条挂数值；
-      专项场景不复读全样本六维归因，杜绝「财务报告列出税务违法」式跑题。
-    - 无值弃权：任一 function 无信号即不产出该条，绝不硬凑空分析。
-
-    铁律：结论评级/评分口径不变；此处只决定「理由从哪来、怎么表达」。
+    结论句不再在此用「为什么：risks[0]」粘贴——那是四场景同质化的根因；
+    BLUF 由 decision_memo.build_bluf 按场景分轨合成。
     """
-    avg_score = attribution.get("avg_score")
-    conclusion = ""
-    if isinstance(avg_score, (int, float)):
-        conclusion = f"群体风险判断「{_score_to_risk_level(avg_score)}」"
-        sample_count = attribution.get("sample_count")
-        if sample_count:
-            conclusion += f"，样本 {sample_count} 家"
-        conclusion += _scenario_subject_clause(scenario, attribution)
-
     strengths: list[str] = []
     risks: list[str] = []
     for ch in chapters:
@@ -929,6 +920,15 @@ def _scenario_summary_block(
             if len(out) >= limit:
                 break
         return out
+
+    # conclusion 仅作兜底占位；真正 BLUF 由 apply_memo_to_slice_context 覆盖
+    avg_score = attribution.get("avg_score")
+    conclusion = ""
+    if isinstance(avg_score, (int, float)):
+        conclusion = f"群体风险判断「{_score_to_risk_level(avg_score)}」"
+        if sample_n:
+            conclusion += f"，样本 {sample_n} 家"
+        conclusion += "。"
 
     return {
         "conclusion": conclusion,
@@ -1293,8 +1293,8 @@ async def _wizard_scope_alignment_preview(
     scope_n = int(attribution.get("sample_count") or 0)
     chapters: list[dict[str, Any]] = []
     lex_hits: list[str] = []
-    # 与 _build_context_from_spec 一致：画像/预警前置雷达章
-    if key in ("portrait", "alert", "due_diligence", "overview", "profile") and scope_n > 0:
+    # 与 _build_context_from_spec 一致：评级/预警等组合场景前置雷达章
+    if key in ("loan", "rating", "warn", "audit", "portrait", "alert", "due_diligence", "overview", "profile") and scope_n > 0:
         chapters.append(
             {
                 "title": "六维雷达 · 综合画像",
@@ -1570,7 +1570,12 @@ async def _build_context_from_spec(
     chapter_claims: list[list[Claim]] = []
 
     try:
-        attribution = await assessment.get_slice_attribution(db, industry_l1=industry_l1, enterprise_ids=enterprise_ids)
+        attribution = await assessment.get_slice_attribution(
+            db,
+            industry_l1=industry_l1,
+            province=province,
+            enterprise_ids=enterprise_ids,
+        )
     except Exception as exc:
         logger.warning("slice attribution unavailable, degrade to empty: %s", exc)
         attribution = {
@@ -1580,6 +1585,9 @@ async def _build_context_from_spec(
             "summary": "",
             "dimensions": {},
             "drag_factors": [],
+            "risk_distribution": {},
+            "industry_distribution": {},
+            "province_distribution": {},
         }
 
     if session_id:
@@ -1604,14 +1612,14 @@ async def _build_context_from_spec(
                 }
             )
 
-    # 六维雷达：画像/预警主题前置；兼容旧 due_diligence/overview key。
+    # 六维雷达：四业务场景前置；兼容旧 portrait/alert/due_diligence/overview key。
     # 铁律（claim 唯一化）：雷达只展示正文确有解析的维度（雷达 ⊆ 章节）。
     radar_chart = (
         attribution_radar_chart(
             attribution,
             dims=radar_dimensions_for_chapters(spec["chapters"]),
         )
-        if key in ("portrait", "alert", "due_diligence", "overview", "profile")
+        if key in ("loan", "rating", "warn", "audit", "portrait", "alert", "due_diligence", "overview", "profile")
         else None
     )
     if radar_chart and attribution.get("summary"):
@@ -1678,7 +1686,7 @@ async def _build_context_from_spec(
         )
 
     # 汇总高风险主体（匿名 enterprise_id，明文身份绝不落报告，铁律）：信号 unique_affected +
-    # 舞弊 top_flags + 真实性 top_suspicious，去重后作为「重点关注主体清单」附录。
+    # 舞弊 top_flags + 真实性 top_suspicious，去重后作为「重点关注主体清单」（禁词：附录）。
     high_risk_ids: set[str] = set()
     for ch in chapters:
         m = ch.get("meta") or {}
@@ -1802,16 +1810,23 @@ async def _build_context_from_spec(
 
     # 封面：群体报告用「群体风险判断」，禁止单主体「风险等级」标签（规范书 §2.2）
     from app.services.scope_contract import SMALL_SAMPLE_N, small_sample_banner
+    from app.services.decision_memo import apply_memo_to_slice_context
 
     _avg = attribution.get("avg_score")
     _sample_banner = small_sample_banner(scope_n)
-    from app.services.report_templates import sanitize_surface_industry_terms
+    from app.services.report_templates import cover_frame_key, sanitize_surface_industry_terms
 
+    _one = summary_block.get("conclusion") or executive_summary or story or ""
+    if isinstance(_one, str) and "。" in _one:
+        _one = _one.split("。", 1)[0].strip() + "。"
     cover_meta = {
         "scenario_label": get_scenario_label(key),
+        "subject": scope or "全库样本",
+        "one_liner": _one,
         "risk_level": _score_to_risk_level(_avg) if isinstance(_avg, (int, float)) else "—",
         "business_level": business_level(_avg) if isinstance(_avg, (int, float)) else "—",
         "sample_count": str(attribution.get("sample_count") or "—"),
+        "frame": cover_frame_key(key),
         "small_sample": scope_n > 0 and scope_n < SMALL_SAMPLE_N,
         "small_sample_banner": _sample_banner,
     }
@@ -1825,7 +1840,7 @@ async def _build_context_from_spec(
         "scope": scope or None,
         "story": sanitize_surface_industry_terms(story or ""),
         # 五场景差异化元数据：封面母题/主色 + 数据类侧重 + 场景 KPI 卡定义（L3/L4）
-        "cover": spec.get("cover") or {"motif": "compass", "accent": "#003366"},
+        "cover": spec.get("cover") or {"motif": "compass", "accent": "#152446"},
         "data_focus": list(spec.get("data_focus") or []),
         "scenario_kpis": scenario_kpis,
         "report_date": _now_cn().strftime("%Y年%m月%d日"),
@@ -1855,13 +1870,31 @@ async def _build_context_from_spec(
         "attribution_brief": _attribution_brief(attribution),
         "threshold_board": (
             financial_benchmarks.FINANCIAL_THRESHOLD_TABLE()
-            if key in ("alert", "financial", "tax", "fraud", "due_diligence")
+            if key in ("warn", "audit", "alert", "financial", "tax", "fraud", "due_diligence")
             else []
         ),
         "attribution_chart": attribution_chart_path,
         "period_count": 1,  # 聚合快照默认单期；≥2 期才允许时序词
         "validation": validation,
     }
+    # 决策备忘录根装配：BLUF 分轨 + Action Title 四要素（slice 与 custom 共用）
+    purpose = (spec.get("purpose") or spec.get("governing_question") or "").strip() or None
+    apply_memo_to_slice_context(
+        context,
+        scenario_key=key,
+        chapters=chapters,
+        attribution=attribution,
+        high_risk_ids=high_risk_ids,
+        strengths=summary_block.get("strengths") or [],
+        risks=summary_block.get("risks") or [],
+        purpose=purpose,
+    )
+    # 小样本横幅挂在 BLUF 前（不改论断本身）
+    if _sample_banner:
+        bluf = context.get("summary_conclusion") or ""
+        if bluf and _sample_banner not in bluf:
+            context["summary_conclusion"] = f"{_sample_banner}{bluf}"
+            context["executive_summary"] = context["summary_conclusion"]
     _dedupe_chapter_surface_text(context.get("chapters") or [])
     _compact_chapter_narrations(context.get("chapters") or [])
     _apply_temporal_gate(context)
@@ -1956,18 +1989,22 @@ def _generate_slice_pdf_fpdf(context: dict[str, Any], report_id: str, output_pat
         pdf.set_font(fn, size=10)
         pdf.cell(_text_w(pdf), 8, line, ln=True, align="C")
 
-    # 执行摘要（结论前置：结论 + 主要优势/风险二栏 + 成段理由）
-    conclusion = context.get("summary_conclusion")
-    strengths = context.get("summary_strengths") or []
-    risks = context.get("summary_risks") or []
-    exec_summary = context.get("executive_summary")
-    if conclusion or strengths or risks or exec_summary:
+    # 决策摘要：判断 → 依据（全文可见）→ 优先处置
+    conclusion = context.get("summary_conclusion") or context.get("executive_summary")
+    evidence = context.get("summary_evidence") or context.get("summary_risks") or []
+    blockers = context.get("summary_blockers") or []
+    top_actions = context.get("top_actions") or []
+    gq = context.get("governing_question") or ""
+    conf = (context.get("confidence_tag") or {}).get("label") or ""
+    if conclusion or evidence or blockers or top_actions:
         pdf.add_page()
-        pdf.start_section("执行摘要")
+        pdf.start_section("决策摘要")
         pdf.set_x(pdf.l_margin)
         pdf.set_font(fn, size=14)
-        pdf.cell(_text_w(pdf), 10, "执行摘要", ln=True)
-        kpis = [k for k in (context.get("summary_kpis") or []) if k.get("value") not in ("—", "")]
+        pdf.cell(_text_w(pdf), 10, "决策摘要", ln=True)
+        if gq:
+            _para(pdf, f"本报告回答：{gq}", size=9, h=5)
+        kpis = [k for k in (context.get("summary_kpis") or []) if k.get("value") not in ("—", "")][:4]
         if kpis:
             col_w = _text_w(pdf) / max(len(kpis), 1)
             pdf.set_font(fn, size=10)
@@ -1978,29 +2015,37 @@ def _generate_slice_pdf_fpdf(context: dict[str, Any], report_id: str, output_pat
                 pdf.cell(col_w, 10, f"{k['value']}{k['unit']}", border=1, align="C")
             pdf.ln(8)
         if conclusion:
-            _para(pdf, conclusion, size=11, h=6)
-            pdf.ln(2)
-
-        for head, items in (("主要优势", strengths), ("主要风险", risks)):
-            if not items:
-                continue  # 空模块不出现（不写「无数据」占位）
             pdf.set_x(pdf.l_margin)
             pdf.set_font(fn, size=12)
-            pdf.cell(_text_w(pdf), 8, head, ln=True)
-            pdf.set_font(fn, size=10)
-            for it in items:
+            pdf.cell(_text_w(pdf), 8, "判断", ln=True)
+            _para(pdf, conclusion, size=12, h=6)
+            pdf.ln(2)
+        if conf:
+            _para(pdf, f"研判把握：{conf}", size=9, h=5)
+        if blockers or evidence:
+            pdf.set_x(pdf.l_margin)
+            pdf.set_font(fn, size=12)
+            pdf.cell(_text_w(pdf), 8, "依据", ln=True)
+            for b in blockers:
+                _para(pdf, f"- 卡点：{b}", size=10, h=5)
+            for it in evidence:
                 _para(pdf, f"- {it}", size=10, h=5)
             pdf.ln(2)
-
-        if exec_summary:
-            _para(pdf, exec_summary, size=11, h=6)
-            pdf.ln(3)
+        if top_actions:
+            pdf.set_x(pdf.l_margin)
+            pdf.set_font(fn, size=12)
+            pdf.cell(_text_w(pdf), 8, "优先处置", ln=True)
+            for a in top_actions[:3]:
+                _para(pdf, f"- {a}", size=10, h=5)
+            pdf.ln(2)
         _para(pdf, "本报告为聚合切片，各模块统计子集不同，详见各章节标注。", size=9, h=5)
 
     # 归因章节（画像/预警主题；流式不强制 add_page）
     attr = context.get("attribution") or {}
     board = context.get("threshold_board") or []
-    if board and context.get("scenario") in ("alert", "financial", "tax", "fraud", "due_diligence"):
+    if board and context.get("scenario") in (
+        "warn", "audit", "alert", "financial", "tax", "fraud", "due_diligence",
+    ):
         pdf.start_section("预警阈值一览")
         pdf.set_x(pdf.l_margin)
         pdf.set_font(fn, size=14)
@@ -2023,7 +2068,9 @@ def _generate_slice_pdf_fpdf(context: dict[str, Any], report_id: str, output_pat
         )
         pdf.ln(3)
 
-    if context.get("scenario") in ("alert", "due_diligence", "portrait", "overview", "profile") and (
+    if context.get("scenario") in (
+        "loan", "rating", "warn", "audit", "alert", "due_diligence", "portrait", "overview", "profile",
+    ) and (
         context.get("attribution_brief") or attr.get("summary")
     ):
         pdf.start_section("维度归因 · 为什么")
@@ -2086,30 +2133,33 @@ def _generate_slice_pdf_fpdf(context: dict[str, Any], report_id: str, output_pat
             )
             pdf.ln(3)
 
-    # 章节
+    # 决策页：短论断标题 + 密段 + 限高图
     for i, ch in enumerate(context["chapters"], 1):
+        action_title = ch.get("action_title") or ch.get("title") or f"决策要点 {i}"
         pdf.add_page()
-        pdf.start_section(f"{i}. {ch['title']}")
+        pdf.start_section(f"{i}. {action_title}")
         pdf.set_x(pdf.l_margin)
-        pdf.set_font(fn, size=14)
-        pdf.cell(_text_w(pdf), 10, f"{i}. {ch['title']}", ln=True)
-        _para(pdf, f"功能说明：{ch['purpose']}", size=11, h=6)
+        pdf.set_font(fn, size=13)
+        pdf.cell(_text_w(pdf), 10, f"{i}. {action_title}", ln=True)
         if ch.get("sample_note"):
             _para(pdf, ch["sample_note"], size=10, h=5)
-        pdf.ln(2)
+        pdf.ln(1)
 
-        narration = ch.get("narration")
-        if narration:
-            _para(pdf, narration, size=11, h=6)
+        verdict = ch.get("verdict_paragraph") or ""
+        if not verdict:
+            lines = ch.get("decision_lines") or _chapter_conclusion_lines(ch)
+            verdict = "".join(
+                (ln if str(ln).endswith(("。", "！", "？")) else f"{ln}。") for ln in lines
+            )
+        if verdict:
+            _para(pdf, verdict, size=11, h=6)
             pdf.ln(1)
 
         chart_path = ch.get("chart_image")
         if chart_path and Path(chart_path).exists():
-            pdf.set_x(pdf.l_margin)
-            pdf.set_font(fn, size=12)
-            pdf.cell(_text_w(pdf), 8, "图表", ln=True)
             try:
-                pdf.image(chart_path, w=min(_text_w(pdf), 180))
+                # 约 90mm 高：按页宽约 180mm 估高，FPDF 用宽度约束近似
+                pdf.image(chart_path, w=min(_text_w(pdf), 150))
                 pdf.ln(4)
             except Exception as exc:
                 logger.debug("chart embed skip: %s", exc)
@@ -2126,41 +2176,8 @@ def _generate_slice_pdf_fpdf(context: dict[str, Any], report_id: str, output_pat
                 [0.22, 0.16, 0.14, 0.48],
             )
             if len(num_rows) > 12:
-                _para(pdf, f"… 另有 {len(num_rows) - 12} 项未展示（详见正文结论）。", size=9, h=5)
+                _para(pdf, f"… 另有 {len(num_rows) - 12} 项未展示。", size=9, h=5)
             pdf.ln(3)
-
-        pdf.set_x(pdf.l_margin)
-        pdf.set_font(fn, size=12)
-        pdf.cell(_text_w(pdf), 8, "结论", ln=True)
-        for line in _chapter_conclusion_lines(ch):
-            _para(pdf, f"- {line}", size=11, h=6)
-        pdf.ln(2)
-
-    # 核心要点提炼（短标签，避免与执行摘要大段重复）
-    highlights = context.get("summary_highlights") or {}
-    signals = highlights.get("strengths") or context.get("summary_strengths") or []
-    warnings = highlights.get("risks") or context.get("summary_risks") or []
-    if signals or warnings:
-        pdf.add_page()
-        pdf.start_section("核心要点提炼")
-        pdf.set_x(pdf.l_margin)
-        pdf.set_font(fn, size=14)
-        pdf.cell(_text_w(pdf), 10, "核心要点提炼", ln=True)
-        if signals:
-            pdf.set_x(pdf.l_margin)
-            pdf.set_font(fn, size=12)
-            pdf.cell(_text_w(pdf), 8, "【经营信号】", ln=True)
-            pdf.set_font(fn, size=11)
-            for s in signals:
-                _para(pdf, f"- {s}", size=11, h=6)
-        if warnings:
-            pdf.ln(2)
-            pdf.set_x(pdf.l_margin)
-            pdf.set_font(fn, size=12)
-            pdf.cell(_text_w(pdf), 8, "【风险预警点】", ln=True)
-            pdf.set_font(fn, size=11)
-            for r in warnings:
-                _para(pdf, f"- {r}", size=11, h=6)
 
     _para(
         pdf,
@@ -3060,7 +3077,7 @@ def _build_dimension_sections(
 
 
 def _build_statements(fin: EnterpriseFinancials | None, has_fin: bool) -> dict[str, Any] | None:
-    """三大财务报表：无报表 → None；有报表时三表齐全（空表保留标题+【暂无可用数据】，序号不跳号）。"""
+    """三大财务报表：无报表 → None；有值才出行列，空值整行省略（禁止「暂无可用数据」刷屏）。"""
     if not has_fin or fin is None:
         return None
 
@@ -3069,9 +3086,7 @@ def _build_statements(fin: EnterpriseFinancials | None, has_fin: bool) -> dict[s
         for label, col in items:
             raw = float(getattr(fin, col) or 0)
             if raw == 0.0:
-                # 字段存在但值为空：显式占位，禁止空白单元格
-                out.append([label, "【暂无可用数据】"])
-                continue
+                continue  # 弃权：不占行
             cell = _fmt_wan(raw)
             if financial_benchmarks.is_anomalous_amount(col, raw):
                 cell = f"{cell}【账务异常】"
@@ -3084,18 +3099,18 @@ def _build_statements(fin: EnterpriseFinancials | None, has_fin: bool) -> dict[s
     return {
         "income": {
             "title": "利润表",
-            "rows": income_rows or [["【暂无可用数据】", "【暂无可用数据】"]],
-            "empty": all(r[1] == "【暂无可用数据】" for r in income_rows) if income_rows else True,
+            "rows": income_rows,
+            "empty": not income_rows,
         },
         "balance": {
             "title": "资产负债表",
-            "rows": balance_rows or [["【暂无可用数据】", "【暂无可用数据】"]],
-            "empty": all(r[1] == "【暂无可用数据】" for r in balance_rows) if balance_rows else True,
+            "rows": balance_rows,
+            "empty": not balance_rows,
         },
         "cashflow": {
             "title": "现金流量表",
-            "rows": cash_rows or [["【暂无可用数据】", "【暂无可用数据】"]],
-            "empty": all(r[1] == "【暂无可用数据】" for r in cash_rows) if cash_rows else True,
+            "rows": cash_rows,
+            "empty": not cash_rows,
         },
     }
 
@@ -3554,7 +3569,9 @@ async def build_enterprise_report_context(
     )
     risk_points = _collect_risk_points(insights, signals, fin if has_fin else None)
     advantages = _collect_advantages(profile, fin if has_fin else None)
-    advice = _collect_summary_advice(insights)
+    from app.services.report_templates import actionable_advice, cover_frame_key
+
+    advice = actionable_advice(_collect_summary_advice(insights), scenario="enterprise")
 
     # ── 分维度风险分析：六维（与雷达同源）+ 财务能力明细 ──
     # 报表内嵌同比字段（revenue_yoy/profit_yoy）≠ 系统多期快照；有同比值则允许解读，禁止「无法同比」矛盾文案
@@ -3602,6 +3619,37 @@ async def build_enterprise_report_context(
             f"综合评级「{risk_level}」，命中风险指标 {hit_risk_count} 项"
             f"（已检 {checked_metric_count} 项），整体财务状况「{health}」。"
         )
+
+    # 决策备忘录：个体 BLUF + 分维 Action Title + 空行折叠
+    from app.services.decision_memo import (
+        build_enterprise_bluf,
+        enrich_enterprise_sections,
+        filter_empty_metrics,
+    )
+
+    six_dimensions = enrich_enterprise_sections(six_dimensions)
+    dimensions = enrich_enterprise_sections(
+        [
+            {
+                **sec,
+                "metrics": filter_empty_metrics(sec.get("metrics")),
+            }
+            for sec in dimensions
+        ]
+    )
+    # 财务能力明细：整章无有效指标则不展示
+    dimensions = [d for d in dimensions if d.get("metrics") or (d.get("analysis") or {}).get("level_review")]
+
+    ent_memo = build_enterprise_bluf(
+        risk_level=risk_level,
+        hit_risk_count=hit_risk_count,
+        checked_metric_count=checked_metric_count,
+        weak_titles=[d.get("topic_title") or d.get("title") or "" for d in weak_dims[:2]],
+        risk_points=risk_points,
+        advice=advice,
+    )
+    reason = ent_memo["bluf"]
+    advice = ent_memo["top_actions"] or advice
 
     # ── 主要财务数据（利润表/资产负债表/现金流量表，万元） ──
     statements = _build_statements(fin if has_fin else None, has_fin)
@@ -3688,6 +3736,19 @@ async def build_enterprise_report_context(
 
     report_year = fin.report_year if has_fin and getattr(fin, "report_year", None) else None
 
+    _one = reason
+    if isinstance(_one, str) and "。" in _one:
+        _one = _one.split("。", 1)[0].strip() + "。"
+    cover_meta = {
+        "scenario_label": "企业体检",
+        "subject": name,
+        "one_liner": _one,
+        "risk_level": risk_level or "—",
+        "business_level": business_level(float(score)) if isinstance(score, (int, float)) else "—",
+        "sample_count": "1",
+        "frame": cover_frame_key("enterprise"),
+        "governing_question": ent_memo["governing_question"],
+    }
     context = {
         "scenario": "enterprise",
         "scenario_label": "企业财务分析报告",
@@ -3696,7 +3757,15 @@ async def build_enterprise_report_context(
         "story": story,
         "summary_kpis": summary_kpis,
         "executive_summary": executive_summary,
+        "governing_question": ent_memo["governing_question"],
+        "memo_scenario": "enterprise",
+        "top_actions": ent_memo["top_actions"],
+        "summary_evidence": ent_memo.get("evidence") or risk_points,
+        "summary_blockers": ent_memo.get("blockers") or [],
+        "confidence_tag": ent_memo["confidence"],
         "report_date": _now_cn().strftime("%Y年%m月%d日"),
+        "cover": {"motif": "compass", "accent": "#A18A5F", "frame": "rating"},
+        "cover_meta": cover_meta,
         "subject": {
             "name": name,
             "short_id": short_id,

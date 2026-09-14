@@ -1,36 +1,36 @@
-/* 明鉴・财税票・万景 · L4 设计令牌（单一事实来源，slice_report / enterprise_report 共用） */
+/* 明鉴・财税票・万景 · L4 设计令牌（与前端 globals.css / tailwind 对齐） */
 :root {
-  /* 品牌 */
-  --brand: #003366;
-  --brand-ink: #0f2744;
-  --brand-tint: #f0f6ff;
-  --brand-tint-line: #dbeafe;
-  --brand-steel: #c9d8e8;
-  --brand-ice: #e8eef5;
-  --gold: #c9a24b;
+  /* 品牌：藏青 + 古铜金（纸底 ivory） */
+  --brand: #152446;
+  --brand-ink: #0B1C3E;
+  --brand-tint: #F0EDE6;
+  --brand-tint-line: #E4DED3;
+  --brand-steel: #C9D0D9;
+  --brand-ice: #E8ECF0;
+  --gold: #A18A5F;
 
   /* 中性文字 */
-  --ink: #0f172a;
-  --ink-soft: #334155;
-  --ink-muted: #475569;
-  --ink-faint: #64748b;
-  --ink-ghost: #94a3b8;
+  --ink: #0B1C3E;
+  --ink-soft: #152446;
+  --ink-muted: #4A5568;
+  --ink-faint: #6B7280;
+  --ink-ghost: #8A9099;
 
   /* 边框与背景 */
-  --line: #e2e8f0;
-  --line-soft: #cbd5e1;
-  --bg: #f8fafc;
-  --bg-soft: #f1f5f9;
+  --line: #E4DED3;
+  --line-soft: #D0C9BC;
+  --bg: #F7F4EE;
+  --bg-soft: #EFEBE3;
 
-  /* 语义色（两份模板统一） */
+  /* 语义色：绿好 / 黄警 / 红险（前后端统一） */
   --ok: #059669;
-  --ok-bg: #ecfdf5;
-  --ok-line: #a7f3d0;
-  --bad: #dc2626;
-  --bad-bg: #fef2f2;
-  --bad-line: #fecaca;
-  --warn: #f57c00;
-  --nodata: #94a3b8;
+  --ok-bg: #ECFDF5;
+  --ok-line: #A7F3D0;
+  --bad: #DC2626;
+  --bad-bg: #FEF2F2;
+  --bad-line: #FECACA;
+  --warn: #F57C00;
+  --nodata: #8A9099;
 
   /* 尺度 */
   --radius-sm: 6px;

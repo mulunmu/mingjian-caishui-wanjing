@@ -59,11 +59,24 @@ _FUNC_PATTERNS: list[tuple[str, list[str]]] = [
     ("custom_report", [r"定制报告", r"定制", r"自定义报告", r"自定义", r"AI定制", r"帮我定制"]),
     ("report", [r"报告", r"出报告", r"生成报告", r"pdf", r"导出", r"评估报告", r"\breport\b"]),
     ("authenticity", [r"真伪", r"真实性", r"造假", r"虚开", r"benford", r"可信度", r"经营真实", r"authenticity", r"verification"]),
-    ("fraud", [r"舞弊", r"欺诈", r"发票异常", r"红冲", r"集中度", r"异常检测", r"进销错配", r"\bfraud\b", r"anomaly", r"mismatch"]),
+    ("fraud", [
+        r"舞弊", r"欺诈", r"发票异常", r"红冲", r"集中度", r"异常检测", r"进销错配",
+        r"可疑", r"该查", r"稽查", r"优先核查", r"哪里可疑", r"要查谁", r"该查谁",
+        r"\bfraud\b", r"anomaly", r"mismatch",
+    ]),
     ("benchmark", [r"对标", r"同业", r"行业对比", r"基准", r"percentile", r"[跟和与]同行", r"benchmark", r"\bpeer\b", r"comparison"]),
     ("trend", [r"趋势", r"走向", r"同比", r"环比", r"变化", r"走势", r"\btrend\b", r"yoy", r"mom"]),
-    ("score", [r"评分", r"风险分(?!布)", r"打分", r"综合分", r"风险等级", r"税务健康", r"纳税", r"\bscore\b", r"rating", r"credit score"]),
-    ("signal", [r"预警", r"信号", r"告警", r"风险点", r"风险预警", r"风险分布", r"\bwarning\b", r"\bsignal\b", r"\balert\b"]),
+    ("score", [
+        r"评分", r"风险分(?!布)", r"打分", r"综合分", r"风险等级", r"税务健康", r"纳税",
+        r"能贷", r"放贷", r"信用怎么样", r"评级", r"信用等级",
+        r"\bscore\b", r"rating", r"credit score",
+    ]),
+    ("signal", [
+        r"预警", r"信号", r"告警", r"风险点", r"风险预警", r"风险分布",
+        r"群体风险", r"整体风险", r"风险偏高", r"风险怎样", r"风险如何",
+        r"不对劲", r"哪里不对", r"异常信号",
+        r"\bwarning\b", r"\bsignal\b", r"\balert\b",
+    ]),
 ]
 
 _DIM_PATTERNS: list[tuple[str, list[str]]] = [
@@ -126,6 +139,10 @@ TEST_CASES: list[tuple[str, str]] = [
     ("分析各行业的趋势走向", "trend"),
     ("看经营真实性", "authenticity"),
     ("发票舞弊异常检测", "fraud"),
+    ("哪里可疑要查？", "fraud"),
+    ("哪里不对劲？", "signal"),
+    ("这家能贷吗？", "score"),
+    ("信用怎么样？", "score"),
     ("跟同行对标", "benchmark"),
     ("税务健康评分", "score"),
     ("有哪些风险预警", "signal"),
@@ -135,6 +152,8 @@ TEST_CASES: list[tuple[str, str]] = [
     ("广东地区信用分对比", "score"),
     ("按地区分析风险分布", "score"),
     ("制造业营收趋势", "trend"),
+    ("群体风险偏高然后呢", "signal"),
+    ("整体风险怎样", "signal"),
     ("你好", "general"),
 ]
 

@@ -22,7 +22,7 @@ export default function Modal({
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-warm-900/40 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-warm-900/40"
       onClick={() => {
         if (closeOnBackdrop) onClose();
       }}

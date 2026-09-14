@@ -24,50 +24,106 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: var(--font-sans);
-    font-size: 10.5pt;
+    font-size: 11.5pt;
     color: var(--ink-soft);
-    line-height: 1.7;
+    line-height: 1.5;
   }
 
-  /* 封面：全幅铺满 A4 */
+  /* 封面：纸底 + 回纹框 + 结论先行 */
   .cover {
     page-break-after: always;
-    background: var(--brand);
-    color: #ffffff;
+    position: relative;
+    background: var(--bg);
+    color: var(--brand-ink);
     width: 210mm;
     min-height: 297mm;
     margin: 0;
-    padding: 28mm 22mm 24mm;
+    padding: 0;
     display: block;
     text-align: center;
     box-sizing: border-box;
+    overflow: hidden;
+  }
+  .cover .frame {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    z-index: 0;
+  }
+  .cover .txt {
+    position: relative;
+    z-index: 1;
+    padding: 28mm 22mm 24mm;
+    min-height: 297mm;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
   .cover .brand {
-    font-size: 12pt;
+    font-size: 11pt;
     letter-spacing: 4px;
-    color: var(--brand-steel);
-    margin-bottom: 72px;
+    color: #5F687D;
+    margin-top: 8mm;
   }
+  .cover .brand b { color: var(--gold); font-weight: 600; }
   .cover h1 {
-    font-size: 30pt;
+    font-family: "SimSun", "Songti SC", serif;
+    font-size: 26pt;
     font-weight: bold;
     letter-spacing: 6px;
-    margin-bottom: 24px;
-    color: #ffffff;
+    margin: 18mm 0 0;
+    color: var(--brand-ink);
   }
   .cover .rule {
     width: 120px;
     height: 2px;
     background: var(--gold);
-    margin: 0 auto 40px;
+    margin: 14px auto 0;
+  }
+  .cover .scenario-badge {
+    margin-top: 16px;
+    display: inline-block;
+    padding: 4px 14px;
+    border: 1.5px solid var(--gold);
+    color: var(--gold);
+    font-size: 11pt;
+    letter-spacing: 4px;
+    font-weight: 700;
+  }
+  .cover .subject {
+    margin-top: 18px;
+    font-size: 13pt;
+    color: var(--brand);
+    letter-spacing: 2px;
+    font-weight: 600;
+  }
+  .cover .one-liner {
+    margin-top: 14px;
+    max-width: 140mm;
+    font-size: 11pt;
+    color: #3d4658;
+    line-height: 1.7;
+  }
+  .cover .grade {
+    margin-top: 18px;
+    display: inline-block;
+    padding: 6px 16px;
+    background: var(--brand);
+    color: #fff;
+    font-size: 11pt;
+    letter-spacing: 2px;
   }
   .cover .meta {
-    font-size: 13pt;
-    color: var(--brand-ice);
-    margin-top: 100px;
+    margin-top: auto;
+    margin-bottom: 10mm;
+    font-size: 11pt;
+    color: #5F687D;
     line-height: 2.2;
   }
-  .cover .meta span { color: var(--brand-steel); }
+  .cover .meta span { color: var(--brand); }
 
   /* 章节标题 */
   .chapter {
@@ -116,13 +172,6 @@
     color: var(--ink-soft);
     margin: 8px 0 12px;
     text-align: justify;
-  }
-  .lead {
-    background: var(--bg);
-    border-left: 3px solid var(--brand);
-    padding: 10px 14px;
-    margin: 12px 0;
-    color: var(--ink-soft);
   }
 
   /* 列表 */
@@ -246,11 +295,33 @@
 
   .radar-wrap {
     text-align: center;
-    margin: 12px 0 18px;
-    /* 流式排版：雷达紧跟摘要，禁止独占一页留白 */
+    margin: 10px 0 14px;
     page-break-before: auto;
   }
-  .radar-wrap img { max-width: 62%; }
+  .radar-wrap img {
+    max-width: 100%;
+    max-height: 90mm;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+  }
+  .verdict {
+    margin: 0 0 10px;
+    color: var(--ink);
+    font-size: 11.5pt;
+    line-height: 1.55;
+    text-align: justify;
+  }
+  .lead {
+    background: var(--bg);
+    border-left: 3px solid var(--brand);
+    padding: 10px 14px;
+    margin: 12px 0;
+    color: var(--ink);
+    font-size: 13pt;
+    font-weight: 600;
+    line-height: 1.5;
+  }
 
   /* 免责声明 */
   .disclaimer {
@@ -270,20 +341,26 @@
 </head>
 <body>
 
-<!-- 封面：仅系统名 + 报告名 + 时间 -->
+<!-- 封面：极简（品牌 + 标题 + 日期/编号）；结论与等级放到评级摘要 -->
 <div class="cover">
-  <div class="brand">明鉴 · 财税票 · 万景</div>
-  <h1>{{ scenario_label }}</h1>
-  <div class="rule"></div>
-  <div class="meta" style="margin-top:80px; font-size:12pt; color:var(--brand-steel);">
-    报告日期：{{ report_date }}<br />
-    报告编号：{{ report_no }}
+  {% if cover_frame_data_uri %}<img class="frame" src="{{ cover_frame_data_uri }}" alt="">{% endif %}
+  <div class="txt">
+    <div class="brand">明鉴 · 财税票 · <b>万景</b></div>
+    <h1>{{ scenario_label }}</h1>
+    <div class="rule"></div>
+    <div class="meta">
+      报告日期：{{ report_date }}<br />
+      报告编号：{{ report_no }}
+    </div>
   </div>
 </div>
 
-<!-- 评级摘要（流式：等级 + 命中风险指标 + 优势/风险/建议/雷达连续排） -->
+<!-- 决策摘要：判断 → 依据（全文可见）→ 优先处置 -->
 <div class="summary-flow">
-<div class="chapter">评级摘要</div>
+<div class="chapter">决策摘要</div>
+{% if governing_question %}
+<p class="analysis" style="color:var(--ink-faint); font-size:9pt;">本报告回答：{{ governing_question }}</p>
+{% endif %}
 <table class="kpi">
   <thead>
     <tr>
@@ -303,30 +380,29 @@
   </tbody>
 </table>
 
+{% if overall.reason %}
+<div class="subchapter">判断</div>
 <div class="lead">{{ overall.reason }}</div>
-
-{% if overall.advantages or overall.risk_points %}
-<div class="summary-panels">
-  {% if overall.advantages %}
-  <div class="summary-panel">
-    <div class="subchapter">主要优势</div>
-    {% for a in overall.advantages %}<p class="bullet-line">· {{ a }}</p>{% endfor %}
-  </div>
-  {% endif %}
-  {% if overall.risk_points %}
-  <div class="summary-panel">
-    <div class="subchapter">主要风险</div>
-    {% for p in overall.risk_points %}<p class="bullet-line">· {{ p }}</p>{% endfor %}
-  </div>
-  {% endif %}
-</div>
+{% endif %}
+{% if confidence_tag and confidence_tag.label %}
+<p class="analysis" style="color:var(--ink-faint); font-size:9pt;">研判把握：{{ confidence_tag.label }}</p>
 {% endif %}
 
-{% if overall.advice %}
-<div class="summary-panel">
-  <div class="subchapter">主要建议</div>
-  {% for a in overall.advice %}<p class="bullet-line">· {{ a }}</p>{% endfor %}
-</div>
+{% set evidence = summary_evidence if summary_evidence else (overall.risk_points or []) %}
+{% if evidence or summary_blockers or overall.advantages %}
+<div class="subchapter">依据</div>
+{% if summary_blockers %}
+{% for b in summary_blockers %}<p class="bullet-line">· 卡点：{{ b }}</p>{% endfor %}
+{% endif %}
+{% for r in evidence %}<p class="bullet-line">· {{ r }}</p>{% endfor %}
+{% if overall.advantages and not evidence %}
+{% for a in overall.advantages[:1] %}<p class="bullet-line">· 相对稳健：{{ a }}</p>{% endfor %}
+{% endif %}
+{% endif %}
+
+{% if top_actions or overall.advice %}
+<div class="subchapter">优先处置</div>
+{% for a in (top_actions or overall.advice)[:3] %}<p class="bullet-line">· {{ a }}</p>{% endfor %}
 {% endif %}
 
 {% if radar_chart_data_uri %}
@@ -356,19 +432,24 @@
 </table>
 </section>
 
-<!-- 二、六维风险分析（与雷达同源；雷达 ⊆ 本章） -->
+<!-- 二、六维风险分析（与雷达同源；Action Title + 渐进披露） -->
 {% if six_dimensions %}
 <section class="chapter-section">
 <div class="chapter">二、六维风险分析</div>
 {% if six_dim_temporal_note %}<p class="analysis">{{ six_dim_temporal_note }}</p>{% endif %}
 {% for d in six_dimensions %}
-<div class="subchapter">2.{{ loop.index }} {{ d.title }}</div>
+<div class="subchapter">2.{{ loop.index }} {{ d.action_title or d.title }}</div>
 <table class="info">
   <tr>
     <td class="key">风险等级</td>
-    <td><span class="badge" style="background: {{ d.risk_color }};">{{ d.risk_level or '【暂无可用数据】' }}</span></td>
+    <td><span class="badge" style="background: {{ d.risk_color }};">{{ d.risk_level or '—' }}</span></td>
   </tr>
 </table>
+{% if d.verdict_paragraph %}<p class="verdict">{{ d.verdict_paragraph }}</p>
+{% elif d.so_what %}<p class="verdict">{{ d.so_what }}</p>{% endif %}
+{% if d.metrics %}
+<details style="margin-top:6px;">
+  <summary style="cursor:pointer; color:var(--brand); font-size:10pt;">本维指标（展开）</summary>
 <table class="metrics">
   <colgroup>
     <col class="c-label" /><col class="c-val" /><col class="c-std" /><col class="c-rating" />
@@ -378,9 +459,9 @@
   </thead>
   {% for m in d.metrics %}
   <tr>
-    <td class="label">{{ m.label or '【暂无可用数据】' }}</td>
-    <td class="val">{% if m.value %}{{ m.value }}{% if m.unit %}{{ m.unit }}{% endif %}{% else %}【暂无可用数据】{% endif %}</td>
-    <td class="std">{{ m.standard if m.standard else '【暂无可用数据】' }}</td>
+    <td class="label">{{ m.label or '—' }}</td>
+    <td class="val">{% if m.value %}{{ m.value }}{% if m.unit %}{{ m.unit }}{% endif %}{% else %}—{% endif %}</td>
+    <td class="std">{{ m.standard if m.standard else '—' }}</td>
     <td class="rating-cell">
       {% if m.rating == "达标" %}<span class="ok">达标</span>
       {% elif m.rating == "预警" or m.rating == "高" %}<span class="warn">{{ m.rating }}</span>
@@ -389,18 +470,14 @@
       {% elif m.rating == "账务异常" %}<span class="anomaly">账务异常</span>
       {% elif m.rating == "计算失效" %}<span class="anomaly">计算失效</span>
       {% elif m.rating == "资不抵债" %}<span class="anomaly">资不抵债</span>
-      {% elif m.rating %}<span class="nodata">{{ m.rating }}</span>
-      {% else %}<span class="nodata">【暂无可用数据】</span>{% endif %}
+      {% else %}<span class="mid">{{ m.rating or '—' }}</span>{% endif %}
     </td>
   </tr>
   {% endfor %}
 </table>
-<div class="analysis">
-  <p>{{ d.analysis.level_review }}</p>
-  {% if d.analysis.risks %}<p>{{ d.analysis.risks }}</p>{% endif %}
-  {% if d.analysis.trend %}<p>{{ d.analysis.trend }}</p>{% endif %}
-</div>
-{% if d.analysis.advice %}<p class="analysis"><strong>建议：</strong>{{ d.analysis.advice }}</p>{% endif %}
+</details>
+{% endif %}
+{% if d.analysis and d.analysis.level_review %}<p class="analysis">{{ d.analysis.level_review }}</p>{% endif %}
 {% endfor %}
 </section>
 {% endif %}
@@ -409,15 +486,19 @@
 {% if dimensions %}
 <section class="chapter-section">
 <div class="chapter">三、财务能力明细</div>
-
 {% for d in dimensions %}
-<div class="subchapter">3.{{ loop.index }} {{ d.title }}</div>
+<div class="subchapter">3.{{ loop.index }} {{ d.action_title or d.title }}</div>
 <table class="info">
   <tr>
     <td class="key">风险等级</td>
-    <td><span class="badge" style="background: {{ d.risk_color }};">{{ d.risk_level or '【暂无可用数据】' }}</span></td>
+    <td><span class="badge" style="background: {{ d.risk_color }};">{{ d.risk_level or '—' }}</span></td>
   </tr>
 </table>
+{% if d.verdict_paragraph %}<p class="verdict">{{ d.verdict_paragraph }}</p>
+{% elif d.so_what %}<p class="verdict">{{ d.so_what }}</p>{% endif %}
+{% if d.metrics %}
+<details style="margin-top:6px;">
+  <summary style="cursor:pointer; color:var(--brand); font-size:10pt;">指标明细（展开）</summary>
 <table class="metrics">
   <colgroup>
     <col class="c-label" /><col class="c-val" /><col class="c-std" /><col class="c-rating" />
@@ -427,9 +508,9 @@
   </thead>
   {% for m in d.metrics %}
   <tr>
-    <td class="label">{{ m.label or '【暂无可用数据】' }}</td>
-    <td class="val">{% if m.value %}{{ m.value }}{% if m.unit %}{{ m.unit }}{% endif %}{% else %}【暂无可用数据】{% endif %}</td>
-    <td class="std">{{ m.standard if m.standard else '【暂无可用数据】' }}</td>
+    <td class="label">{{ m.label or '—' }}</td>
+    <td class="val">{% if m.value %}{{ m.value }}{% if m.unit %}{{ m.unit }}{% endif %}{% else %}—{% endif %}</td>
+    <td class="std">{{ m.standard if m.standard else '—' }}</td>
     <td class="rating-cell">
       {% if m.rating == "达标" %}<span class="ok">达标</span>
       {% elif m.rating == "预警" or m.rating == "高" %}<span class="warn">{{ m.rating }}</span>
@@ -438,32 +519,27 @@
       {% elif m.rating == "账务异常" %}<span class="anomaly">账务异常</span>
       {% elif m.rating == "计算失效" %}<span class="anomaly">计算失效</span>
       {% elif m.rating == "资不抵债" %}<span class="anomaly">资不抵债</span>
-      {% elif m.rating %}<span class="nodata">{{ m.rating }}</span>
-      {% else %}<span class="nodata">【暂无可用数据】</span>{% endif %}
+      {% else %}<span class="mid">{{ m.rating or '—' }}</span>{% endif %}
     </td>
   </tr>
   {% endfor %}
 </table>
-
-<div class="analysis">
-  <p>{{ d.analysis.level_review }}</p>
-  {% if d.analysis.risks %}<p>{{ d.analysis.risks }}</p>{% endif %}
-  {% if d.analysis.trend %}<p>{{ d.analysis.trend }}</p>{% endif %}
-</div>
-{% if d.analysis.advice %}<p class="analysis"><strong>建议：</strong>{{ d.analysis.advice }}</p>{% endif %}
+</details>
+{% endif %}
 {% endfor %}
 </section>
 {% endif %}
 
-<!-- 四、主要财务数据（三表齐全；空表保留【暂无可用数据】，序号不跳） -->
-{% if statements %}
+<!-- 四、主要财务数据（空表/空行省略） -->
+{% if statements and (not statements.income.empty or not statements.balance.empty or not statements.cashflow.empty or dupont or benchmark_chart_data_uri) %}
 <section class="chapter-section">
 <div class="chapter">四、主要财务数据</div>
-<p class="analysis">以下财务数据取自三大报表，单位：万元。</p>
+<p class="analysis">以下财务数据取自三大报表，单位：万元；无数值的项目已省略。</p>
 
 {% set ns = namespace(n=0) %}
 {% for st in ["income", "balance", "cashflow"] %}
 {% set s = statements[st] %}
+{% if s and not s.empty and s.rows %}
 {% set ns.n = ns.n + 1 %}
 <div class="subchapter">4.{{ ns.n }} {{ s.title }}</div>
 <table class="stmt">
@@ -472,26 +548,30 @@
   <tr><td class="label">{{ row[0] }}</td><td class="amount">{{ row[1] }}</td></tr>
   {% endfor %}
 </table>
+{% endif %}
 {% endfor %}
 
 {% if dupont %}
 {% set ns.n = ns.n + 1 %}
 <div class="subchapter">4.{{ ns.n }} 杜邦分解</div>
-<p class="analysis">因子拆解如下（表格为必选输出；乘积式仅在各因子齐全时附带）。</p>
 <table class="metrics">
   <tr><th style="width:34%;">因子</th><th style="width:26%;">方向</th><th style="width:40%;">数值</th></tr>
   {% for f in dupont.factors %}
+  {% if f.disp %}
   <tr>
     <td class="label">{{ f.label }}</td>
     <td>{{ f.dir }}</td>
-    <td class="unit">{{ f.disp if f.disp else '【暂无可用数据】' }}</td>
+    <td class="unit">{{ f.disp }}</td>
   </tr>
+  {% endif %}
   {% endfor %}
+  {% if dupont.roe_disp %}
   <tr>
     <td class="label">净资产收益率</td>
     <td>综合</td>
-    <td class="unit">{{ dupont.roe_disp if dupont.roe_disp else '【暂无可用数据】' }}</td>
+    <td class="unit">{{ dupont.roe_disp }}</td>
   </tr>
+  {% endif %}
 </table>
 {% if dupont.roe_disp and dupont.factors[0].disp and dupont.factors[1].disp and dupont.factors[2].disp %}
 <p class="analysis">净资产收益率 {{ dupont.roe_disp }} = 净利率 {{ dupont.factors[0].disp }} × 总资产周转率 {{ dupont.factors[1].disp }} × 权益乘数 {{ dupont.factors[2].disp }}。</p>

@@ -7,26 +7,9 @@ from __future__ import annotations
 
 from app.schemas.claim import Claim, ClaimTrace, ClaimValue
 
-# 关键词必须够具体，禁止裸词「数据/报告/功能/口径」——否则研判问法会被 FAQ 劫持。
+# product_faq 收窄：只覆盖导入 / 指标口径 / 报告生成方式。
+# 「能分析哪些企业 / 系统能做什么」归 negotiate_scope，禁止 FAQ 抢答。
 FAQ_ENTRIES: list[dict] = [
-    {
-        "id": "usage",
-        "keywords": [
-            "怎么用",
-            "如何使用",
-            "能做什么",
-            "怎么操作",
-            "使用说明",
-            "系统功能",
-            "产品功能",
-            "帮助说明",
-        ],
-        "answer": (
-            "明鉴・财税票・万景是复用型财税票智能风控产品，支持两级分析："
-            "① 全部聚合切片——按行业/地区/时间/信号维度看整体风险；"
-            "② 个体深度风控分析——下钻某家匿名样本做画像、同业定位与风险成因，并可导出深度报告。"
-        ),
-    },
     {
         "id": "data",
         "keywords": [
@@ -73,7 +56,7 @@ FAQ_ENTRIES: list[dict] = [
     },
     {
         "id": "privacy",
-        "keywords": ["隐私", "脱敏", "匿名", "企业名", "税号", "怎么保护", "泄露"],
+        "keywords": ["怎么脱敏", "隐私怎么", "怎么匿名", "怎么保护隐私", "税号会不会泄露", "企业名隐私", "怎么保护企业名"],
         "answer": (
             "系统对公共源数据做不可逆脱敏：企业名/税号只存 MD5 哈希，无明文，"
             "UI 不暴露单一企业真实身份，所有个体输出仅用「企业N」脱敏序号展示。"
@@ -82,14 +65,15 @@ FAQ_ENTRIES: list[dict] = [
     {
         "id": "method",
         "keywords": [
-            "怎么算",
-            "评分怎么",
+            "指标怎么算",
+            "评分怎么算",
             "指标定义",
             "算法公式",
-            "权重怎么",
-            "综合评分怎么",
-            "真实性得分怎么",
-            "口径怎么",
+            "权重怎么算",
+            "综合评分怎么算",
+            "真实性得分怎么算",
+            "口径怎么算",
+            "怎么算的",
         ],
         "answer": (
             "报告结论均来自企业经营数据的客观呈现：先看业务指标波动（如开票环比、申报营收同比），"
@@ -114,7 +98,7 @@ def build_faq_claims(query: str) -> tuple[list[Claim], dict]:
         return (
             [
                 Claim(
-                    claim="抱歉，没找到对应说明。你可以问：这个系统能做什么、数据怎么导入、报告怎么生成、指标怎么算。",
+                    claim="抱歉，没找到对应说明。你可以问：数据怎么导入、报告怎么生成、指标怎么算；若想知道能分析哪些企业，直接说「我能分析哪些」。",
                     value=None,
                     trace=ClaimTrace(table="faq_kb", field="answer", query_id="Q_faq_fallback"),
                     confidence="inferred",

@@ -98,25 +98,21 @@ export default function ReportWizard({ open, onClose, onConfirm, busy, error, on
     sampleCount?: number;
   }>({ loading: false, ok: null, reason: '' });
 
-  // 打开时拉取行业列表 + 企业清单（供范围选择）；失败不阻断（下拉为空，仍可选「全部样本」）
+  // 打开时只拉行业；企业清单按需搜索，避免全量 193 首屏卡顿（刀 2b）
   useEffect(() => {
     if (!open) return;
     riskApi
       .getIndustries()
       .then(setIndustries)
       .catch(() => setIndustries([]));
-    riskApi
-      .getEnterprises()
-      .then(setEnterprises)
-      .catch(() => setEnterprises([]));
   }, [open]);
 
-  // 企业搜索（防抖）：输入关键字实时过滤
+  // 企业搜索（防抖）：无关键字时仅拉前 20 条演示样例
   useEffect(() => {
     if (!open || scopeType !== 'enterprise') return;
     const t = setTimeout(() => {
       riskApi
-        .getEnterprises(enterpriseQuery)
+        .getEnterprises(enterpriseQuery || undefined, 20)
         .then(setEnterprises)
         .catch(() => setEnterprises([]));
     }, 200);
@@ -211,7 +207,7 @@ export default function ReportWizard({ open, onClose, onConfirm, busy, error, on
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-warm-900/40 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-warm-900/40"
       onClick={close}
     >
       <div
@@ -388,7 +384,7 @@ export default function ReportWizard({ open, onClose, onConfirm, busy, error, on
             ) : (
               <>
                 <p className="text-[11px] text-warm-500 px-0.5">
-                  快捷模板只放画像/预警两卡。若要财务、税务、发票等场景，请关闭向导走「AI 对话定制」。
+                  快捷模板：放贷 / 评级 / 预警 / 稽查。若要自由组合章节，请关闭向导走「AI 对话定制」。
                 </p>
                 {REPORT_SCENARIOS.map((s) => {
                   const active = scenarioKey === s.key;

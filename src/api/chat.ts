@@ -1,11 +1,18 @@
 import client from './client';
-import type { ChartConfig, ChatAction, GuidanceCard, ChatReportMeta } from '@/types/chat';
+import type {
+  ChartConfig,
+  ChatAction,
+  GuidanceCard,
+  ChatReportMeta,
+  FollowUpItem,
+} from '@/types/chat';
 
 /** 后端 Chat 请求体 */
 export interface ChatRequest {
   query: string;
   session_id?: string;
   enterprise_id?: string;
+  followup?: FollowUpItem;
 }
 
 /** 后端 claim trace 结构 */
@@ -59,6 +66,7 @@ export interface ChatBackendResponse {
   data?: {
     claims?: BackendClaim[];
     followups?: string[];
+    followup_items?: FollowUpItem[];
     actions?: ChatAction[];
     guidance_cards?: GuidanceCard[];
     [key: string]: unknown;
@@ -68,6 +76,32 @@ export interface ChatBackendResponse {
   [key: string]: unknown;
 }
 
+/** 对话范围状态（后端真源） */
+export interface DialogueState {
+  scope: 'unbound' | 'individual' | 'cohort' | string;
+  subject?: { enterprise_id?: string; display_name?: string } | null;
+  scenario?: string | null;
+}
+
+export interface ChatUiBundle {
+  welcome?: string;
+  chips?: FollowUpItem[];
+  scope_bar?: {
+    label?: string;
+    scope?: string;
+    enterprise_id?: string;
+    display_name?: string;
+    hint?: string;
+  };
+  scenario_buttons?: Array<{
+    id: string;
+    label: string;
+    question?: string;
+    hint?: string;
+    action?: string;
+  }>;
+}
+
 /** 前端 Chat 响应（统一格式） */
 export interface ChatResponse {
   conclusion: string;
@@ -75,6 +109,7 @@ export interface ChatResponse {
   evidence: EvidenceItem[];
   trace: string;
   followups: string[];
+  followupItems?: FollowUpItem[];
   actions?: ChatAction[];
   guidanceCards?: GuidanceCard[];
   function?: string;
@@ -83,8 +118,10 @@ export interface ChatResponse {
   replySource?: string;
   analysisMode?: string;
   parseSource?: string;
-  /** 对话内生成的报告信息 */
   report?: ChatReportMeta;
+  dialogueState?: DialogueState | null;
+  ui?: ChatUiBundle | null;
+  enterprise_id?: string;
 }
 
 /** 将后端 claims 转换为前端 EvidenceItem 数组 */
@@ -178,7 +215,13 @@ export const chatApi = {
     // 适配层：后端 reply → 前端 conclusion
     // 从后端 data 中提取 followups 和 claims（后端结构: res.data.followups / res.data.claims）
     const backendData = res.data;
-    const followups = backendData?.followups || [];
+    const followupItems = Array.isArray(backendData?.followup_items)
+      ? (backendData.followup_items as FollowUpItem[])
+      : [];
+    const followups =
+      followupItems.length > 0
+        ? followupItems.map((x) => x.label).filter(Boolean)
+        : backendData?.followups || [];
     const actions = Array.isArray(backendData?.actions) ? backendData.actions : [];
     const guidanceCards = Array.isArray(backendData?.guidance_cards)
       ? (backendData.guidance_cards as GuidanceCard[])
@@ -191,6 +234,7 @@ export const chatApi = {
       evidence,
       trace: res.intent || '',
       followups,
+      followupItems,
       actions,
       guidanceCards,
       function: res.function,
@@ -200,6 +244,55 @@ export const chatApi = {
       analysisMode: res.analysis_mode || res.judgment_modes?.analysis || 'rule',
       parseSource: res.parse_source || res.judgment_modes?.parse,
       report: (backendData?.report as ChatReportMeta | undefined) || undefined,
+      dialogueState:
+        (res.dialogue_state as DialogueState | undefined) ||
+        (backendData?.dialogue_state as DialogueState | undefined) ||
+        null,
+      ui:
+        (res.ui as ChatUiBundle | undefined) ||
+        (backendData?.ui as ChatUiBundle | undefined) ||
+        null,
+      enterprise_id: (res.enterprise_id as string | undefined) || undefined,
     };
   },
+
+  listSessions: async (): Promise<ChatSessionSummary[]> => {
+    const res = (await client.get('/chat/sessions')) as { sessions?: ChatSessionSummary[] };
+    return Array.isArray(res?.sessions) ? res.sessions : [];
+  },
+
+  getSession: async (sessionId: string): Promise<ChatSessionDetail> => {
+    return (await client.get(`/chat/sessions/${encodeURIComponent(sessionId)}`)) as ChatSessionDetail;
+  },
+
+  deleteSession: async (sessionId: string): Promise<void> => {
+    await client.delete(`/chat/sessions/${encodeURIComponent(sessionId)}`);
+  },
 };
+
+/** 会话列表项（M0） */
+export interface ChatSessionSummary {
+  session_id: string;
+  summary: string;
+  updated_at: string;
+  message_count?: number;
+}
+
+/** 会话详情（含可回填 messages） */
+export interface ChatSessionDetail {
+  session_id: string;
+  owner?: string;
+  history?: unknown[];
+  messages?: Array<{
+    id: string;
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+    timestamp: number;
+    followups?: string[];
+  }>;
+  updated_at?: string;
+  last_function?: string | null;
+  last_dimension?: string | null;
+  enterprise_id?: string | null;
+  covered_functions?: string[];
+}

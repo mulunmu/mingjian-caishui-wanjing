@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1120" width="800" height="1120">
+<path d="M40 40 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M40 1040 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M120 40 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M120 1040 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M200 40 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M200 1040 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M280 40 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M280 1040 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M360 40 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M360 1040 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M440 40 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M440 1040 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M520 40 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M520 1040 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M600 40 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M600 1040 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M680 40 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M680 1040 h80 v40 h-40 v-20.0 h20.0 v-20.0 h20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M40 40 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M720 40 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M40 120 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M720 120 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M40 200 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M720 200 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M40 280 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M720 280 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M40 360 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M720 360 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M40 440 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M720 440 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M40 520 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M720 520 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M40 600 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M720 600 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M40 680 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M720 680 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M40 760 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M720 760 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M40 840 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M720 840 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M40 920 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M720 920 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M40 1000 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<path d="M720 1000 v80 h40 v-40 h-20.0 v20.0 h-20.0 v20.0" stroke="#152446" stroke-width="1.1" fill="none"/>
+<rect x="80" y="80" width="640" height="960" fill="none" stroke="#152446" stroke-width="0.8"/>
+<line x1="120" y1="80" x2="120" y2="1040" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="160" y1="80" x2="160" y2="1040" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="200" y1="80" x2="200" y2="1040" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="240" y1="80" x2="240" y2="1040" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="280" y1="80" x2="280" y2="1040" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="320" y1="80" x2="320" y2="1040" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="360" y1="80" x2="360" y2="1040" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="400" y1="80" x2="400" y2="1040" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="440" y1="80" x2="440" y2="1040" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="480" y1="80" x2="480" y2="1040" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="520" y1="80" x2="520" y2="1040" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="560" y1="80" x2="560" y2="1040" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="600" y1="80" x2="600" y2="1040" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="640" y1="80" x2="640" y2="1040" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="680" y1="80" x2="680" y2="1040" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="120" x2="720" y2="120" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="160" x2="720" y2="160" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="200" x2="720" y2="200" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="240" x2="720" y2="240" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="280" x2="720" y2="280" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="320" x2="720" y2="320" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="360" x2="720" y2="360" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="400" x2="720" y2="400" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="440" x2="720" y2="440" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="480" x2="720" y2="480" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="520" x2="720" y2="520" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="560" x2="720" y2="560" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="600" x2="720" y2="600" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="640" x2="720" y2="640" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="680" x2="720" y2="680" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="720" x2="720" y2="720" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="760" x2="720" y2="760" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="800" x2="720" y2="800" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="840" x2="720" y2="840" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="880" x2="720" y2="880" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="920" x2="720" y2="920" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="960" x2="720" y2="960" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<line x1="80" y1="1000" x2="720" y2="1000" stroke="#A18A5F" stroke-width="0.5" opacity="0.25"/>
+<polygon points="80,65 95,80 80,95 65,80" fill="#A18A5F"/>
+<polygon points="720,65 735,80 720,95 705,80" fill="#A18A5F"/>
+<polygon points="80,1025 95,1040 80,1055 65,1040" fill="#A18A5F"/>
+<polygon points="720,1025 735,1040 720,1055 705,1040" fill="#A18A5F"/>
+</svg>

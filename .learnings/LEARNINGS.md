@@ -59,3 +59,10 @@
 - **Source**: user-screenshot-制造画像-scope_alignment + 全系统扫描
 - **Summary**: 向导只查样本/章节可用性，PDF 硬门禁另检 scope_alignment/lexicon，造成「通过+拒绝」矛盾。制造画像：score overall 有行业筛选仍回落全库 193；IT软件预警：claim 残留禁词 IT软件。
 - **Action**: build_score_claims overall 同源筛选；组装出口 _sanitize_slice_context_surfaces；向导干跑 scope+lexicon；scripts/_smoke_wizard_preflight 覆盖 portrait/alert×全行业，contradictions=0。
+
+## LEARN-2026-09-14-report-memo-layout
+- **Date**: 2026-09-14
+- **Category**: correction
+- **Source**: user-feedback + two PDFs (loan full-sample / manufacturing custom slice)
+- **Summary**: 决策备忘录落地后 PDF 仍「文小图大、头重脚轻」；章节把「论断 / 所以呢 / 可照做」拆成松散小标题，口水化且重点不清。用户要求：小白能懂，但不能松散、不能为懂而水。覆盖个体/切片/定制/全库全维度。
+- **Action**: 先出全覆盖改进方案待确认，再改 decision_memo 装配 + slice/enterprise 模板字号与图区比例 + 章节改为「判断→依据→处置」紧凑段。

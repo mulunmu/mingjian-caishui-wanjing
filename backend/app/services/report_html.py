@@ -4,12 +4,20 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from app.services.report_templates import business_level, chapter_conclusion_lines, zh_report_no
+from app.services.report_templates import (
+    actionable_advice,
+    business_level,
+    chapter_conclusion_lines,
+    cover_frame_key,
+    metric_level,
+    zh_report_no,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +27,12 @@ _env = Environment(
     autoescape=select_autoescape(["html", "xml"]),
 )
 _env.globals["business_level"] = business_level
+_env.globals["metric_level"] = metric_level
 _env.globals["chapter_conclusion_lines"] = chapter_conclusion_lines
+_env.globals["actionable_advice"] = actionable_advice
 
 
-def _file_to_data_uri(path: str | Path | None) -> str | None:
+def _file_to_data_uri(path: str | Path | None, *, mime: str = "image/png") -> str | None:
     if not path:
         return None
     p = Path(path)
@@ -32,11 +42,30 @@ def _file_to_data_uri(path: str | Path | None) -> str | None:
     if not raw:
         return None
     b64 = base64.b64encode(raw).decode("ascii")
-    return f"data:image/png;base64,{b64}"
+    return f"data:{mime};base64,{b64}"
+
+
+def _first_sentence(text: str | None, *, max_len: int = 72) -> str:
+    t = re.sub(r"\s+", "", str(text or "").strip())
+    if not t:
+        return ""
+    for sep in ("。", "！", "？", ";", "；"):
+        if sep in t:
+            t = t.split(sep, 1)[0].strip() + ("。" if sep in ("。", "！", "？") else "")
+            break
+    if len(t) > max_len:
+        t = t[: max_len - 1] + "…"
+    return t
+
+
+def _cover_frame_uri(scenario: str | None) -> str | None:
+    frame = cover_frame_key(scenario)
+    path = _TEMPLATES_DIR / "assets" / f"cover_frame_{frame}.svg"
+    return _file_to_data_uri(path, mime="image/svg+xml")
 
 
 def prepare_html_context(context: dict[str, Any], report_id: str) -> dict[str, Any]:
-    """为模板准备上下文：图表转 data URI，归因维度转列表。"""
+    """为模板准备上下文：图表转 data URI，归因维度转列表，封面回纹框。"""
     out = dict(context)
     out["report_id"] = report_id
     out["report_no"] = zh_report_no(report_id)
@@ -46,12 +75,23 @@ def prepare_html_context(context: dict[str, Any], report_id: str) -> dict[str, A
     for ch in context.get("chapters") or []:
         ch_copy = dict(ch)
         ch_copy["chart_data_uri"] = _file_to_data_uri(ch.get("chart_image"))
+        meta = ch.get("meta") or {}
+        score = meta.get("avg_score")
+        if score is None:
+            score = ch.get("score")
+        try:
+            score_f = float(score) if score is not None else None
+        except (TypeError, ValueError):
+            score_f = None
+        if score_f is not None:
+            ch_copy["business_level"] = business_level(score_f)
         chapters.append(ch_copy)
     out["chapters"] = chapters
 
     out["attribution_chart_data_uri"] = _file_to_data_uri(context.get("attribution_chart"))
     out["radar_chart_data_uri"] = _file_to_data_uri(context.get("radar_chart"))
     out["benchmark_chart_data_uri"] = _file_to_data_uri(context.get("benchmark_chart"))
+    out["cover_frame_data_uri"] = _cover_frame_uri(context.get("scenario"))
 
     attr = context.get("attribution") or {}
     dims = attr.get("dimensions") or {}
@@ -68,6 +108,7 @@ def prepare_html_context(context: dict[str, Any], report_id: str) -> dict[str, A
         _d["business_level"] = (
             business_level(score_f) if score_f is not None else "【暂无可用数据】"
         )
+        _d["metric_level"] = metric_level(score_f) if score_f is not None else "正常"
         _dims.append(_d)
     out["attribution_dimensions"] = _dims
 
@@ -90,17 +131,55 @@ def prepare_html_context(context: dict[str, Any], report_id: str) -> dict[str, A
 
     tier = context.get("tier") or "general"
     out["tier_label"] = "付费定制" if tier == "premium" else "通用模板"
-    # 五场景封面元数据兜底（历史 fixture 无 cover/subtitle 也能渲染）
-    out["cover"] = context.get("cover") or {"motif": "compass", "accent": "#003366"}
+    # 封面元数据兜底（历史 fixture 无 cover/subtitle 也能渲染）
+    cover = dict(context.get("cover") or {"motif": "compass", "accent": "#152446"})
+    if not cover.get("accent"):
+        cover["accent"] = "#152446"
+    out["cover"] = cover
     out["subtitle"] = context.get("subtitle") or ""
     out["data_focus"] = list(context.get("data_focus") or [])
-    # 封面统一款元数据兜底（场景/风险等级/综合均分/样本规模；历史 fixture 无 cover_meta 也能渲染）
-    out["cover_meta"] = context.get("cover_meta") or {
-        "scenario_label": context.get("scenario_label") or "",
-        "risk_level": "—",
-        "business_level": "—",
-        "sample_count": "—",
-    }
+
+    subject_obj = context.get("subject") or {}
+    cm = dict(
+        context.get("cover_meta")
+        or {
+            "scenario_label": context.get("scenario_label") or "",
+            "risk_level": "—",
+            "business_level": "—",
+            "sample_count": "—",
+        }
+    )
+    if not cm.get("scenario_label"):
+        cm["scenario_label"] = context.get("scenario_label") or ""
+    if not cm.get("subject"):
+        cm["subject"] = (
+            context.get("scope")
+            or subject_obj.get("name")
+            or subject_obj.get("label")
+            or "全库样本"
+        )
+    if not cm.get("one_liner"):
+        overall = context.get("overall") or {}
+        cm["one_liner"] = _first_sentence(
+            cm.get("one_liner")
+            or context.get("summary_conclusion")
+            or overall.get("reason")
+            or context.get("executive_summary")
+            or context.get("story")
+        )
+    else:
+        cm["one_liner"] = _first_sentence(cm.get("one_liner"))
+    cm.setdefault("frame", cover_frame_key(context.get("scenario")))
+    out["cover_meta"] = cm
+
+    # 个体建议 → 可照做动作句（模板可再调 actionable_advice）
+    overall = dict(out.get("overall") or {})
+    if overall.get("advice") is not None:
+        overall["advice"] = actionable_advice(
+            list(overall.get("advice") or []),
+            scenario=context.get("scenario"),
+        )
+        out["overall"] = overall
     return out
 
 

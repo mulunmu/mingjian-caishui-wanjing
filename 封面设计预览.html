@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>明鉴 · 报告封面设计预览（回纹 + 细网格）</title>
+<style>
+  :root {
+    --paper: #F7F4EE;
+    --ink-navy: #152446;
+    --ink-navy-deep: #0B1C3E;
+    --ink-sub: #5F687D;
+    --gold: #A18A5F;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    background: #EBE7DE; color: #2C2418; line-height: 1.6;
+    padding: 32px 20px 80px;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  h1.page { font-size: 21px; color: #0B1C3E; margin-bottom: 4px; }
+  p.sub { font-size: 13px; color: #5F687D; margin-bottom: 28px; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .cover-label { font-size: 13px; font-weight: bold; color: #5F687D; margin-bottom: 10px; }
+  .cover-label em { font-style: normal; }
+
+  /* 整页封面：底纹铺满，文字居中叠加（位置可用百分比任意调） */
+  .cover {
+    position: relative; aspect-ratio: 800 / 1120;
+    background: var(--paper); border: 1px solid #E3DED2; overflow: hidden;
+  }
+  .cover .frame { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .cover .txt { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; text-align: center; }
+
+  .brand { margin-top: 14%; font-size: 13px; letter-spacing: 5px; color: var(--ink-sub); }
+  .brand b { color: var(--gold); font-weight: 600; }
+
+  h2.title {
+    font-family: "SimSun", "STSong", "Songti SC", serif;
+    font-size: 34px; letter-spacing: 8px; font-weight: 700;
+    color: var(--ink-navy-deep); margin-top: 15%;
+  }
+  .rule { width: 120px; height: 2px; background: var(--gold); margin: 22px auto 0; }
+
+  .scenario { margin-top: 26px; font-size: 14px; letter-spacing: 6px; font-weight: 600; }
+  .scenario .seal {
+    display: inline-block; width: 40px; height: 40px; line-height: 40px;
+    border: 1px solid currentColor; border-radius: 2px; margin-bottom: 12px;
+    font-size: 18px; letter-spacing: 0; font-weight: 700;
+  }
+  .scenario .lbl { display: block; letter-spacing: 6px; }
+
+  .date { margin-top: auto; margin-bottom: 11%; font-size: 12px; color: var(--ink-sub); letter-spacing: 1px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1 class="page">明鉴 · 财税票 · 万景 — 报告封面设计预览（回纹 + 细网格）</h1>
+  <p class="sub">整页底纹：回纹边饰（四边）+ 细网格 + 四角菱章；文字居中叠加、位置用百分比可自由调。四个报告场景只换「强调色」，结构共用。</p>
+
+  <div class="grid">
+
+    <div>
+      <div class="cover-label">场景 <em style="color:#3A6EA5">放贷</em>（蓝）</div>
+      <div class="cover">
+        <img class="frame" src="cover_frame_loan.svg" alt="" />
+        <div class="txt">
+          <div class="brand">明鉴 · 财税票 · <b>万景</b></div>
+          <h2 class="title">企业风控报告</h2>
+          <div class="rule"></div>
+          <div class="scenario" style="color:#3A6EA5">
+            <span class="seal">贷</span><span class="lbl">放 贷 风 控</span>
+          </div>
+          <div class="date">2026 年 09 月 13 日</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="cover-label">场景 <em style="color:#A18A5F">评级</em>（金）</div>
+      <div class="cover">
+        <img class="frame" src="cover_frame_rating.svg" alt="" />
+        <div class="txt">
+          <div class="brand">明鉴 · 财税票 · <b>万景</b></div>
+          <h2 class="title">信用评级报告</h2>
+          <div class="rule"></div>
+          <div class="scenario" style="color:#A18A5F">
+            <span class="seal">级</span><span class="lbl">评 级 辅 助</span>
+          </div>
+          <div class="date">2026 年 09 月 13 日</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="cover-label">场景 <em style="color:#C87F1F">预警</em>（橙）</div>
+      <div class="cover">
+        <img class="frame" src="cover_frame_warn.svg" alt="" />
+        <div class="txt">
+          <div class="brand">明鉴 · 财税票 · <b>万景</b></div>
+          <h2 class="title">风险预警报告</h2>
+          <div class="rule"></div>
+          <div class="scenario" style="color:#C87F1F">
+            <span class="seal">警</span><span class="lbl">风 险 预 警</span>
+          </div>
+          <div class="date">2026 年 09 月 13 日</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="cover-label">场景 <em style="color:#A03C35">稽查</em>（红）</div>
+      <div class="cover">
+        <img class="frame" src="cover_frame_audit.svg" alt="" />
+        <div class="txt">
+          <div class="brand">明鉴 · 财税票 · <b>万景</b></div>
+          <h2 class="title">稽查线索报告</h2>
+          <div class="rule"></div>
+          <div class="scenario" style="color:#A03C35">
+            <span class="seal">查</span><span class="lbl">税 务 稽 查</span>
+          </div>
+          <div class="date">2026 年 09 月 13 日</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+</body>
+</html>

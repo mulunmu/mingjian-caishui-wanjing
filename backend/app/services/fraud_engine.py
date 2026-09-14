@@ -483,6 +483,17 @@ def analyze_metrics_batch(rows: list[tuple[str, str, str, str | None]], max_n: i
             }
             for r in flagged[:15]
         ],
+        # 全量异常名单（轻量字段），供对话下钻 group_by / top_list（脱敏展示）
+        "flagged_firms": [
+            {
+                "enterprise_id": r.get("enterprise_id"),
+                "display_label": r.get("display_label"),
+                "display_name": r.get("display_name"),
+                "industry_l1": r.get("industry_l1"),
+                "signals": r.get("signals") or [],
+            }
+            for r in flagged
+        ],
         "confidence": "computed",
         "precomputed_hits": len(eids) - len(miss),
         "mysql_fallback_n": mysql_fallback_n,

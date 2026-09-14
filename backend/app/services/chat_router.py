@@ -81,9 +81,16 @@ def _subscription_denied_claim(user: dict | None) -> Claim | None:
 
 
 async def _route_enterprise(
-    db: AsyncSession, query: str, enterprise_id: str, *, user: dict | None = None
+    db: AsyncSession,
+    query: str,
+    enterprise_id: str,
+    *,
+    user: dict | None = None,
+    scenario: str | None = None,
 ) -> dict:
-    """个体下钻：画像风控分析；「生成个体深度报告」时产出个体 PDF（脱敏：仅哈希 id）。"""
+    """个体下钻：按场景组织画像结论；「生成个体深度报告」时产出个体 PDF。"""
+    from app.services import scope_state as ss
+
     out: dict = {
         "claims": [],
         "followups": [],
@@ -96,6 +103,7 @@ async def _route_enterprise(
         "province": None,
     }
     intent_result = intent_engine.recognize(query)
+    sc = scenario or ss.detect_scenario(query)
     if intent_result.function in ("report", "email_report"):
         denied = _subscription_denied_claim(user)
         if denied:
@@ -125,14 +133,14 @@ async def _route_enterprise(
                     ],
                 )
             ]
-            out["followups"] = ["下载后核对附录数据说明", "继续追问同业基准", "回到个体画像"]
+            out["followups"] = ["下载后核对数据说明", "继续追问同业基准", "回到个体画像"]
             out["report_meta"] = {
                 "report_id": report_id,
                 "download_url": f"/api/v1/report/{report_id}/download",
                 "title": ctx.get("title"),
                 "validation": ctx.get("validation"),
             }
-            out["meta"] = {"enterprise_id": enterprise_id, "report_id": report_id}
+            out["meta"] = {"enterprise_id": enterprise_id, "report_id": report_id, "scope": "individual"}
             return out
         except Exception as exc:
             logger.warning("enterprise report failed: %s", exc)
@@ -152,12 +160,16 @@ async def _route_enterprise(
             out["meta"] = {"enterprise_id": enterprise_id, "report_error": str(exc)}
             return out
 
-    claims, meta = await judgment_service.build_enterprise_claims(db, enterprise_id)
+    # R3：分场景组织（数字仍来自同一批引擎结果）
+    claims, meta = await judgment_service.build_enterprise_scenario_claims(
+        db, enterprise_id, scenario=sc
+    )
     out["claims"] = claims
     out["meta"] = meta
     out["followups"] = judgment_service.derive_enterprise_followups(meta, claims)
     out["industry_l1"] = meta.get("industry_l1")
     out["province"] = meta.get("province")
+    out["intent"] = f"enterprise_{sc or 'overall'}"
     return out
 
 
@@ -382,8 +394,8 @@ async def _route_custom_report(
         reply = "已退出定制。你可以继续选固定报告，或随时再说「我要定制报告」。"
         followups = ["我要定制报告", *scenario_path_prompts()[:3]]
         meta["actions"] = [
-            {"label": "直接生成固定报告（6 套模板）", "target": "/report?wizard=1"},
-            {"label": "重新开始 AI 定制", "target": "/?custom=1"},
+            {"label": "直接生成固定报告（6 套模板）", "target": "/?wizard=1"},
+            {"label": "重新开始 AI 定制", "target": "/research?custom=1"},
         ]
     elif (state.get("stage") or "asking") == "propose":
         spec = state.get("spec")
@@ -460,7 +472,7 @@ async def _route_custom_report(
                         followups = ["再定制一份", "换成固定报告"]
                         meta["actions"] = [
                             {"label": "查看并下载报告", "target": f"/report?highlight={report_id}"},
-                            {"label": "再定制一份", "target": "/?custom=1"},
+                            {"label": "再定制一份", "target": "/research?custom=1"},
                         ]
                         meta["report_id"] = report_id
                         state["active"] = False
@@ -472,7 +484,7 @@ async def _route_custom_report(
                             "或调整行业/章节后重试，也可改用报告中心快捷模板。"
                         )
                         followups = ["重新开始定制", "打开报告生成向导"]
-                        meta["actions"] = [{"label": "打开报告生成向导", "target": "/report?wizard=1"}]
+                        meta["actions"] = [{"label": "打开报告生成向导", "target": "/?wizard=1"}]
                         meta["report_error"] = str(exc)
 
         # 3) propose 阶段非确认非调整 → 继续推进（允许用户口述改方案）
@@ -527,6 +539,9 @@ async def _route_custom_report(
         province=province,
         query=query,
         custom_report=state,
+        owner=_owner_email(user),
+        reply=reply,
+        followups=list(followups or []),
     )
 
     if guidance_cards:
@@ -660,21 +675,856 @@ async def _route_email_verify_code(
     )
 
 
+async def _fetch_demo_subject(db: AsyncSession) -> dict | None:
+    """演示企业：取清单第一家（脱敏名），不是静默默认——仅 switch_scope(use_demo) 时调用。"""
+    from sqlalchemy import select
+
+    from app.models.core_metrics import CoreMetrics
+
+    row = (
+        await db.execute(
+            select(
+                CoreMetrics.enterprise_id,
+                CoreMetrics.display_name,
+                CoreMetrics.display_label,
+            ).order_by(CoreMetrics.enterprise_id).limit(1)
+        )
+    ).first()
+    if not row:
+        return None
+    return {
+        "enterprise_id": row[0],
+        "display_name": row[1] or row[2] or "企业1",
+    }
+
+
+def _attach_ui(result: dict, dialogue_state: dict, *, sample_count: int | None = None) -> dict:
+    from app.services import scope_state as ss
+
+    ui = ss.ui_bundle(dialogue_state, sample_count=sample_count)
+    result["dialogue_state"] = ss.state_public(dialogue_state)
+    result["ui"] = {
+        "welcome": ui["welcome"],
+        "chips": ui["chips"],
+        "scope_bar": ui["scope_bar"],
+        "scenario_buttons": ui["scenario_buttons"],
+    }
+    data = result.setdefault("data", {})
+    data["dialogue_state"] = result["dialogue_state"]
+    data["ui"] = result["ui"]
+    if not data.get("followup_items") and ui.get("chips"):
+        data["followup_items"] = ui["chips"]
+        data["followups"] = [c.get("label") for c in ui["chips"] if c.get("label")]
+    return result
+
+
 async def route_chat(
     db: AsyncSession,
     query: str,
     session_id: str | None = None,
     enterprise_id: str | None = None,
     user: dict | None = None,
+    followup: dict | None = None,
 ) -> dict:
-    sid = await run_blocking(session_store.ensure_session_id, session_id)
-    session_context = (await run_blocking(session_store.get_session, sid)) or {}
-    if not enterprise_id:
-        enterprise_id = session_context.get("enterprise_id")
+    from app.services import followup_items as fu
+    from app.services import scope_state as ss
 
-    # 邮件验证码回复拦截：上一轮对「非受信邮箱」发起了待验证，本轮回复 6 位验证码
+    owner = _owner_email(user) if user else None
+    sid = await run_blocking(session_store.ensure_session_id, session_id, owner)
+    session_context = (await run_blocking(session_store.get_session, sid)) or {}
+
+    # 范围状态：唯一真源（不再用请求里的 enterprise_id 静默钉死个体）
+    dialogue_state = ss.normalize_dialogue_state(
+        {
+            **(session_context.get("dialogue_state") or {}),
+            "scope": (session_context.get("dialogue_state") or {}).get("scope")
+            or session_context.get("scope"),
+            "subject": (session_context.get("dialogue_state") or {}).get("subject")
+            or session_context.get("subject"),
+            "scenario": (session_context.get("dialogue_state") or {}).get("scenario")
+            or session_context.get("scenario"),
+            "inventory_focus": (session_context.get("dialogue_state") or {}).get("inventory_focus"),
+            "enterprise_id": session_context.get("enterprise_id"),
+        }
+    )
+    # 兼容：显式传入 enterprise_id 且当前 unbound → 视为「选中这家」切换（列表点选）
+    if enterprise_id and dialogue_state.get("scope") == "unbound":
+        dialogue_state = ss.switch_scope(
+            dialogue_state,
+            target="individual",
+            subject={"enterprise_id": enterprise_id, "display_name": "选定企业"},
+        )
+    elif enterprise_id and dialogue_state.get("scope") == "individual":
+        sub = dialogue_state.get("subject") or {}
+        if sub.get("enterprise_id") != enterprise_id:
+            dialogue_state = ss.switch_scope(
+                dialogue_state,
+                target="individual",
+                subject={"enterprise_id": enterprise_id, "display_name": sub.get("display_name") or "选定企业"},
+            )
+
+    # ── bootstrap：首屏只下发 state 派生 UI，不算数 ──
+    if followup and isinstance(followup, dict) and followup.get("type") == "bootstrap":
+        ui = ss.ui_bundle(dialogue_state)
+        await run_blocking(
+            session_store.store_session,
+            sid,
+            intent="bootstrap",
+            function="general",
+            query="bootstrap",
+            owner=owner,
+            reply=ui["welcome"],
+            followups=fu.labels_of(ui["chips"]),
+            dialogue_state=dialogue_state,
+        )
+        return _attach_ui(
+            {
+                "reply": ui["welcome"],
+                "reply_source": "template",
+                "analysis_mode": "rule",
+                "parse_source": "bootstrap",
+                "intent": "bootstrap",
+                "function": "general",
+                "session_id": sid,
+                "data": {
+                    "followups": fu.labels_of(ui["chips"]),
+                    "followup_items": ui["chips"],
+                    "claims": [],
+                    "evidence_hidden": True,
+                },
+            },
+            dialogue_state,
+        )
+
+    # ── switch_scope：显式切换范围 ──
+    if followup and isinstance(followup, dict) and followup.get("type") == "switch_scope":
+        params = followup.get("params") if isinstance(followup.get("params"), dict) else {}
+        target = str(followup.get("target") or params.get("target") or "").strip()
+        if params.get("open_picker"):
+            ui = ss.ui_bundle(dialogue_state)
+            return _attach_ui(
+                {
+                    "reply": "请从右侧列表点选一家企业；选中后我会把范围切到该个体。",
+                    "reply_source": "template",
+                    "parse_source": "switch_scope",
+                    "session_id": sid,
+                    "data": {
+                        "followups": fu.labels_of(ui["chips"]),
+                        "followup_items": ui["chips"],
+                        "claims": [],
+                        "open_picker": True,
+                        "evidence_hidden": True,
+                    },
+                },
+                dialogue_state,
+            )
+        subject = None
+        if target == "individual":
+            if params.get("use_demo"):
+                subject = await _fetch_demo_subject(db)
+                if not subject:
+                    return _attach_ui(
+                        {
+                            "reply": "暂无可用演示企业，请先接入数据或从列表选择。",
+                            "reply_source": "template",
+                            "parse_source": "switch_scope",
+                            "session_id": sid,
+                            "data": {"followup_items": ss.unbound_entry_items(), "claims": []},
+                        },
+                        dialogue_state,
+                    )
+            elif params.get("enterprise_id"):
+                subject = {
+                    "enterprise_id": params["enterprise_id"],
+                    "display_name": params.get("display_name") or "选定企业",
+                }
+            elif (dialogue_state.get("subject") or {}).get("enterprise_id"):
+                subject = dialogue_state["subject"]
+            else:
+                return _attach_ui(
+                    {
+                        "reply": "请指定要分析的企业（试用演示或从列表选）。",
+                        "reply_source": "template",
+                        "parse_source": "switch_scope",
+                        "session_id": sid,
+                        "data": {"followup_items": ss.unbound_entry_items(), "claims": []},
+                    },
+                    dialogue_state,
+                )
+        try:
+            dialogue_state = ss.switch_scope(dialogue_state, target=target, subject=subject)
+        except ValueError as exc:
+            return _attach_ui(
+                {
+                    "reply": f"无法切换范围：{exc}",
+                    "reply_source": "template",
+                    "session_id": sid,
+                    "data": {"claims": [], "followup_items": ss.unbound_entry_items()},
+                },
+                dialogue_state,
+            )
+        ui = ss.ui_bundle(dialogue_state)
+        pending_q = (params.get("pending_query") or "").strip()
+        # 「看全库」chip ≡ 范围清单：切到 cohort 后报真实库存（不弃权）
+        if target == "cohort" and not pending_q:
+            from app.services import inventory_scope as inv
+
+            inv_out = await inv.inventory_answer(
+                db, dialogue_state, ask_kind="overview"
+            )
+            items = inv_out.get("followup_items") or ss.unbound_entry_items()
+            reply = inv_out.get("reply") or ui["welcome"]
+            await run_blocking(
+                session_store.store_session,
+                sid,
+                intent="negotiate_scope",
+                function="inventory",
+                query=followup.get("label") or "看全库",
+                owner=owner,
+                reply=reply,
+                followups=fu.labels_of(items),
+                dialogue_state=dialogue_state,
+            )
+            return _attach_ui(
+                {
+                    "reply": reply,
+                    "reply_source": "template",
+                    "parse_source": "negotiate_scope",
+                    "intent": "negotiate_scope",
+                    "function": "inventory",
+                    "session_id": sid,
+                    "data": {
+                        "followups": fu.labels_of(items),
+                        "followup_items": items,
+                        "claims": claims_to_dict(inv_out.get("claims") or []),
+                        "evidence_hidden": True,
+                        "slice": inv_out.get("meta") or {},
+                    },
+                },
+                dialogue_state,
+                sample_count=inv_out.get("sample_count"),
+            )
+        await run_blocking(
+            session_store.store_session,
+            sid,
+            intent=f"switch_scope_{target}",
+            function="general",
+            query=followup.get("label") or f"切换到{target}",
+            owner=owner,
+            reply=ui["welcome"],
+            followups=fu.labels_of(ui["chips"]),
+            dialogue_state=dialogue_state,
+            enterprise_id=(dialogue_state.get("subject") or {}).get("enterprise_id"),
+        )
+        if pending_q:
+            # 切完范围后立刻回答原问句
+            return await route_chat(
+                db,
+                pending_q,
+                session_id=sid,
+                user=user,
+                followup=None,
+            )
+        return _attach_ui(
+            {
+                "reply": ui["welcome"],
+                "reply_source": "template",
+                "parse_source": "switch_scope",
+                "intent": f"switch_scope_{target}",
+                "function": "general",
+                "session_id": sid,
+                "enterprise_id": (dialogue_state.get("subject") or {}).get("enterprise_id"),
+                "data": {
+                    "followups": fu.labels_of(ui["chips"]),
+                    "followup_items": ui["chips"],
+                    "claims": [],
+                    "evidence_hidden": True,
+                },
+            },
+            dialogue_state,
+        )
+
+    # ── 刀 1：结构化下钻（不把建议句当新 query 复读）──
+    if followup and isinstance(followup, dict) and followup.get("type") == "drilldown":
+        # 下钻要求 cohort 或已有 active_conclusion；无则反问
+        if dialogue_state.get("scope") == "individual" and not session_context.get("active_conclusion"):
+            resolved = ss.resolve_scope("哪里可疑要查？", dialogue_state)
+            if resolved["status"] != "ok":
+                pass
+        drill = await fu.run_drilldown(
+            db,
+            op=str(followup.get("op") or ""),
+            claim_id=followup.get("claim_id"),
+            params=followup.get("params") if isinstance(followup.get("params"), dict) else {},
+            session_context=session_context,
+        )
+        claims = drill.get("claims") or []
+        followup_items = drill.get("followup_items") or fu.build_default_followups()
+        followups = fu.labels_of(followup_items)
+        meta = drill.get("meta") or {}
+        function = meta.get("function") or "fraud"
+        dimension = "signal"
+        intent = f"drilldown_{followup.get('op')}"
+        industry_l1 = None
+        province = None
+        sq = None
+        report_meta = None
+        if not drill.get("ok"):
+            reply = drill.get("reply") or "下钻失败。"
+            reply_source = "template"
+        else:
+            reply, bundle, reply_source = await llm_reply.generate_claim_reply(
+                followup.get("label") or query or "下钻",
+                claims,
+                followups,
+                report_hint=None,
+            )
+            if not (reply or "").strip():
+                reply = llm_reply._template_from_claims(
+                    claims, followups, with_prefix=False, report_hint=None, query=query
+                )
+                reply_source = "template"
+        charts = meta.get("charts")
+        conclusion_id = await run_blocking(
+            conclusion_store.save_conclusion,
+            session_id=sid,
+            function=function,
+            dimension=dimension,
+            claims=claims,
+            followups=followups,
+            evidence_hidden=True,
+            meta=meta,
+        )
+        active = {
+            "claim_id": followup.get("claim_id") or "c_fraud_flagged",
+            "meta": {
+                "flagged_count": meta.get("flagged_count"),
+                "sample_count": meta.get("sample_count"),
+                "signal_counts": meta.get("signal_counts"),
+                "flagged_firms": meta.get("flagged_firms") or meta.get("top_flags"),
+                "top_flags": meta.get("top_flags"),
+                "function": "fraud",
+            },
+        }
+        # 下钻成功时切到 cohort（舞弊名单是群体切片）
+        if drill.get("ok"):
+            dialogue_state = ss.switch_scope(dialogue_state, target="cohort")
+        await run_blocking(
+            session_store.store_session,
+            sid,
+            intent=intent,
+            function=function,
+            dimension=dimension,
+            query=followup.get("label") or query,
+            conclusion_id=conclusion_id,
+            owner=owner,
+            reply=reply,
+            followups=followups,
+            active_conclusion=active,
+            dialogue_state=dialogue_state,
+        )
+        return _attach_ui(
+            {
+                "reply": reply,
+                "reply_source": reply_source,
+                "analysis_mode": "rule",
+                "parse_source": "drilldown",
+                "judgment_modes": {"analysis": "rule", "parse": "drilldown", "narration": reply_source},
+                "intent": intent,
+                "function": function,
+                "dimension": dimension,
+                "session_id": sid,
+                "conclusion_id": conclusion_id,
+                "charts": charts,
+                "data": {
+                    "function": function,
+                    "dimension": dimension,
+                    "claims": claims_to_dict(claims),
+                    "followups": followups,
+                    "followup_items": followup_items,
+                    "conclusion_id": conclusion_id,
+                    "evidence_hidden": True,
+                    "actions": [],
+                    "slice": meta,
+                },
+            },
+            dialogue_state,
+        )
+
+    # action 类型不应打到后端复读；若误传，直接返回提示
+    if followup and isinstance(followup, dict) and followup.get("type") == "action":
+        hint = ((followup.get("params") or {}) if isinstance(followup.get("params"), dict) else {}).get(
+            "hint"
+        ) or "这是人工核查动作，请按名单自行调证；系统不会复述为新的分析结论。"
+        items = fu.build_fraud_followups((session_context.get("active_conclusion") or {}).get("meta") or {})
+        return _attach_ui(
+            {
+                "reply": hint,
+                "reply_source": "template",
+                "analysis_mode": "rule",
+                "parse_source": "action",
+                "session_id": sid,
+                "data": {
+                    "followups": fu.labels_of(items),
+                    "followup_items": items,
+                    "claims": [],
+                    "evidence_hidden": True,
+                },
+            },
+            dialogue_state,
+        )
+
+    # ── DialogAct：先判 act，再分发（唯一硬性顺序）──
+    from app.services import dialog_act as da
+    from app.services import inventory_scope as inv
+
+    classify_state = {
+        **dialogue_state,
+        "custom_report": session_context.get("custom_report"),
+    }
+    # 多意图拼句（可继续追问：A；B；C）→ 请选一项，禁止合成假 drill
+    if not (followup and isinstance(followup, dict) and followup.get("type") in (
+        "dialog_act", "drilldown", "action", "navigate", "switch_scope", "bootstrap",
+    )):
+        multi_parts = da.split_multi_intent(query or "")
+        if multi_parts:
+            clar = da.multi_intent_clarify(multi_parts)
+            items = clar["followup_items"]
+            await run_blocking(
+                session_store.store_session,
+                sid,
+                intent="multi_intent",
+                function="general",
+                query=query,
+                owner=owner,
+                reply=clar["reply"],
+                followups=fu.labels_of(items),
+                dialogue_state=dialogue_state,
+            )
+            return _attach_ui(
+                {
+                    "reply": clar["reply"],
+                    "reply_source": "template",
+                    "parse_source": "multi_intent",
+                    "intent": "multi_intent",
+                    "function": "general",
+                    "session_id": sid,
+                    "data": {
+                        "followups": fu.labels_of(items),
+                        "followup_items": items,
+                        "claims": [],
+                        "dialog_act": clar.get("dialog_act"),
+                    },
+                },
+                dialogue_state,
+            )
+
+    act = da.from_followup(followup)
+    if act is None:
+        act = await da.classify(query, classify_state)
+    else:
+        act = da.merge_inventory_focus(act, classify_state)
+
+    # 寒暄：短应答 + 入口 chips，不进分析门禁
+    if act.act == "meta_session" and da.looks_greeting(query or ""):
+        ui = ss.ui_bundle(dialogue_state)
+        items = ui.get("chips") or ss.unbound_entry_items()
+        scope = dialogue_state.get("scope") or "unbound"
+        if scope == "individual":
+            name = (dialogue_state.get("subject") or {}).get("display_name") or "当前企业"
+            reply = f"你好。当前在看「{name}」。想继续问风险，或换一家 / 看全库都可以。"
+        elif scope == "cohort":
+            focus = dialogue_state.get("analysis_focus") or dialogue_state.get("inventory_focus") or {}
+            ind = focus.get("industry_l1") or "全库群体"
+            reply = f"你好。当前群体焦点是「{ind}」。可以直接问趋势、预警或生成报告。"
+        else:
+            reply = "你好。可以先看能分析哪些企业，或试用演示 / 看全库群体。"
+        await run_blocking(
+            session_store.store_session,
+            sid,
+            intent="meta_greeting",
+            function="general",
+            query=query,
+            owner=owner,
+            reply=reply,
+            followups=fu.labels_of(items),
+            dialogue_state=dialogue_state,
+        )
+        return _attach_ui(
+            {
+                "reply": reply,
+                "reply_source": "template",
+                "parse_source": "meta_greeting",
+                "intent": "meta_greeting",
+                "function": "general",
+                "session_id": sid,
+                "data": {
+                    "followups": fu.labels_of(items),
+                    "followup_items": items,
+                    "claims": [],
+                    "dialog_act": act.model_dump(),
+                },
+            },
+            dialogue_state,
+        )
+
+    # 定制报告：与协商/分析同级一等能力
+    if act.act == "custom_report":
+        return await _route_custom_report(
+            db, query or "我要定制报告", sid, user=user, session_context=session_context
+        )
+
+    # 低置信 / 乱答：反问澄清，不停机、不甩 FAQ
+    if da.needs_clarify(act) and not (followup and followup.get("type") in ("dialog_act", "query")):
+        clar = da.clarify_payload(act)
+        items = clar["followup_items"]
+        await run_blocking(
+            session_store.store_session,
+            sid,
+            intent="clarify",
+            function="general",
+            query=query,
+            owner=owner,
+            reply=clar["reply"],
+            followups=fu.labels_of(items),
+            dialogue_state=dialogue_state,
+        )
+        return _attach_ui(
+            {
+                "reply": clar["reply"],
+                "reply_source": "template",
+                "parse_source": "clarify",
+                "intent": "clarify",
+                "function": "general",
+                "session_id": sid,
+                "data": {
+                    "followups": fu.labels_of(items),
+                    "followup_items": items,
+                    "claims": [],
+                    "evidence_hidden": True,
+                    "dialog_act": act.model_dump(),
+                },
+            },
+            dialogue_state,
+        )
+
+    # negotiate_scope：按 ask_kind/filters 答这一问（数字从引擎，不弃权）
+    if act.act == "negotiate_scope":
+        inv_out = await inv.inventory_answer(
+            db,
+            dialogue_state,
+            ask_kind=act.ask_kind or "overview",
+            industry_l1=act.industry_l1,
+            province=act.province,
+        )
+        if act.scope_target == "cohort":
+            dialogue_state = ss.switch_scope(dialogue_state, target="cohort")
+        if inv_out.get("inventory_focus"):
+            dialogue_state = {**dialogue_state, "inventory_focus": inv_out["inventory_focus"]}
+        elif (act.ask_kind or "overview") == "overview":
+            dialogue_state = {**dialogue_state, "inventory_focus": None}
+        items = inv_out.get("followup_items") or ss.unbound_entry_items()
+        reply = inv_out.get("reply") or ""
+        await run_blocking(
+            session_store.store_session,
+            sid,
+            intent="negotiate_scope",
+            function="inventory",
+            query=query or "negotiate_scope",
+            owner=owner,
+            reply=reply,
+            followups=fu.labels_of(items),
+            dialogue_state=dialogue_state,
+        )
+        return _attach_ui(
+            {
+                "reply": reply,
+                "reply_source": "template",
+                "parse_source": "negotiate_scope",
+                "intent": "negotiate_scope",
+                "function": "inventory",
+                "session_id": sid,
+                "data": {
+                    "followups": fu.labels_of(items),
+                    "followup_items": items,
+                    "claims": claims_to_dict(inv_out.get("claims") or []),
+                    "evidence_hidden": True,
+                    "dialog_act": act.model_dump(),
+                    "slice": inv_out.get("meta") or {},
+                },
+            },
+            dialogue_state,
+            sample_count=inv_out.get("sample_count"),
+        )
+
+    # bind_subject：解析 subject_ref → 切 scope，有场景则续答分析
+    if act.act == "bind_subject":
+        cur = (dialogue_state.get("subject") or {}).get("enterprise_id")
+        subject = await inv.resolve_subject_ref(db, act.subject_ref, current_eid=cur)
+        if not subject:
+            items = ss.unbound_entry_items()
+            reply = "暂时找不到可绑定的企业，请试用演示、从列表选，或先问能分析哪些。"
+            return _attach_ui(
+                {
+                    "reply": reply,
+                    "reply_source": "template",
+                    "parse_source": "bind_subject",
+                    "session_id": sid,
+                    "data": {
+                        "followups": fu.labels_of(items),
+                        "followup_items": items,
+                        "claims": [],
+                        "dialog_act": act.model_dump(),
+                    },
+                },
+                dialogue_state,
+            )
+        dialogue_state = ss.switch_scope(dialogue_state, target="individual", subject=subject)
+        if act.scenario:
+            dialogue_state = {**dialogue_state, "scenario": act.scenario}
+            # 续答：把原问句当 analyze 再跑一轮
+            return await route_chat(
+                db,
+                query or f"{subject.get('display_name')}风险怎么样",
+                session_id=sid,
+                user=user,
+                followup={
+                    "type": "dialog_act",
+                    "label": query or "继续分析",
+                    "params": {
+                        "act": "analyze",
+                        "scenario": act.scenario,
+                        "scope_target": "individual",
+                        "confidence": 1.0,
+                    },
+                },
+            )
+        ui = ss.ui_bundle(dialogue_state)
+        await run_blocking(
+            session_store.store_session,
+            sid,
+            intent="bind_subject",
+            function="general",
+            query=query or act.subject_ref or "bind",
+            owner=owner,
+            reply=ui["welcome"],
+            followups=fu.labels_of(ui["chips"]),
+            dialogue_state=dialogue_state,
+            enterprise_id=subject.get("enterprise_id"),
+        )
+        return _attach_ui(
+            {
+                "reply": ui["welcome"],
+                "reply_source": "template",
+                "parse_source": "bind_subject",
+                "intent": "bind_subject",
+                "function": "general",
+                "session_id": sid,
+                "enterprise_id": subject.get("enterprise_id"),
+                "data": {
+                    "followups": fu.labels_of(ui["chips"]),
+                    "followup_items": ui["chips"],
+                    "claims": [],
+                    "evidence_hidden": True,
+                    "dialog_act": act.model_dump(),
+                },
+            },
+            dialogue_state,
+        )
+
+    # meta_session：读 state，不跑分析
+    if act.act == "meta_session":
+        want_synthesis = bool(
+            re.search(r"帮我综合|综合一下|汇总这几轮|会话综合", query or "")
+        ) or bool(re.search(r"帮我综合|综合一下|汇总这几轮|会话综合", (followup or {}).get("label") or ""))
+        if want_synthesis:
+            # 交给后续个体/群体路径开 synthesis；先确保有范围
+            act = da.DialogAct(
+                act="analyze",
+                scope_target="cohort" if dialogue_state.get("scope") == "cohort" else (
+                    "individual" if dialogue_state.get("scope") == "individual" else None
+                ),
+                confidence=1.0,
+            )
+            # fall through to analyze after setting flag
+            pass
+        else:
+            scope = dialogue_state.get("scope") or "unbound"
+            sub = dialogue_state.get("subject") or {}
+            name = sub.get("display_name")
+            if scope == "individual" and name:
+                reply = f"当前在看个体「{name}」。可以问能贷、信用、不对劲或可疑；也可换一家或看全库。"
+            elif scope == "cohort":
+                reply = "当前是全库群体视角。可以问哪里信号最多、按行业拆；若要问「这家」，请先选一家。"
+            else:
+                reply = "还没选定范围。你可以问能分析哪些企业，或试用演示 / 列表选 / 看全库。"
+            items = ss.ui_bundle(dialogue_state)["chips"]
+            await run_blocking(
+                session_store.store_session,
+                sid,
+                intent="meta_session",
+                function="general",
+                query=query or "meta",
+                owner=owner,
+                reply=reply,
+                followups=fu.labels_of(items),
+                dialogue_state=dialogue_state,
+            )
+            return _attach_ui(
+                {
+                    "reply": reply,
+                    "reply_source": "template",
+                    "parse_source": "meta_session",
+                    "intent": "meta_session",
+                    "session_id": sid,
+                    "data": {
+                        "followups": fu.labels_of(items),
+                        "followup_items": items,
+                        "claims": [],
+                        "dialog_act": act.model_dump(),
+                    },
+                },
+                dialogue_state,
+            )
+
+    # product_faq：收窄 FAQ，不抢协商
+    if act.act == "product_faq":
+        from app.services.faq_kb import build_faq_claims
+
+        faq_claims, faq_meta = build_faq_claims(query or "")
+        items = fu.build_faq_followups()
+        # 出口带上范围协商，避免 FAQ 闭环
+        items = [
+            fu.item(
+                type="dialog_act",
+                label="我能分析哪些企业？",
+                params={"act": "negotiate_scope", "confidence": 1.0},
+            ),
+            *items,
+        ][:6]
+        reply = faq_claims[0].claim if faq_claims else "暂无对应说明。"
+        await run_blocking(
+            session_store.store_session,
+            sid,
+            intent="product_faq",
+            function="faq",
+            query=query or "faq",
+            owner=owner,
+            reply=reply,
+            followups=fu.labels_of(items),
+            dialogue_state=dialogue_state,
+        )
+        return _attach_ui(
+            {
+                "reply": reply,
+                "reply_source": "template",
+                "parse_source": "product_faq",
+                "intent": "product_faq",
+                "function": "faq",
+                "session_id": sid,
+                "data": {
+                    "followups": fu.labels_of(items),
+                    "followup_items": items,
+                    "claims": claims_to_dict(faq_claims),
+                    "actions": faq_meta.get("actions") or [],
+                    "dialog_act": act.model_dump(),
+                },
+            },
+            dialogue_state,
+        )
+
+    # drill：仅结构化 drilldown 且 op∈DRILLDOWN_OPS；否则降为 analyze（禁止假下钻）
+    if act.act == "drill":
+        op = (act.drill_op or (followup or {}).get("op") if followup else None) or ""
+        structured = bool(followup and followup.get("type") == "drilldown")
+        if structured and op in fu.DRILLDOWN_OPS:
+            # 已有合法 drilldown followup：上方 early return 已处理；此处不应再合成
+            pass
+        else:
+            # 继续分析路径：真实性/地区/趋势等
+            act = da.DialogAct(
+                act="analyze",
+                scenario=act.scenario or "warn",
+                scope_target=act.scope_target or "cohort",
+                industry_l1=act.industry_l1,
+                province=act.province,
+                confidence=max(float(act.confidence or 0.7), 0.7),
+            )
+
+    # analyze / drill：仅此时跑 resolve_scope 门禁（R2）
+    want_synthesis = bool(re.search(r"帮我综合|综合一下|汇总这几轮|会话综合", query or ""))
+    if act.act == "meta_session" and want_synthesis:
+        want_synthesis = True
+
+    required = act.scope_target
+    if required is None and act.act in ("analyze", "drill"):
+        # 槽位未填：沿用当前 scope；unbound 则按场景默认个体，无场景则反问
+        cur = dialogue_state.get("scope") or "unbound"
+        if cur in ("individual", "cohort"):
+            required = cur
+        elif act.scenario in ("loan", "rating", "warn", "audit"):
+            required = "individual"
+        else:
+            required = None
+
+    if act.act in ("analyze", "drill"):
+        resolved = ss.resolve_scope(
+            query,
+            dialogue_state,
+            followup=followup,
+            required=required,
+            scenario=act.scenario,
+            use_infer=False,
+        )
+    else:
+        resolved = {"status": "ok", "state": dialogue_state, "scenario": act.scenario}
+
+    if resolved.get("auto_switched"):
+        dialogue_state = resolved["state"]
+    if resolved["status"] in ("ask_bind", "confirm_switch"):
+        items = resolved.get("followup_items") or ss.unbound_entry_items()
+        for it in items:
+            if it.get("type") == "switch_scope" and (it.get("params") or {}).get("use_demo"):
+                it.setdefault("params", {})["pending_query"] = query
+        await run_blocking(
+            session_store.store_session,
+            sid,
+            intent=f"scope_{resolved['status']}",
+            function="general",
+            query=query,
+            owner=owner,
+            reply=resolved.get("reply"),
+            followups=fu.labels_of(items),
+            dialogue_state=dialogue_state,
+        )
+        return _attach_ui(
+            {
+                "reply": resolved.get("reply") or "请先选择分析范围。",
+                "reply_source": "template",
+                "parse_source": "scope_guard",
+                "intent": f"scope_{resolved['status']}",
+                "function": "general",
+                "session_id": sid,
+                "data": {
+                    "followups": fu.labels_of(items),
+                    "followup_items": items,
+                    "claims": [],
+                    "evidence_hidden": True,
+                    "scope_guard": resolved["status"],
+                    "dialog_act": act.model_dump(),
+                },
+            },
+            dialogue_state,
+        )
+
+    dialogue_state = resolved["state"]
+    scenario = act.scenario or resolved.get("scenario") or dialogue_state.get("scenario")
+    if scenario:
+        dialogue_state = {**dialogue_state, "scenario": scenario}
+
+    # 邮件验证码回复拦截
     pending = session_context.get("pending_email_verification")
-    if pending and not enterprise_id and _VERIFY_CODE_RE.fullmatch((query or "").strip()):
+    if pending and dialogue_state.get("scope") != "individual" and _VERIFY_CODE_RE.fullmatch((query or "").strip()):
         return await _route_email_verify_code(
             db, sid, query, pending, user=user, session_context=session_context
         )
@@ -683,8 +1533,12 @@ async def route_chat(
     intent_result: IntentResult | None = None
     sq: SemanticQuery | None = None
 
-    if enterprise_id:
-        branch = await _route_enterprise(db, query, enterprise_id, user=user)
+    # 个体：按场景组织（R3），不再一律画像 dump
+    if dialogue_state.get("scope") == "individual" and (dialogue_state.get("subject") or {}).get("enterprise_id"):
+        enterprise_id = dialogue_state["subject"]["enterprise_id"]
+        branch = await _route_enterprise(
+            db, query, enterprise_id, user=user, scenario=scenario
+        )
         claims = branch["claims"]
         followups = branch["followups"]
         meta = branch["meta"]
@@ -694,25 +1548,67 @@ async def route_chat(
         report_meta = branch["report_meta"]
         industry_l1 = branch["industry_l1"]
         province = branch["province"]
+        if want_synthesis:
+            meta["include_synthesis"] = True
     else:
+        # 全库 / 未绑定但问句不强制个体（FAQ 等）
+        enterprise_id = None
         intent_result = intent_engine.recognize(query, session_context=session_context)
         function = intent_result.function
         dimension = intent_result.dimension
         intent = intent_result.intent
         industry_l1 = intent_result.industry_l1
         province = intent_result.province
+        # DialogAct=analyze 时禁止落 general：按场景对齐引擎 function（根贯通）
+        if act.act == "analyze" and intent_result.function == "general":
+            _sc_fn = {
+                "warn": ("signal", "signal"),
+                "audit": ("fraud", "overall"),
+                "loan": ("score", "overall"),
+                "rating": ("score", "overall"),
+            }
+            mf, md = _sc_fn.get(act.scenario or "warn", ("signal", "signal"))
+            intent_result.function = mf
+            intent_result.dimension = md
+            intent_result.intent = f"{mf}_{md}"
+            function, dimension, intent = mf, md, intent_result.intent
+        # DialogAct / 会话分析焦点 → 覆盖引擎槽位（根贯通，非补丁）
+        if act.industry_l1:
+            industry_l1 = act.industry_l1
+            intent_result.industry_l1 = act.industry_l1
+        if act.province:
+            province = act.province
+            intent_result.province = act.province
+        expand_all = bool(
+            re.search(r"各行业|全库|全样本|全部样本|看全部", query or "")
+        )
+        if not expand_all:
+            af = dialogue_state.get("analysis_focus") or {}
+            invf = dialogue_state.get("inventory_focus") or {}
+            if not industry_l1:
+                industry_l1 = af.get("industry_l1") or invf.get("industry_l1")
+                if industry_l1:
+                    intent_result.industry_l1 = industry_l1
+            if not province:
+                province = af.get("province") or invf.get("province")
+                if province:
+                    intent_result.province = province
+        else:
+            # 显式扩全库：清本轮行业焦点
+            industry_l1 = None
+            intent_result.industry_l1 = None
 
-        # 定制报告：显式「定制」意图，或会话处于定制对话中 → AI 定制状态机（先于 FAQ/报告分支）
+        # 定制报告
         custom_state = session_context.get("custom_report")
         if (custom_state and custom_state.get("active")) or function == "custom_report":
             return await _route_custom_report(db, query, sid, user=user, session_context=session_context)
 
-        # FAQ/口径前置（规则层，先于「报告*」关键词）：产品说明/口径问句走 FAQ/方法论，
-        # 避免「报告怎么生成」被 report 意图劫持成真报告生成。
-        faq_sq = semantic_query.detect_faq_or_methodology(query)
+        # analyze 路径禁止 FAQ 抢答（协商/分析已由 DialogAct 分流）
+        faq_sq = None
+        if act.act not in ("analyze", "drill"):
+            faq_sq = semantic_query.detect_faq_or_methodology(query)
 
         if faq_sq is None and function in ("report", "email_report"):
-            # 报告意图走规则路径，直接调 run_judgment（保留覆盖度 claims + 严格审计测试）
             try:
                 claims, followups, meta = await judgment_service.run_judgment(db, intent_result, sid)
             except Exception as exc:
@@ -729,10 +1625,8 @@ async def route_chat(
                 meta = {"error": str(exc)}
         else:
             if faq_sq is not None:
-                # 规则层已判定 FAQ/口径 → 直接采用，跳过 LLM 解析
                 sq = faq_sq
             else:
-                # LLM 优先：结构化解析 NL → SemanticQuery；失败降级规则转换
                 if llm_reply.llm_available():
                     try:
                         parsed = await llm_semantic_parser.parse_semantic_query(
@@ -742,12 +1636,38 @@ async def route_chat(
                         )
                         if parsed is not None:
                             sq = semantic_query.correct_semantic_query(parsed, session_context)
+                            sq = semantic_query.prefer_trend_over_spurious_comparison(
+                                sq, query, intent=intent_result
+                            )
+                            from app.schemas.semantic_query import QueryType as _QT
+
+                            _analysis = {
+                                "fraud",
+                                "signal",
+                                "score",
+                                "authenticity",
+                                "benchmark",
+                                "trend",
+                            }
+                            # analyze/drill 动作下 LLM 不得改写成 FAQ（含「群体风险…然后呢」）
+                            if sq.query_type in (_QT.faq, _QT.methodology) and (
+                                intent_result.function in _analysis
+                                or act.act in ("analyze", "drill")
+                            ):
+                                logger.info(
+                                    "reject llm faq for analysis act=%s fn=%s q=%r",
+                                    act.act,
+                                    intent_result.function,
+                                    query[:40],
+                                )
+                                sq = semantic_query.intent_to_semantic_query(intent_result)
                     except Exception as exc:
                         logger.debug("semantic parse failed: %s", exc)
                 if sq is None:
-                    # 对比前置：无 LLM（或 LLM 解析失败）时，识别「A 和 B 对比」产出 comparison，
-                    # 否则再退回规则意图转换，避免把「江西和湖南对比」误判成普通切片。
                     sq = semantic_query.detect_rule_comparison(query) or semantic_query.intent_to_semantic_query(intent_result)
+                    sq = semantic_query.prefer_trend_over_spurious_comparison(
+                        sq, query, intent=intent_result
+                    )
 
             prev_sq = semantic_query.semantic_query_from_dict(
                 (session_context or {}).get("last_semantic_query")
@@ -762,7 +1682,9 @@ async def route_chat(
             industry_l1 = (sq.filters.get("industry_l1") or [None])[0]
             province = (sq.filters.get("province") or [None])[0]
             try:
-                claims, followups, meta = await judgment_service.run_semantic_query(db, sq, sid, intent=intent_result)
+                claims, followups, meta = await judgment_service.run_semantic_query(
+                    db, sq, sid, intent=intent_result
+                )
             except Exception as exc:
                 logger.warning("semantic judgment failed: %s", exc)
                 claims = [
@@ -775,6 +1697,10 @@ async def route_chat(
                 ]
                 followups = judgment_service.DEFAULT_FOLLOWUPS["general"]
                 meta = {"error": str(exc)}
+            if want_synthesis:
+                meta["include_synthesis"] = True
+                # 再跑一遍带综合（轻量：仅标记，本轮已算完；综合留给显式入口）
+                pass
 
     # 报告意图（切片）：须订阅鉴权；直接产出切片 PDF（保留覆盖度 claims）
     if function in ("report", "email_report"):
@@ -801,10 +1727,17 @@ async def route_chat(
           ]
           followups = ["我要定制报告", *_scoped_scenario_prompts()]
           meta["scenario_selector"] = True
-          meta["actions"] = [
-              {"label": "直接生成固定报告（6 套模板）", "target": "/report?wizard=1"},
-              {"label": "AI 定制报告（对话式自由组合）", "target": "/?custom=1"},
-          ]
+          # R5：报告入口跟随当前 scope
+          if dialogue_state.get("scope") == "individual":
+              meta["actions"] = [
+                  {"label": "生成该企业深度报告", "target": "/report?wizard=1"},
+                  {"label": "AI 定制报告", "target": "/research?custom=1"},
+              ]
+          else:
+              meta["actions"] = [
+                  {"label": "直接生成固定报告（6 套模板）", "target": "/report?wizard=1"},
+                  {"label": "AI 定制报告（对话式自由组合）", "target": "/research?custom=1"},
+              ]
         else:
           coverage_claims = list(claims)
           try:
@@ -1003,7 +1936,7 @@ async def route_chat(
                 "title": ctx.get("title"),
                 "validation": ctx.get("validation"),
             }
-            followups = ["下载后核对附录数据说明", "切换欺诈场景再出一份", "继续追问行业趋势"]
+            followups = ["下载后核对数据说明", "切换欺诈场景再出一份", "继续追问行业趋势"]
             meta.update(report_meta)
           except PremiumReportLocked:
             claims = coverage_claims + [
@@ -1031,6 +1964,39 @@ async def route_chat(
     elif len(covered & {"trend", "authenticity", "fraud", "score", "benchmark", "signal"}) >= 3:
         report_hint = "当前会话覆盖度较好，可说「生成报告」产出组合风险报告。"
 
+    # 刀 1：结构化 followup（FAQ 不再闭环；舞弊结论挂 drilldown/action/navigate）
+    from app.services import followup_items as fu
+
+    # 持久化分析焦点：cohort + 有切片时写入；显式「各行业/全库」则清除
+    if dialogue_state.get("scope") == "cohort" or (act.scope_target == "cohort"):
+        if re.search(r"各行业|全库|全样本|全部样本|看全部", query or ""):
+            dialogue_state = ss.merge_analysis_focus(dialogue_state, clear=True)
+        elif industry_l1 or province:
+            dialogue_state = ss.merge_analysis_focus(
+                dialogue_state, industry_l1=industry_l1, province=province
+            )
+        if isinstance(meta, dict):
+            af = dialogue_state.get("analysis_focus") or {}
+            if industry_l1:
+                meta["industry_l1"] = industry_l1
+            elif af.get("industry_l1"):
+                meta["industry_l1"] = af.get("industry_l1")
+            if province:
+                meta["province"] = province
+            elif af.get("province"):
+                meta["province"] = af.get("province")
+
+    enrich_meta = {
+        **(meta or {}),
+        "function": function,
+        "query_type": (sq.query_type.value if sq else (meta or {}).get("query_type")),
+        "industry_l1": industry_l1 or (meta or {}).get("industry_l1"),
+        "province": province or (meta or {}).get("province"),
+    }
+
+    followup_items = fu.enrich_followups_for_meta(followups, enrich_meta)
+    followups = fu.labels_of(followup_items)
+
     reply, bundle, reply_source = await llm_reply.generate_claim_reply(
         query,
         claims,
@@ -1038,8 +2004,15 @@ async def route_chat(
         report_hint=report_hint,
     )
     if not (reply or "").strip():
-        reply = llm_reply._template_from_claims(claims, followups, with_prefix=False, report_hint=report_hint)
+        reply = llm_reply._template_from_claims(
+            claims, followups, with_prefix=False, report_hint=report_hint, query=query
+        )
         reply_source = "template"
+
+    # 叙述层若改写了 followups，再规范化一次（去掉附录、FAQ 闭环）
+    if bundle and getattr(bundle, "followups", None):
+        followup_items = fu.enrich_followups_for_meta(list(bundle.followups), enrich_meta)
+        followups = fu.labels_of(followup_items)
 
     charts = meta.get("charts")
 
@@ -1052,7 +2025,7 @@ async def route_chat(
         function=function,
         dimension=dimension,
         claims=persist_claims,
-        followups=list(bundle.followups or followups),
+        followups=list(followups),
         evidence_hidden=True,
         meta={
             "intent": intent,
@@ -1062,6 +2035,20 @@ async def route_chat(
             **{k: v for k, v in meta.items() if k != "charts"},
         },
     )
+
+    active_conclusion = None
+    if int(meta.get("flagged_count") or 0) > 0 or meta.get("flagged_firms") or meta.get("top_flags"):
+        active_conclusion = {
+            "claim_id": "c_fraud_flagged",
+            "meta": {
+                "flagged_count": meta.get("flagged_count"),
+                "sample_count": meta.get("sample_count"),
+                "signal_counts": meta.get("signal_counts"),
+                "flagged_firms": meta.get("flagged_firms") or meta.get("top_flags"),
+                "top_flags": meta.get("top_flags"),
+                "function": "fraud",
+            },
+        }
 
     await run_blocking(
         session_store.store_session,
@@ -1075,6 +2062,11 @@ async def route_chat(
         query=query,
         conclusion_id=conclusion_id,
         semantic_query=semantic_query.semantic_query_to_dict(sq) if sq else None,
+        owner=owner,
+        reply=reply,
+        followups=list(followups),
+        active_conclusion=active_conclusion,
+        dialogue_state=dialogue_state,
     )
 
     # 对话层：data 带 claims（含 trace）供前端/报告；reply 不含证据链
@@ -1087,47 +2079,51 @@ async def route_chat(
         "province": province,
         "enterprise_id": enterprise_id,
         "claims": claims_to_dict(claims),
-        "followups": list(bundle.followups or followups),
+        "followups": list(followups),
+        "followup_items": followup_items,
         "conclusion_id": conclusion_id,
         "evidence_hidden": True,
         "coverage": sorted(await run_blocking(conclusion_store.covered_functions, sid)),
         "report_hint": report_hint,
         "actions": (meta or {}).get("actions", []),
-        "slice": {k: v for k, v in meta.items() if k != "charts"},
+        "slice": {k: v for k, v in meta.items() if k not in ("charts", "flagged_firms")},
     }
     if report_meta:
         data["report"] = report_meta
 
     logger.info(
-        "route_chat fn=%s dim=%s claims=%d reply[:120]=%r",
+        "route_chat fn=%s dim=%s scope=%s claims=%d reply[:120]=%r",
         function,
         dimension,
+        (dialogue_state or {}).get("scope"),
         len(claims),
         reply[:120],
     )
 
-    return {
-        "reply": reply,
-        "reply_source": reply_source,
-        # 双轨来源：数字/研判始终规则引擎；表述可为 LLM 润色；意图解析可为 LLM
-        "analysis_mode": "rule",
-        "parse_source": (sq.source if sq else "rule"),
-        "judgment_modes": {
-            "analysis": "rule",
-            "parse": (sq.source if sq else "rule"),
-            "narration": "llm" if reply_source == "llm" else "rule",
+    return _attach_ui(
+        {
+            "reply": reply,
+            "reply_source": reply_source,
+            "analysis_mode": "rule",
+            "parse_source": (sq.source if sq else "rule"),
+            "judgment_modes": {
+                "analysis": "rule",
+                "parse": (sq.source if sq else "rule"),
+                "narration": "llm" if reply_source == "llm" else "rule",
+            },
+            "intent": intent,
+            "function": function,
+            "dimension": dimension,
+            "query_type": sq.query_type.value if sq else None,
+            "enterprise_id": enterprise_id,
+            "enterprise_label": meta.get("enterprise_label"),
+            "data": data,
+            "charts": charts,
+            "session_id": sid,
+            "conclusion_id": conclusion_id,
         },
-        "intent": intent,
-        "function": function,
-        "dimension": dimension,
-        "query_type": sq.query_type.value if sq else None,
-        "enterprise_id": enterprise_id,
-        "enterprise_label": meta.get("enterprise_label"),
-        "data": data,
-        "charts": charts,
-        "session_id": sid,
-        "conclusion_id": conclusion_id,
-    }
+        dialogue_state,
+    )
 
 
 # --- 兼容旧测试 ---

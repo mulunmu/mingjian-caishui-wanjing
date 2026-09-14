@@ -98,6 +98,29 @@ async def lifespan(app: FastAPI):
         except Exception as col_exc:
             logger.debug("chat_sessions custom_state column ensure: %s", col_exc)
 
+        def _ensure_chat_session_owner_column() -> None:
+            """已有库 create_all 不会加列；补 chat_sessions.owner（M0 账号记忆）。"""
+            from sqlalchemy import text
+
+            with eng.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE chat_sessions "
+                        "ADD COLUMN IF NOT EXISTS owner VARCHAR(255)"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_chat_sessions_owner "
+                        "ON chat_sessions (owner)"
+                    )
+                )
+
+        try:
+            await asyncio.to_thread(_ensure_chat_session_owner_column)
+        except Exception as col_exc:
+            logger.debug("chat_sessions owner column ensure: %s", col_exc)
+
         def _ensure_app_user_plan_column() -> None:
             """已有库 create_all 不会加列；补 app_users.plan（订阅分层）。"""
             from sqlalchemy import text

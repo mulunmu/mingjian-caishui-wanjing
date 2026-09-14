@@ -63,6 +63,7 @@ class ChatSessionRecord(Base):
     __tablename__ = "chat_sessions"
 
     session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
     last_intent: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_function: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_dimension: Mapped[str | None] = mapped_column(String(32), nullable=True)

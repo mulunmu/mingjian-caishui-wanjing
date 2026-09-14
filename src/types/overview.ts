@@ -5,8 +5,15 @@ export interface RiskSummaryResponse {
   avg_score: number;
   warning_count: number;
   risk_distribution: Record<string, number>;
+  industry_distribution?: Record<string, number>;
   industry_profiles?: IndustryProfileItem[];
-  enterprises: {
+  /** 全局结论（小白可读一句） */
+  conclusion?: string;
+  /** 异常企业 TopN（默认高风险、评分最差优先） */
+  top_warnings?: WarningEnterprise[];
+  top_warnings_total?: number;
+  /** 兼容旧字段：M5 起为空，不再整表下发 */
+  enterprises?: {
     enterprise_id: string;
     display_label: string;
     display_name?: string;
@@ -45,6 +52,8 @@ export interface OverviewKpi {
   high_risk_count: number;
   avg_score: number;
   warning_count: number;
+  conclusion?: string;
+  top_warnings_total?: number;
 }
 
 /** 风险等级分布项 */

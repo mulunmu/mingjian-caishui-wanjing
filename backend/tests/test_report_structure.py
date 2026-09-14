@@ -45,9 +45,14 @@ def _full_context():
             },
         },
         "attribution_chart_data_uri": "data:image/png;base64,iVBORw0KGgo=",
-        "summary_conclusion": "群体风险判断「中高风险」，样本 193 家",
+        "summary_conclusion": "193 家中 Top 异常信号〔税务违法〕，涉及约 12 家，集中〔制造〕。",
         "summary_strengths": ["「法律合规」维度表现稳健"],
         "summary_risks": ["税务违法（12 家）", "重点关注主体 3 家"],
+        "summary_evidence": ["税务违法（12 家）", "重点关注主体 3 家"],
+        "summary_blockers": ["税务违法"],
+        "governing_question": "风险在哪？哪些企业该预警？",
+        "top_actions": ["先拉出命中税务违法的主体队列，核近 3 个月开票与申报是否同向。"],
+        "confidence_tag": {"level": "high", "label": "置信较高"},
         "validation": {"ok": True, "total_claims": 6, "unanchored": 0},
         "appendix": {
             "data": ["core_metrics", "syx_tax_illega", "syx_auditing"],
@@ -58,20 +63,28 @@ def _full_context():
 
 REQUIRED_MARKERS = [
     "行业趋势风控报告",
-    "明鉴 · 财税票 · 万景",
+    "明鉴 · 财税票 ·",
+    "万景",
     "样本规模",
-    "执行摘要",
-    "主要优势",
-    "主要风险",
+    "决策摘要",
+    "本报告回答",
+    "判断",
+    "依据",
+    "优先处置",
     "综合经营表现",
     "税务违法（12 家）",
     "重点关注主体 3 家",
     "六维雷达 · 综合画像",
     "维度归因",
     "主要拖累因素",
-    "核心要点提炼",
-    "【经营信号】",
-    "【风险预警点】",
+]
+
+FORBIDDEN_STRUCTURE = [
+    "论断",
+    "所以呢",
+    "可照做",
+    "支撑要点",
+    "原主题",
 ]
 
 from app.services.report_templates import FORBIDDEN_MARKERS
@@ -89,27 +102,43 @@ def test_report_html_structure_snapshot(tmp_path):
         assert marker in html, f"missing section marker: {marker}"
     for marker in FORBIDDEN_MARKERS:
         assert marker not in html, f"forbidden marker leaked into report body: {marker}"
+    for marker in FORBIDDEN_STRUCTURE:
+        assert marker not in html, f"loose structure marker still present: {marker}"
     assert "data:image/png;base64," in html
     assert html.count("<table") >= 2
+    assert "max-height: 90mm" in html
 
 
-def test_cover_serious_style():
-    """封面统一：仅系统名 + 报告名 + 时间；不放风险等级/展望/表现。"""
+def test_cover_minimal():
+    """封面极简：品牌 + 标题 + 日期/编号；结论与等级不在封面。"""
     ctx = _full_context()
-    ctx["scenario"] = "portrait"
-    ctx["cover"] = {"motif": "badge", "accent": "#6d28d9"}
-    ctx["subtitle"] = "结构分布 · 均值分布"
+    ctx["scenario"] = "rating"
+    ctx["cover"] = {"motif": "badge", "accent": "#A18A5F", "frame": "rating"}
+    ctx["subtitle"] = "信用结构 · 等级信号"
     ctx["data_focus"] = ["企业基础信息"]
-    html = build_report_html(ctx, "slice_portrait_cover_test")
+    ctx["cover_meta"] = {
+        "scenario_label": "评级研判",
+        "subject": "制造",
+        "one_liner": "群体风险判断「中等」，样本 59 家。",
+        "risk_level": "中等",
+        "business_level": "中等",
+        "sample_count": "59",
+        "frame": "rating",
+    }
+    html = build_report_html(ctx, "slice_rating_cover_test")
     assert "明鉴" in html
     assert "报告日期" in html or "报告编号" in html
-    cover_part = html.split("执行摘要")[0] if "执行摘要" in html else html
-    assert "报告场景" not in cover_part
+    cover_part = html.split("<h2>决策摘要</h2>")[0] if "<h2>决策摘要</h2>" in html else html
+    # 封面 DOM：不出现场景徽章 / 一句话 / 等级文案（CSS 类名可仍留在 stylesheet）
+    assert 'class="scenario-badge"' not in cover_part
+    assert 'class="one-liner"' not in cover_part
     assert "群体风险判断" not in cover_part
     assert "评级展望" not in cover_part
     assert "风险控制报告" not in html
-    assert "<rect" not in html          # 不再渲染母题 SVG 图标
-    assert "抗幻觉校验" not in html        # 校验徽章不上封面
+    assert "image/svg+xml" in html
+    assert "抗幻觉校验" not in html
+    assert "明鉴" in cover_part
+    assert "报告日期" in cover_part or "报告编号" in cover_part
 
 
 def test_slice_kpi_empty_card_skipped():
@@ -127,11 +156,16 @@ def test_slice_kpi_empty_card_skipped():
 def test_design_tokens_centralized_slice():
     """L4 设计令牌：切片模板共用 _brand_tokens.css，正文用 var() 引用。"""
     html = build_report_html(_full_context(), "slice_tokens_test")
-    assert "--brand: #003366" in html   # 令牌定义（含品牌藏蓝）
+    assert "--brand: #152446" in html   # 令牌定义（品牌藏青）
     assert "var(--brand)" in html
     assert "var(--ink)" in html
     assert "var(--accent)" in html
     assert "--font-sans" in html
+    assert "--gold: #A18A5F" in html
+    assert "--bg: #F7F4EE" in html
+    assert "--ok: #059669" in html
+    assert "--warn: #F57C00" in html
+    assert "--bad: #DC2626" in html
 
 
 def _enterprise_context():
@@ -160,10 +194,13 @@ def _enterprise_context():
             }
         ],
         "statements": {
-            "income": {"title": "利润表", "rows": [["营业收入", "1,000.00"]]},
-            "balance": {"title": "资产负债表", "rows": [["资产总计", "2,000.00"]]},
-            "cashflow": {"title": "现金流量表", "rows": [["经营活动现金流量净额", "100.00"]]},
+            "income": {"title": "利润表", "rows": [["营业收入", "1,000.00"]], "empty": False},
+            "balance": {"title": "资产负债表", "rows": [["资产总计", "2,000.00"]], "empty": False},
+            "cashflow": {"title": "现金流量表", "rows": [["经营活动现金流量净额", "100.00"]], "empty": False},
         },
+        "governing_question": "这家值不值得做？先盯什么？",
+        "top_actions": ["关注成本结构。"],
+        "confidence_tag": {"level": "high", "label": "置信较高"},
         "radar_chart": None,
         "validation": {"ok": True, "total_claims": 1, "unanchored": 0},
         "appendix": {"data": ["core_metrics"], "methods": ["六维经营表现"]},
@@ -173,9 +210,13 @@ def _enterprise_context():
 def test_design_tokens_centralized_enterprise():
     """L4 设计令牌：个体模板同样引用 _brand_tokens.css 的令牌。"""
     html = build_report_html(_enterprise_context(), "ent_tokens_test")
-    assert "--brand: #003366" in html
+    assert "--brand: #152446" in html
     assert "var(--brand)" in html
     assert "var(--gold)" in html
+    assert "--gold: #A18A5F" in html
+    assert "--ok: #059669" in html
+    assert "--warn: #F57C00" in html
+    assert "--bad: #DC2626" in html
 
 
 def test_enterprise_subject_meta_drops_empty():
@@ -275,8 +316,12 @@ def test_zh_report_title_chinese_filename():
     """下载文件名兜底：slice/ent 报告 id 反解中文标题，未知 id 回退「评估报告」。"""
     from app.services.report_templates import zh_report_title
 
-    assert zh_report_title("slice_portrait_20260827_120000_ab12cd34") == "样本库画像报告"
+    assert zh_report_title("slice_portrait_20260827_120000_ab12cd34") == "评级研判报告"
+    assert zh_report_title("slice_rating_20260827_120000_ab12cd34") == "评级研判报告"
     assert zh_report_title("slice_alert_20260827_120000_ab12cd34") == "风险预警报告"
+    assert zh_report_title("slice_warn_20260827_120000_ab12cd34") == "风险预警报告"
+    assert zh_report_title("slice_loan_20260827_120000_ab12cd34") == "放贷研判报告"
+    assert zh_report_title("slice_audit_20260827_120000_ab12cd34") == "稽查线索报告"
     # 旧 key 仍能反解（别名标题已统一为预警/画像）
     assert zh_report_title("slice_financial_20260827_120000_ab12cd34") == "风险预警报告"
     assert zh_report_title("ent_a1b2c3d4_20260827_120000_ab12cd34") == "企业风险披露报告"

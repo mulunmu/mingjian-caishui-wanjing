@@ -181,10 +181,17 @@ def _serialize_financial(f: EnterpriseFinancials | None) -> dict | None:
 
 
 @router.get("/warnings")
-async def list_warnings(db: AsyncSession = Depends(get_db), _user: dict | None = Depends(get_current_user_optional)):
+async def list_warnings(
+    limit: int | None = Query(None, ge=1, le=500, description="只返回评分最差的前 N 条；默认全量"),
+    high_risk_only: bool = Query(False, description="仅高风险主体"),
+    db: AsyncSession = Depends(get_db),
+    _user: dict | None = Depends(get_current_user_optional),
+):
     """风控预警（活数据）；DB 不可用时返回 503，不伪造 mock。"""
     try:
-        return await assessment.get_all_warnings(db)
+        return await assessment.get_all_warnings(
+            db, limit=limit, high_risk_only=high_risk_only
+        )
     except Exception as exc:
         logger.warning("DB unavailable for /warnings: %s", exc)
         raise HTTPException(
@@ -201,12 +208,13 @@ async def mock_sample_bundle(_user: dict | None = Depends(get_current_user_optio
 
 @router.get("/summary")
 async def dashboard_summary(
+    top_n: int = Query(10, ge=1, le=50, description="异常企业 TopN"),
     db: AsyncSession = Depends(get_db),
     _user: dict | None = Depends(get_current_user_optional),
 ):
-    """工作台 KPI + 风险等级分布（活数据；DB 不可用时返回 503，不伪造 mock）。"""
+    """工作台：全局结论 + KPI + 风险分布 + 异常 TopN（不整表下发）。"""
     try:
-        return await assessment.get_dashboard_summary(db)
+        return await assessment.get_dashboard_summary(db, top_n=top_n)
     except Exception as exc:
         logger.warning("DB unavailable for /summary: %s", exc)
         raise HTTPException(
@@ -236,6 +244,7 @@ async def list_industries(
 @router.get("/enterprises")
 async def list_enterprises(
     q: str | None = Query(None, description="按「企业N」或行业/地区关键字过滤"),
+    limit: int = Query(50, ge=1, le=500, description="返回条数上限，避免全量预载"),
     db: AsyncSession = Depends(get_db),
     _user: dict | None = Depends(get_current_user_optional),
 ):
@@ -274,7 +283,8 @@ async def list_enterprises(
             or needle in (it["industry_l1"] or "")
             or needle in (it["province"] or "")
         ]
-    return {"items": items, "total": len(items)}
+    total = len(items)
+    return {"items": items[:limit], "total": total}
 
 
 @router.get("/fraud")

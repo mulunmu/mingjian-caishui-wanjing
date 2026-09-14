@@ -21,7 +21,7 @@ export default function RadarChart({ data, height = 280 }: RadarChartProps) {
       axisName: { color: '#7A6E5E', fontSize: 11 },
       splitArea: {
         areaStyle: {
-          color: ['#FAF6F1', '#F3ECE3', '#FAF6F1', '#F3ECE3'],
+          color: ['#F7F4EE', '#EFEBE3', '#F7F4EE', '#EFEBE3'],
         },
       },
       splitLine: { lineStyle: { color: '#EDE5DA' } },
@@ -32,10 +32,10 @@ export default function RadarChart({ data, height = 280 }: RadarChartProps) {
         type: 'radar',
         data: [{ value: data.values }],
         areaStyle: {
-          color: 'rgba(192, 139, 48, 0.15)',
+          color: 'rgba(161, 138, 95, 0.15)',
         },
-        lineStyle: { color: '#C08B30', width: 2 },
-        itemStyle: { color: '#C08B30' },
+        lineStyle: { color: '#A18A5F', width: 2 },
+        itemStyle: { color: '#A18A5F' },
         animationDuration: 800,
       },
     ],

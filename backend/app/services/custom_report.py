@@ -214,8 +214,10 @@ def spec_to_report_spec(spec: CustomReportSpec) -> dict:
         "tier": "general",
         # story 不在此写死：由 _build_context_from_spec → compose_story_from_chapters 从 claim 拼装
         "story": "",
+        "purpose": (spec.purpose or "").strip(),
+        "governing_question": (spec.purpose or "").strip() or None,
         "data_focus": ["财务数据", "税务数据", "发票数据", "企业基础信息"],
-        "cover": {"motif": "compass", "accent": "#003366"},
+        "cover": {"motif": "compass", "accent": "#152446"},
         "kpis": kpis,
         "chapters": chapters,
     }
@@ -422,7 +424,7 @@ def _salvage_or_give_up(state: dict) -> dict:
         "followups": scenario_path_prompts(),
         "stage": "asking",
         "spec": None,
-        "meta": {"actions": [{"label": "打开报告生成向导", "target": "/report?wizard=1"}]},
+        "meta": {"actions": [{"label": "打开报告生成向导", "target": "/?wizard=1"}]},
         "llm": False,
     }
 

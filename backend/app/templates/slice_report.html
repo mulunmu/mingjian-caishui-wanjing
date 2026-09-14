@@ -32,55 +32,154 @@
     * { box-sizing: border-box; }
     body {
       font-family: var(--font-sans);
-      font-size: 10.5pt;
+      font-size: 11.5pt;
       color: var(--ink);
-      line-height: 1.55;
+      line-height: 1.5;
       margin: 0;
     }
 
     .page-break { page-break-after: auto; page-break-before: auto; }
 
-    /* 封面：全幅铺满 A4，仅系统名 + 报告名 + 时间 */
+    /* 封面：纸底 + 回纹框 + 结论先行 */
     .cover {
       page-break-after: always;
-      background: var(--brand);
-      color: #ffffff;
+      position: relative;
+      background: var(--bg);
+      color: var(--brand-ink);
       width: 210mm;
       min-height: 297mm;
       margin: 0;
-      padding: 28mm 22mm 24mm;
+      padding: 0;
       display: block;
       text-align: center;
       box-sizing: border-box;
+      overflow: hidden;
     }
-    .cover .brand { font-size: 12pt; letter-spacing: 4px; color: var(--brand-steel); margin-bottom: 72px; }
-    .cover h1 { font-size: 28pt; font-weight: bold; letter-spacing: 4px; margin-bottom: 24px; color: #ffffff; }
-    .cover .rule { width: 120px; height: 2px; background: var(--gold); margin: 0 auto 40px; }
-    .cover .meta { font-size: 12pt; color: var(--brand-steel); margin-top: 100px; line-height: 2.2; }
-    .cover .meta span { color: var(--brand-ice); }
+    .cover .frame {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: fill;
+      z-index: 0;
+    }
+    .cover .txt {
+      position: relative;
+      z-index: 1;
+      padding: 28mm 22mm 24mm;
+      min-height: 297mm;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .cover .brand {
+      font-size: 11pt;
+      letter-spacing: 4px;
+      color: #5F687D;
+      margin-top: 8mm;
+      margin-bottom: 0;
+    }
+    .cover .brand b { color: var(--gold); font-weight: 600; }
+    .cover h1 {
+      font-family: var(--font-serif, "SimSun", "Songti SC", serif);
+      font-size: 24pt;
+      font-weight: bold;
+      letter-spacing: 6px;
+      margin: 18mm 0 0;
+      color: var(--brand-ink);
+    }
+    .cover .rule { width: 120px; height: 2px; background: var(--accent, var(--gold)); margin: 14px auto 0; }
+    .cover .scenario-badge {
+      margin-top: 16px;
+      display: inline-block;
+      padding: 4px 14px;
+      border: 1.5px solid var(--accent, var(--gold));
+      color: var(--accent, var(--gold));
+      font-size: 11pt;
+      letter-spacing: 4px;
+      font-weight: 700;
+    }
+    .cover .subject {
+      margin-top: 18px;
+      font-size: 13pt;
+      color: var(--brand);
+      letter-spacing: 2px;
+      font-weight: 600;
+    }
+    .cover .one-liner {
+      margin-top: 14px;
+      max-width: 140mm;
+      font-size: 11pt;
+      color: #3d4658;
+      line-height: 1.7;
+      letter-spacing: 0.5px;
+    }
+    .cover .grade {
+      margin-top: 18px;
+      display: inline-block;
+      padding: 6px 16px;
+      background: var(--brand);
+      color: #fff;
+      font-size: 11pt;
+      letter-spacing: 2px;
+      border-radius: 2px;
+    }
+    .cover .meta {
+      margin-top: auto;
+      margin-bottom: 10mm;
+      font-size: 10.5pt;
+      color: #5F687D;
+      line-height: 2;
+    }
+    .cover .meta span { color: var(--brand); }
+
+    .lvl-tag {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 1px 8px;
+      font-size: 9pt;
+      font-weight: 600;
+      border-radius: 2px;
+      vertical-align: middle;
+      border: 1px solid var(--line);
+      color: var(--ink-soft);
+      background: var(--brand-tint);
+    }
+    .lvl-tag.ok { color: var(--ok); border-color: var(--ok); background: #ecfdf5; }
+    .lvl-tag.warn { color: var(--warn); border-color: var(--warn); background: #fff7ed; }
+    .lvl-tag.bad { color: var(--bad); border-color: var(--bad); background: #fef2f2; }
 
     .narration {
       background: var(--brand-tint);
       border: 1px solid var(--brand-tint-line);
       border-radius: var(--radius-sm);
-      padding: 8px 12px;
+      padding: 10px 12px;
       margin: 0 0 12px;
       color: var(--ink-soft);
-      font-size: 9.5pt;
+      font-size: 11pt;
+      line-height: 1.55;
+    }
+    .verdict {
+      margin: 0 0 12px;
+      color: var(--ink);
+      font-size: 11.5pt;
+      line-height: 1.55;
+      text-align: justify;
     }
     /* 执行摘要关键指标（正式表格，替代封面卡片） */
-    .kpi-table { width: 100%; border-collapse: collapse; margin: 0 0 18px; }
+    .kpi-table { width: 100%; border-collapse: collapse; margin: 0 0 14px; }
     .kpi-table td { border: 1px solid var(--line); padding: 8px 10px; text-align: center; }
-    .kpi-table .label { font-size: 8.5pt; color: var(--ink-faint); }
-    .kpi-table .value { font-size: 13pt; font-weight: 700; color: var(--brand); }
-    .kpi-table .unit { font-size: 8pt; color: var(--ink-ghost); }
+    .kpi-table .label { font-size: 9pt; color: var(--ink-faint); }
+    .kpi-table .value { font-size: 14pt; font-weight: 700; color: var(--brand); }
+    .kpi-table .unit { font-size: 8.5pt; color: var(--ink-ghost); }
 
     h2 {
-      font-size: 14pt;
+      font-size: 13pt;
       color: var(--brand);
       border-bottom: 2px solid var(--accent);
       padding-bottom: 6px;
-      margin: 0 0 14px;
+      margin: 0 0 12px;
       /* PDF 书签大纲：每个一级小节进入目录 */
       bookmark-level: 1;
       bookmark-label: content(text);
@@ -88,7 +187,7 @@
     h3 {
       font-size: 11pt;
       color: var(--ink-soft);
-      margin: 18px 0 8px;
+      margin: 14px 0 8px;
     }
     p { margin: 0 0 8px; }
 
@@ -132,9 +231,13 @@
     .chart-img {
       display: block;
       max-width: 100%;
-      margin: 12px auto;
+      max-height: 90mm;
+      width: auto;
+      height: auto;
+      margin: 10px auto 12px;
       border: 1px solid var(--line);
       border-radius: var(--radius-sm);
+      object-fit: contain;
     }
 
     ul.claims {
@@ -164,15 +267,16 @@
 
     .drag-list { margin: 8px 0; padding-left: 18px; }
 
-    /* 执行摘要：结论 + 主要优势/风险二栏（结论前置） */
+    /* 执行摘要：判断加重 */
     .summary-conclusion {
-      font-size: 11pt;
+      font-size: 13pt;
       font-weight: 600;
       color: var(--ink);
       background: var(--bg);
       border-left: 3px solid var(--accent);
-      padding: 8px 12px;
+      padding: 10px 12px;
       margin: 0 0 12px;
+      line-height: 1.5;
     }
     table.twocol {
       width: 100%;
@@ -219,29 +323,52 @@
 </head>
 <body>
 
-  <!-- 封面：仅系统名 + 报告名 + 时间 -->
+  <!-- 封面：极简（品牌 + 标题 + 日期/编号）；结论与等级放到执行摘要 -->
   <section class="cover">
-    <div class="brand">明鉴 · 财税票 · 万景</div>
-    <h1>{{ title }}</h1>
-    <div class="rule"></div>
-    <div class="meta">
-      报告日期：{{ report_date }}<br>
-      报告编号：{{ report_no }}
-      {% if cover_meta.small_sample_banner %}<br><span style="color:#fbbf24;">{{ cover_meta.small_sample_banner }}</span>
-      {% elif cover_meta.small_sample %}<br><span style="color:#fbbf24;">样本偏少，统计结果仅供参考</span>{% endif %}
+    {% if cover_frame_data_uri %}<img class="frame" src="{{ cover_frame_data_uri }}" alt="">{% endif %}
+    <div class="txt">
+      <div class="brand">明鉴 · 财税票 · <b>万景</b></div>
+      <h1>{{ title }}</h1>
+      <div class="rule"></div>
+      <div class="meta">
+        报告日期：{{ report_date }}<br>
+        报告编号：{{ report_no }}
+        {% if cover_meta.small_sample_banner %}<br><span style="color:#C87F1F;">{{ cover_meta.small_sample_banner }}</span>
+        {% elif cover_meta.small_sample %}<br><span style="color:#C87F1F;">样本偏少，统计结果仅供参考</span>{% endif %}
+      </div>
     </div>
   </section>
 
-  <!-- 执行摘要（流式，不强制分页） -->
-  {% if executive_summary or summary_conclusion or summary_strengths or summary_risks %}
+  <!-- 决策摘要：判断 → 依据（全文可见）→ 优先处置 -->
+  {% if executive_summary or summary_conclusion or summary_evidence or summary_risks or top_actions %}
   <section>
-    <h2>执行摘要</h2>
+    <h2>决策摘要</h2>
+    {% if governing_question %}
+    <p style="color:var(--ink-faint); font-size:9pt; margin-bottom:6px;">本报告回答：{{ governing_question }}</p>
+    {% endif %}
+    {% if cover_meta.scenario_label or cover_meta.subject %}
+    <p style="font-weight:600; margin-bottom:8px; font-size:11pt;">
+      {% if cover_meta.scenario_label %}{{ cover_meta.scenario_label }}{% endif %}
+      {% if cover_meta.subject %} · {{ cover_meta.subject }}{% endif %}
+      {% if cover_meta.risk_level and cover_meta.risk_level != '—' %} · 群体风险判断「{{ cover_meta.risk_level }}」{% endif %}
+      {% if cover_meta.business_level and cover_meta.business_level != '—' and (not cover_meta.risk_level or cover_meta.risk_level == '—') %} · 综合经营「{{ cover_meta.business_level }}」{% endif %}
+    </p>
+    {% endif %}
+
+    {% set bluf = summary_conclusion or executive_summary or cover_meta.one_liner %}
+    {% if bluf %}
+    <h3>判断</h3>
+    <p class="summary-conclusion">{{ bluf }}</p>
+    {% endif %}
+    {% if confidence_tag and confidence_tag.label %}
+    <p style="color:var(--ink-faint); font-size:9pt;">研判把握：{{ confidence_tag.label }}</p>
+    {% endif %}
 
     {% set kpis = summary_kpis | selectattr('value', 'ne', '—') | list %}
     {% if kpis %}
     <table class="kpi-table">
       <tr>
-        {% for k in kpis %}
+        {% for k in kpis[:4] %}
         <td>
           <div class="label">{{ k.label }}</div>
           <div class="value">{{ k.value }}<span class="unit">{{ k.unit }}</span></div>
@@ -251,63 +378,59 @@
     </table>
     {% endif %}
 
-    {% if summary_conclusion %}
-    <p class="summary-conclusion">{{ summary_conclusion }}</p>
+    {% set evidence = summary_evidence if summary_evidence else (summary_risks or []) %}
+    {% if evidence or summary_blockers %}
+    <h3>依据</h3>
+    {% if summary_blockers %}
+    {% for b in summary_blockers %}<p class="bullet-line">· 卡点：{{ b }}</p>{% endfor %}
+    {% endif %}
+    {% for r in evidence %}
+    <p class="bullet-line">· {{ r }}</p>
+    {% endfor %}
     {% endif %}
 
-    {% if summary_strengths or summary_risks %}
-    <div class="summary-panels">
-      {% if summary_strengths %}
-      <div class="summary-panel">
-        <h3 class="col-head">主要优势</h3>
-        {% for s in summary_strengths %}<p class="bullet-line">· {{ s }}</p>{% endfor %}
-      </div>
-      {% endif %}
-      {% if summary_risks %}
-      <div class="summary-panel">
-        <h3 class="col-head">主要风险</h3>
-        {% for r in summary_risks %}<p class="bullet-line">· {{ r }}</p>{% endfor %}
-      </div>
-      {% endif %}
-    </div>
-    {% endif %}
-
-    {% if executive_summary %}
-    <p>{{ executive_summary }}</p>
+    {% if top_actions %}
+    <h3>优先处置</h3>
+    {% for a in top_actions[:3] %}
+    <p class="bullet-line">· {{ a }}</p>
+    {% endfor %}
     {% endif %}
 
     <p style="color:var(--ink-faint); font-size:9pt;">本报告为聚合切片，各模块统计子集不同，详见各章节标注。</p>
   </section>
   {% endif %}
 
-  <!-- 预警阈值一览（alert 主题：标题与内容对齐，集中披露） -->
+  <!-- 预警阈值一览：折叠细节 -->
   {% if threshold_board %}
   <section>
     <h2>预警阈值一览</h2>
     <p class="nodata" style="color:var(--ink-faint);">本报告为匿名聚合：披露命中家数与信号分布，不输出具名企业名单。</p>
-    <table>
-      <thead>
-        <tr><th>指标</th><th>能力组</th><th>判定规则</th><th>阈值</th></tr>
-      </thead>
-      <tbody>
-        {% for row in threshold_board %}
-        <tr>
-          <td>{{ row.label or '【暂无可用数据】' }}</td>
-          <td>{{ row.group or '【暂无可用数据】' }}</td>
-          <td>{{ row.rule or '【暂无可用数据】' }}</td>
-          <td>{{ row.threshold or '【暂无可用数据】' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <details>
+      <summary style="cursor:pointer; color:var(--brand); font-size:10pt;">阈值明细（展开）</summary>
+      <table>
+        <thead>
+          <tr><th>指标</th><th>能力组</th><th>判定规则</th><th>阈值</th></tr>
+        </thead>
+        <tbody>
+          {% for row in threshold_board %}
+          <tr>
+            <td>{{ row.label or '—' }}</td>
+            <td>{{ row.group or '—' }}</td>
+            <td>{{ row.rule or '—' }}</td>
+            <td>{{ row.threshold or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
   </section>
   {% endif %}
 
-  <!-- 归因（预警主题前置；流式不硬分页） -->
-  {% if scenario in ('alert', 'due_diligence') and attribution and (attribution_brief or attribution.summary) %}
+  <!-- 归因：预警/稽查主题；细节进 details -->
+  {% if scenario in ('warn', 'audit', 'alert', 'due_diligence') and attribution and (attribution_brief or attribution.summary) %}
   <section>
-    <h2>维度归因 · 为什么</h2>
-    <p>{{ attribution_brief or attribution.summary }}</p>
+    <h2>维度归因</h2>
+    <p class="verdict">{{ attribution_brief or attribution.summary }}</p>
 
     {% if attribution.drag_factors or attribution_drag_factors %}
     <h3>主要拖累因素</h3>
@@ -317,102 +440,82 @@
     {% endif %}
 
     {% if attribution_chart_data_uri %}
-    <h3>六维经营表现</h3>
     <img class="chart-img" src="{{ attribution_chart_data_uri }}" alt="六维经营表现图">
     {% endif %}
 
     {% if attribution_dimensions %}
-    <h3>维度经营表现</h3>
-    <table>
-      <thead>
-        <tr><th>维度</th><th>本维指数</th><th>经营表现</th></tr>
-      </thead>
-      <tbody>
-        {% for d in attribution_dimensions %}
-        <tr>
-          <td>{{ d.label or '【暂无可用数据】' }}</td>
-          <td>{{ d.score_disp or '【暂无可用数据】' }}</td>
-          <td>{{ d.business_level or '【暂无可用数据】' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <details style="margin-top:8px;">
+      <summary style="cursor:pointer; color:var(--brand); font-size:10pt;">维度明细（展开）</summary>
+      <table>
+        <thead>
+          <tr><th>维度</th><th>本维指数</th><th>经营表现</th><th>研判</th></tr>
+        </thead>
+        <tbody>
+          {% for d in attribution_dimensions %}
+          <tr>
+            <td>{{ d.label or '—' }}</td>
+            <td>{{ d.score_disp or '—' }}</td>
+            <td>{{ d.business_level or '—' }}</td>
+            <td>{{ d.metric_level or '正常' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
     {% endif %}
   </section>
   {% endif %}
 
-  <!-- 章节：流式挤紧，末章亦不强制断页 -->
+  <!-- 章节：短标题 + 密段 + 限高图；关键数字折叠 -->
   {% for ch in chapters %}
   <section style="margin-top:16px;">
-    <h2>{{ loop.index }}. {{ ch.title }}</h2>
-    <p style="color:var(--ink-faint); font-size:9.5pt;">{{ ch.purpose }}</p>
-    {% if ch.sample_note %}<p style="color:var(--accent); font-size:9pt; font-weight:600;">{{ ch.sample_note }}</p>{% endif %}
+    <h2>{{ loop.index }}. {{ ch.action_title or ch.title }}{% if ch.business_level %}<span class="lvl-tag {% if ch.business_level == '稳健' %}ok{% elif ch.business_level == '偏弱' %}bad{% else %}warn{% endif %}">{{ ch.business_level }}</span>{% endif %}</h2>
 
-    {% if ch.narration %}
-    <p class="narration">{{ ch.narration }}</p>
+    {% if ch.verdict_paragraph %}
+    <p class="verdict">{{ ch.verdict_paragraph }}</p>
+    {% elif ch.decision_lines %}
+    <p class="verdict">{% for line in ch.decision_lines %}{{ line }}{% if not loop.last %} {% endif %}{% endfor %}</p>
+    {% else %}
+    {% set lines = chapter_conclusion_lines(ch) %}
+    {% if lines %}
+    <p class="verdict">{% for line in lines %}{{ line }}{% if not loop.last %} {% endif %}{% endfor %}</p>
+    {% else %}
+    <p class="nodata">本模块暂无足够依据，已弃权。</p>
+    {% endif %}
     {% endif %}
 
+    {% if ch.sample_note %}<p style="color:var(--accent); font-size:9pt; font-weight:600;">{{ ch.sample_note }}</p>{% endif %}
+
     {% if ch.chart_data_uri %}
-    <h3>图表</h3>
-    <img class="chart-img" src="{{ ch.chart_data_uri }}" alt="{{ ch.title }}">
+    <img class="chart-img" src="{{ ch.chart_data_uri }}" alt="{{ ch.action_title or ch.title }}">
     {% endif %}
 
     {% if ch.numeric_rows %}
-    <h3>关键数字</h3>
-    <table class="num-table">
-      <colgroup>
-        <col style="width:22%" /><col style="width:14%" /><col style="width:10%" /><col style="width:54%" />
-      </colgroup>
-      <thead>
-        <tr><th>指标</th><th>数值</th><th>单位</th><th>说明摘要</th></tr>
-      </thead>
-      <tbody>
-        {% for row in ch.numeric_rows[:12] %}
-        <tr>
-          <td>{{ row[0] if row|length > 0 and row[0] else '【暂无可用数据】' }}</td>
-          <td>{{ row[1] if row|length > 1 and row[1] else '【暂无可用数据】' }}</td>
-          <td>{{ row[2] if row|length > 2 and row[2] else '—' }}</td>
-          <td>{{ row[3] if row|length > 3 and row[3] else '【暂无可用数据】' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <details style="margin-top:10px;">
+      <summary style="cursor:pointer; color:var(--brand); font-size:10pt;">关键数字（展开）</summary>
+      <table class="num-table">
+        <colgroup>
+          <col style="width:22%" /><col style="width:14%" /><col style="width:10%" /><col style="width:12%" /><col style="width:42%" />
+        </colgroup>
+        <thead>
+          <tr><th>指标</th><th>数值</th><th>单位</th><th>研判</th><th>说明摘要</th></tr>
+        </thead>
+        <tbody>
+          {% for row in ch.numeric_rows[:12] %}
+          <tr>
+            <td>{{ row[0] if row|length > 0 and row[0] else '—' }}</td>
+            <td>{{ row[1] if row|length > 1 and row[1] else '—' }}</td>
+            <td>{{ row[2] if row|length > 2 and row[2] else '—' }}</td>
+            <td>{% set lvl = row[3] if row|length > 3 else '正常' %}<span class="lvl-tag {% if lvl == '偏强' %}ok{% elif lvl == '预警' %}bad{% else %}warn{% endif %}">{{ lvl }}</span></td>
+            <td>{{ row[4] if row|length > 4 and row[4] else '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
     {% endif %}
-
-    <h3>结论</h3>
-    {% for line in chapter_conclusion_lines(ch) %}
-    <p class="bullet-line">· {{ line }}</p>
-    {% else %}
-    <p class="nodata">【暂无可用数据】</p>
-    {% endfor %}
   </section>
   {% endfor %}
-
-  {% if summary_highlights and (summary_highlights.strengths or summary_highlights.risks) %}
-  <section>
-    <h2>核心要点提炼</h2>
-    {% if summary_highlights.strengths %}
-    <h3>【经营信号】</h3>
-    {% for s in summary_highlights.strengths %}<p class="bullet-line">· {{ s }}</p>{% endfor %}
-    {% endif %}
-    {% if summary_highlights.risks %}
-    <h3>【风险预警点】</h3>
-    {% for r in summary_highlights.risks %}<p class="bullet-line">· {{ r }}</p>{% endfor %}
-    {% endif %}
-  </section>
-  {% elif summary_strengths or summary_risks %}
-  <section>
-    <h2>核心要点提炼</h2>
-    {% if summary_strengths %}
-    <h3>【经营信号】</h3>
-    {% for s in summary_strengths %}<p class="bullet-line">· {{ s }}</p>{% endfor %}
-    {% endif %}
-    {% if summary_risks %}
-    <h3>【风险预警点】</h3>
-    {% for r in summary_risks %}<p class="bullet-line">· {{ r }}</p>{% endfor %}
-    {% endif %}
-  </section>
-  {% endif %}
 
   <p class="footer-note">
     本报告由明鉴・财税票・万景自动生成。机密 · 仅限内部使用 · 本报告基于聚合匿名数据生成，不涉及单一主体身份信息；无数据处弃权、不编造，仅供内部风控参考，不构成任何投资、授信或法律意见。

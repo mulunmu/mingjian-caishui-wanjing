@@ -171,9 +171,14 @@ export const riskApi = {
   },
 
   /** 企业清单（「企业N」可读名 + 行业/地区），供报告向导「指定企业」选择 */
-  getEnterprises: async (q?: string): Promise<EnterpriseOption[]> => {
-    const qs = q ? `?q=${encodeURIComponent(q)}` : '';
-    const res = (await client.get(`/risk/enterprises${qs}`)) as { items?: EnterpriseOption[] };
+  getEnterprises: async (q?: string, limit = 50): Promise<EnterpriseOption[]> => {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (limit) params.set('limit', String(limit));
+    const qs = params.toString();
+    const res = (await client.get(`/risk/enterprises${qs ? `?${qs}` : ''}`)) as {
+      items?: EnterpriseOption[];
+    };
     return Array.isArray(res?.items) ? res.items : [];
   },
 

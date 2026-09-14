@@ -115,8 +115,12 @@ def test_conclusion_store_roundtrip():
     assert "trend" in conclusion_store.covered_functions("sess-test")
 
 
-def test_template_from_claims_prefix():
-    claims = [Claim(claim="行业趋势平稳。", confidence="computed")]
-    reply = _template_from_claims(claims, ["追问A"], with_prefix=True)
-    assert reply.startswith("[规则模板生成]")
-    assert "行业趋势平稳" in reply
+def test_template_from_claims_no_machine_prefix():
+    claims = [Claim(claim="行业趋势平稳，综合评分 72 分。", confidence="computed",
+                    value=ClaimValue(metric="score", number=72, unit="分"))]
+    reply = _template_from_claims(claims, ["追问A"], with_prefix=True, query="整体怎么样")
+    assert "[规则模板生成]" not in reply
+    assert "行业趋势平稳" in reply or "偏稳" in reply or "平稳" in reply
+    assert "建议" in reply
+    assert "72" in reply
+    assert "追问A" in reply

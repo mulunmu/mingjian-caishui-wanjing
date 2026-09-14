@@ -42,7 +42,7 @@ export default function ScatterChart({ data, height = 280 }: ScatterChartProps) 
         type: 'scatter' as const,
         data: points,
         symbolSize: 10,
-        itemStyle: { color: '#C08B30' },
+        itemStyle: { color: '#A18A5F' },
         emphasis: {
           itemStyle: { shadowBlur: 8, shadowColor: 'rgba(44, 36, 24, 0.2)' },
         },

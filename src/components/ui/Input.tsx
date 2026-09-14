@@ -19,7 +19,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
             text-warm-800 placeholder:text-warm-400
             outline-none transition-all duration-200
             border-warm-200
-            focus:border-amber focus:shadow-[0_0_0_3px_rgba(192,139,48,0.1)]
+            focus:border-amber focus:shadow-[0_0_0_3px_rgba(161,138,95,0.12)]
             ${error ? 'border-terracotta' : ''}
             ${className}
           `}

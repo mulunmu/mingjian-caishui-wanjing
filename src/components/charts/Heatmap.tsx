@@ -44,7 +44,7 @@ export default function Heatmap({ data, height = 280 }: HeatmapProps) {
       bottom: 0,
       // 单色序（米金 → 深金）：仅明度变化，红/绿/蓝盲均可区分。
       inRange: {
-        color: ['#FAF6F1', '#C08B30'],
+        color: ['#F7F4EE', '#A18A5F'],
       },
       textStyle: { color: '#7A6E5E' },
     },

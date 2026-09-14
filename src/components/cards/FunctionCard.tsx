@@ -29,7 +29,7 @@ export default function FunctionCard({
       initial="hidden"
       animate="visible"
       custom={index}
-      whileHover={{ borderColor: '#C08B30' }}
+      whileHover={{ borderColor: '#A18A5F' }}
       whileTap={{ scale: 0.97 }}
       onClick={onClick}
       className={`

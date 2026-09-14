@@ -768,36 +768,55 @@ async def get_legal_events(db: AsyncSession, enterprise_id: str) -> list[dict]:
     ]
 
 
-async def get_all_warnings(db: AsyncSession) -> list[dict]:
+async def get_all_warnings(
+    db: AsyncSession,
+    *,
+    limit: int | None = None,
+    high_risk_only: bool = False,
+) -> list[dict]:
+    """预警列表；limit 非空时只返回前 N 条（按评分升序=最差优先）。"""
     all_metrics = await _ensure_cache(db)
     items = []
     for m in all_metrics:
         built = _build_from_cache(m, all_metrics)
-        if built["warning_signals"]:
-            items.append(
-                {
-                    "enterprise_id": built["enterprise_id"],
-                    "display_name": built.get("display_name") or built.get("enterprise_name"),
-                    "display_label": built.get("display_label"),
-                    "enterprise_name": built.get("display_name") or built.get("enterprise_name"),
-                    "industry_l1": built.get("industry_l1"),
-                    "risk_level": built["risk_level"],
-                    "overall_score": built["overall_score"],
-                    "warning_signals": built["warning_signals"],
-                }
-            )
-    return sorted(items, key=lambda x: x["overall_score"])
+        if not built["warning_signals"]:
+            continue
+        if high_risk_only and "高" not in (built.get("risk_level") or ""):
+            continue
+        items.append(
+            {
+                "enterprise_id": built["enterprise_id"],
+                "display_name": built.get("display_name") or built.get("enterprise_name"),
+                "display_label": built.get("display_label"),
+                "enterprise_name": built.get("display_name") or built.get("enterprise_name"),
+                "industry_l1": built.get("industry_l1"),
+                "risk_level": built["risk_level"],
+                "overall_score": built["overall_score"],
+                "warning_signals": built["warning_signals"],
+            }
+        )
+    items.sort(key=lambda x: x["overall_score"])
+    if limit is not None and limit > 0:
+        return items[:limit]
+    return items
 
 
 async def get_slice_attribution(
     db: AsyncSession,
     *,
     industry_l1: str | None = None,
+    province: str | None = None,
     enterprise_ids: list[str] | None = None,
 ) -> dict:
-    """样本维度归因聚合，供切片报告「为什么」章节。"""
+    """样本维度归因聚合，供切片报告决策备忘录 / 「为什么」章节。
+
+    额外产出 risk_distribution / industry_distribution / province_distribution，
+    供放贷三桶、评级可授信占比、预警集中地等 BLUF 分轨使用（一次遍历，不二次全库打分）。
+    """
     all_metrics = await _ensure_cache(db)
     subset = [m for m in all_metrics if not industry_l1 or m.industry_l1 == industry_l1]
+    if province:
+        subset = [m for m in subset if m.province == province]
     if enterprise_ids:
         subset = [m for m in subset if m.enterprise_id in set(enterprise_ids)]
     if not subset:
@@ -805,9 +824,13 @@ async def get_slice_attribution(
             "sample_count": 0,
             "avg_score": 0.0,
             "industry_l1": industry_l1,
+            "province": province,
             "summary": "暂无样本归因数据。",
             "dimensions": {},
             "drag_factors": [],
+            "risk_distribution": {},
+            "industry_distribution": {},
+            "province_distribution": {},
         }
 
     results = [_build_from_cache(m, all_metrics) for m in subset]
@@ -815,6 +838,9 @@ async def get_slice_attribution(
     dim_counts = {k: 0 for k in DIMENSION_WEIGHTS}
     # 拖累因素按「主体数」计：同一主体跨维度重复出现同一 item（如税务健康+法律合规均挂「税务违法」）只计 1 家
     factor_counts: dict[str, int] = {}
+    risk_distribution: dict[str, int] = {}
+    industry_distribution: dict[str, int] = {}
+    province_distribution: dict[str, int] = {}
 
     for r in results:
         dims = r.get("dimensions") or {}
@@ -831,6 +857,12 @@ async def get_slice_attribution(
                     items_this_firm.add(item)
         for item in items_this_firm:
             factor_counts[item] = factor_counts.get(item, 0) + 1
+        rl = str(r.get("risk_level") or "中等风险")
+        risk_distribution[rl] = risk_distribution.get(rl, 0) + 1
+        ind = str(r.get("industry_l1") or "其他")
+        industry_distribution[ind] = industry_distribution.get(ind, 0) + 1
+        prov = str(r.get("province") or "其他")
+        province_distribution[prov] = province_distribution.get(prov, 0) + 1
 
     dim_avg = {
         key: round(dim_totals[key] / dim_counts[key], 2) if dim_counts[key] else 0.0
@@ -848,6 +880,8 @@ async def get_slice_attribution(
     weak_dims = [DIMENSION_LABELS[k] for k in DIMENSION_WEIGHTS if dim_avg[k] < 45]
 
     scope = f"{zh_industry(industry_l1)}行业" if industry_l1 else f"全样本（{len(results)}家）"
+    if province:
+        scope = f"{province}·{scope}" if industry_l1 else f"{province}（{len(results)}家）"
     risk = _risk_level(avg_overall)
     if drag_factors:
         top = "、".join(d["item"] for d in drag_factors[:3])
@@ -871,9 +905,13 @@ async def get_slice_attribution(
         "sample_count": len(results),
         "avg_score": round(avg_overall, 2),
         "industry_l1": industry_l1,
+        "province": province,
         "summary": summary,
         "dimensions": dimensions,
         "drag_factors": drag_factors,
+        "risk_distribution": risk_distribution,
+        "industry_distribution": industry_distribution,
+        "province_distribution": province_distribution,
     }
 
 
@@ -903,8 +941,8 @@ def _industry_profile_stats(all_metrics: list[CoreMetrics]) -> list[dict]:
     return out
 
 
-async def get_dashboard_summary(db: AsyncSession) -> dict:
-    """工作台聚合：样本数、风险分布、均分、预警数。"""
+async def get_dashboard_summary(db: AsyncSession, *, top_n: int = 10) -> dict:
+    """工作台聚合：全局结论 + KPI + 风险分布 + 异常 TopN（不整表下发 193 家）。"""
     all_metrics = await _ensure_cache(db)
     items = [_build_from_cache(m, all_metrics) for m in all_metrics]
     if not items:
@@ -914,10 +952,15 @@ async def get_dashboard_summary(db: AsyncSession) -> dict:
             "avg_score": 0.0,
             "warning_count": 0,
             "risk_distribution": {},
+            "industry_distribution": {},
             "industry_profiles": [],
+            "conclusion": "暂无样本，态势结论弃权。",
+            "top_warnings": [],
+            "top_warnings_total": 0,
         }
 
     dist: dict[str, int] = {}
+    ind_dist: dict[str, int] = {}
     high = 0
     total = 0.0
     for it in items:
@@ -926,26 +969,58 @@ async def get_dashboard_summary(db: AsyncSession) -> dict:
         if "高" in rl:
             high += 1
         total += float(it.get("overall_score") or 0)
+        ind = it.get("industry_l1") or "其他"
+        ind_dist[ind] = ind_dist.get(ind, 0) + 1
 
     warnings = [it for it in items if it.get("warning_signals")]
+    high_risk = sorted(
+        [it for it in items if "高" in (it.get("risk_level") or "")],
+        key=lambda x: float(x.get("overall_score") or 0),
+    )
+    n = max(1, int(top_n) if top_n else 10)
+    top_warnings = [
+        {
+            "enterprise_id": it["enterprise_id"],
+            "display_name": it.get("display_name") or it.get("enterprise_name"),
+            "display_label": it.get("display_label"),
+            "enterprise_name": it.get("display_name") or it.get("enterprise_name"),
+            "industry_l1": it.get("industry_l1"),
+            "risk_level": it.get("risk_level"),
+            "overall_score": it.get("overall_score"),
+            "warning_signals": it.get("warning_signals") or [],
+        }
+        for it in high_risk[:n]
+    ]
+
+    avg = round(total / len(items), 2)
+    group_risk = _risk_level(avg)
+
+    top_ind = max(ind_dist.items(), key=lambda kv: kv[1])[0] if ind_dist else "—"
+    if high <= 0:
+        conclusion = (
+            f"全库样本 {len(items)} 家，群体风险判断「{group_risk}」，"
+            f"当前无高风险主体；活跃预警 {len(warnings)} 家，主行业「{top_ind}」。"
+        )
+    else:
+        conclusion = (
+            f"全库样本 {len(items)} 家，群体风险判断「{group_risk}」，"
+            f"高风险 {high} 家、活跃预警 {len(warnings)} 家；"
+            f"优先关注评分最低的 {min(n, high)} 家（见下方 TopN）。"
+        )
+
     return {
         "sample_count": len(items),
         "high_risk_count": high,
-        "avg_score": round(total / len(items), 2),
+        "avg_score": avg,
         "warning_count": len(warnings),
         "risk_distribution": dist,
+        "industry_distribution": ind_dist,
         "industry_profiles": _industry_profile_stats(all_metrics),
-        "enterprises": [
-            {
-                "enterprise_id": it["enterprise_id"],
-                "display_name": it.get("display_name") or it.get("enterprise_name"),
-                "display_label": it.get("display_label"),
-                "risk_level": it.get("risk_level"),
-                "overall_score": it.get("overall_score"),
-                "industry_l1": it.get("industry_l1"),
-            }
-            for it in items
-        ],
+        "conclusion": conclusion,
+        "top_warnings": top_warnings,
+        "top_warnings_total": len(high_risk),
+        # 兼容旧前端：不再整表下发；保留空列表避免 KeyError
+        "enterprises": [],
     }
 
 

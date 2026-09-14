@@ -47,7 +47,7 @@ export default function LoginPage() {
         return;
       }
       const success = await loginByCode(formData.email.trim(), formData.code.trim());
-      if (success) navigate('/ingest');
+      if (success) navigate('/');
       return;
     }
 
@@ -58,7 +58,7 @@ export default function LoginPage() {
 
     const success = await login(formData.email, formData.password);
     if (success) {
-      navigate('/ingest');
+      navigate('/');
     }
   };
 
@@ -300,7 +300,7 @@ export default function LoginPage() {
                 clearError();
                 setFormError('');
                 const success = await demoLogin();
-                if (success) navigate('/ingest');
+                if (success) navigate('/');
               }}
               icon={
                 <svg

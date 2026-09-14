@@ -22,16 +22,20 @@ from app.services.slice_report import (
 
 
 def test_resolve_scenario_general():
-    # 默认（未命中关键词）→ 组合画像
-    assert resolve_scenario(query="生成报告") == "portrait"
-    # 旧场景关键词归一化到 画像|预警
-    assert resolve_scenario(query="欺诈报告") == "alert"
-    assert resolve_scenario(query="财务健康体检") == "alert"
-    assert resolve_scenario(query="税务合规") == "alert"
-    assert resolve_scenario(query="企业画像") == "portrait"
+    # 默认（未命中关键词）→ 评级研判
+    assert resolve_scenario(query="生成报告") == "rating"
+    # 旧场景关键词归一化到四业务场景
+    assert resolve_scenario(query="欺诈报告") == "audit"
+    assert resolve_scenario(query="财务健康体检") == "warn"
+    assert resolve_scenario(query="税务合规") == "warn"
+    assert resolve_scenario(query="企业画像") == "rating"
+    assert resolve_scenario(query="能不能贷") == "loan"
+    assert resolve_scenario(query="稽查线索") == "audit"
     # 旧场景 key 归一化（历史文件名 / 旧 API 兼容）
-    assert resolve_scenario(scenario="general") == "alert"
-    assert resolve_scenario(scenario="fundamental") == "alert"
+    assert resolve_scenario(scenario="general") == "warn"
+    assert resolve_scenario(scenario="fundamental") == "warn"
+    assert resolve_scenario(scenario="portrait") == "rating"
+    assert resolve_scenario(scenario="alert") == "warn"
 
 
 def test_resolve_scenario_rejects_unknown_explicit():
@@ -40,13 +44,13 @@ def test_resolve_scenario_rejects_unknown_explicit():
 
 
 def test_resolve_scenario_overview():
-    """总览/汇总 旧 key 归一化到 画像（overview 已并入 portrait），且「综合总览」须先于「综合」命中。"""
-    assert resolve_scenario(query="生成总览报告") == "portrait"
-    assert resolve_scenario(query="生成综合总览报告") == "portrait"
-    assert resolve_scenario(query="生成汇总报告") == "portrait"
-    assert resolve_scenario(scenario="overview") == "portrait"
+    """总览/汇总 旧 key 归一化到评级，且「综合总览」须先于「综合」命中。"""
+    assert resolve_scenario(query="生成总览报告") == "rating"
+    assert resolve_scenario(query="生成综合总览报告") == "rating"
+    assert resolve_scenario(query="生成汇总报告") == "rating"
+    assert resolve_scenario(scenario="overview") == "rating"
     spec = get_scenario("overview")
-    assert spec["title"] == "样本库画像报告"
+    assert spec["title"] == "评级研判报告"
 
 
 def test_financial_threshold_table_disclosed():
@@ -69,22 +73,23 @@ def test_scenario_has_chapters():
     assert len(spec["chapters"]) >= 3
 
 
-def test_portfolio_scenarios_portrait_and_alert():
+def test_portfolio_scenarios_four_business():
     from app.services.report_templates import PORTFOLIO_SCENARIO_KEYS, SCENARIOS, resolve_scenario
 
-    assert set(PORTFOLIO_SCENARIO_KEYS) == {"portrait", "alert"}
-    assert "portrait" in SCENARIOS and "alert" in SCENARIOS
+    assert set(PORTFOLIO_SCENARIO_KEYS) == {"loan", "rating", "warn", "audit"}
+    assert "portrait" in SCENARIOS and "alert" in SCENARIOS  # 兼容旧 key
     for key in PORTFOLIO_SCENARIO_KEYS:
         spec = SCENARIOS[key]
         assert spec["title"] and spec["subtitle"], key
         assert spec["cover"]["motif"] in {"ledger", "seal", "magnifier", "compass", "badge"}, key
         assert len(spec["chapters"]) >= 3, key
-    # 旧 key 归一到两主题
-    assert resolve_scenario(scenario="profile") == "portrait"
-    assert resolve_scenario(scenario="due_diligence") == "alert"
-    assert resolve_scenario(scenario="financial") == "alert"
+    # 旧 key 归一到四场景
+    assert resolve_scenario(scenario="profile") == "rating"
+    assert resolve_scenario(scenario="due_diligence") == "warn"
+    assert resolve_scenario(scenario="financial") == "warn"
+    assert resolve_scenario(scenario="fraud") == "audit"
     # 预警覆盖四类数据
-    assert set(SCENARIOS["alert"]["data_focus"]) == {
+    assert set(SCENARIOS["warn"]["data_focus"]) == {
         "财务数据", "税务数据", "发票数据", "企业基础信息",
     }
 
@@ -99,15 +104,18 @@ def test_has_scenario_keyword_and_path_prompts():
     assert has_scenario_keyword("生成风险预警报告") is True
     assert has_scenario_keyword("样本库画像") is True
     assert has_scenario_keyword("发票舞弊报告") is True
+    assert has_scenario_keyword("放贷研判") is True
     # 定制化不再吞意图
     assert has_scenario_keyword("生成定制报告") is False
     assert has_scenario_keyword("生成定制化的报告") is False
 
     prompts = scenario_path_prompts()
-    assert any("画像" in p for p in prompts)
+    assert any("评级" in p for p in prompts)
     assert any("预警" in p for p in prompts)
+    assert any("放贷" in p for p in prompts)
+    assert any("稽查" in p for p in prompts)
     assert any("指定企业" in p for p in prompts)
-    assert len(prompts) == 3
+    assert len(prompts) == 5
 
 
 def test_scope_label():
@@ -127,8 +135,12 @@ def test_scenario_tone_profiles():
         get_scenario_tone,
     )
 
-    # 两主题 + 旧 key 别名 + 个体报告均有人格与文风
+    # 四场景 + 旧 key 别名 + 个体报告均有人格与文风
     for key in (
+        "loan",
+        "rating",
+        "warn",
+        "audit",
         "portrait",
         "alert",
         "financial",
@@ -141,11 +153,12 @@ def test_scenario_tone_profiles():
     ):
         assert TONE_PROFILES[key]["persona"], key
         assert TONE_PROFILES[key]["style"], key
-    # 回退：旧 key → 对应主题语气（画像/预警）
-    assert get_scenario_tone("general")["persona"] == TONE_PROFILES["alert"]["persona"]
+    # 回退：旧 key → 对应主题语气
+    assert get_scenario_tone("general")["persona"] == TONE_PROFILES["warn"]["persona"]
     assert get_scenario_tone("financial")["persona"] == "风险预警分析师"
     assert get_scenario_tone("tax")["persona"] == "风险预警分析师"
-    assert get_scenario_tone("portrait")["persona"] == "组合画像分析师"
+    assert get_scenario_tone("portrait")["persona"] == "评级分析师"
+    assert get_scenario_tone("loan")["persona"] == "信贷风控顾问"
     # 去 AI 味禁用词覆盖常见套话（BANNED_AI_PHRASES 为逗号拼接串）
     for kw in ("综上所述", "首先", "值得注意的是", "总而言之"):
         assert kw in BANNED_AI_PHRASES
@@ -438,7 +451,7 @@ def test_score_to_risk_level_aligns_with_scoring_layer():
 
 
 def test_scenario_summary_block_scenario_specific():
-    """场景化：专项报告优势/风险来自本场景章节，不复读全样本六维归因（杜绝跑题）。"""
+    """场景化：专项报告优势/风险来自本场景章节；结论不再粘贴「为什么：risks[0]」（改由 decision_memo BLUF）。"""
     attr = {
         "avg_score": 55.0,
         "sample_count": 12,
@@ -460,15 +473,15 @@ def test_scenario_summary_block_scenario_specific():
         "meta": {"sample_count": 12},
     }
     block = _scenario_summary_block([financial_ch], attr, set())
-    # 结论仍 L1 统一（业务语言：不暴露原始均分）
-    assert block["conclusion"] == "群体风险判断「中等风险」，样本 12 家"
+    assert block["conclusion"] == "群体风险判断「中等风险」，样本 12 家。"
+    assert "为什么：" not in block["conclusion"]
     # 优势/风险来自财务章节；六维 drag_factors 的「税务违法 99 家」绝不出现在财务报告摘要
     assert block["strengths"] == ["「毛利率」30.5%（达标）"]
     assert block["risks"] == ["「资产负债率」82.0%（预警）"]
 
 
-def test_scenario_summary_block_scenario_subject_clause():
-    """L2 语气层：专项场景结论补「维度主语」，引用 L1 维度分；综合场景/无数据弃权。"""
+def test_scenario_summary_block_no_subject_glue():
+    """结论块只给 L1 评级兜底；维度主语/BLUF 由 decision_memo 分轨合成。"""
     attr = {
         "avg_score": 43.1,
         "sample_count": 193,
@@ -476,20 +489,19 @@ def test_scenario_summary_block_scenario_subject_clause():
         "drag_factors": [],
     }
     block = _scenario_summary_block([], attr, set(), scenario="financial")
-    assert block["conclusion"] == (
-        "群体风险判断「中高风险」，样本 193 家；财务健康维度表现中等"
-    )
-    # 无单一维度锚点的综合场景：不补主语（结论仍 L1 统一）
+    assert block["conclusion"] == "群体风险判断「中高风险」，样本 193 家。"
     block2 = _scenario_summary_block([], attr, set(), scenario="due_diligence")
-    assert block2["conclusion"] == "群体风险判断「中高风险」，样本 193 家"
-    # 维度无数据（0=弃权 sentinel）：不补主语，杜绝「0.0 分=高风险」式虚假结论
+    assert block2["conclusion"] == "群体风险判断「中高风险」，样本 193 家。"
+
+    # 维度无数据不影响结论兜底句（BLUF 层再谈卡点）
     attr_empty = {
         "avg_score": 43.1,
         "sample_count": 193,
         "dimensions": {"finance": {"label": "财务健康", "score": 0.0}},
     }
     block3 = _scenario_summary_block([], attr_empty, set(), scenario="financial")
-    assert block3["conclusion"] == "群体风险判断「中高风险」，样本 193 家"
+    assert block3["conclusion"] == "群体风险判断「中高风险」，样本 193 家。"
+    assert "为什么：" not in block3["conclusion"]
 
 
 def test_scenario_summary_block_six_dim_via_score():
