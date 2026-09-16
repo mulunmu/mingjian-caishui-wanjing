@@ -109,6 +109,7 @@ def _primary_meta(turn, *, fallback: bool = False, fallback_reason: str | None =
         "composition_blueprint_persisted": turn.meta.get(
             "composition_blueprint_persisted"
         ),
+        "composition_execution_id": turn.meta.get("composition_execution_id"),
         "candidate_tool_ids": [item.tool_id for item in turn.candidates],
         "plan_tool_ids": [step.tool_id for step in (turn.plan.steps if turn.plan else [])],
     }

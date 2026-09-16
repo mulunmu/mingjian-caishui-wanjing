@@ -176,6 +176,9 @@ class AsyncDagRuntime:
         *,
         handlers: dict[str, NodeHandler],
         allow_partial: bool = False,
+        execution_id: str | None = None,
+        checkpoint_load: Callable[[str], Awaitable[dict[str, Any] | None]] | None = None,
+        checkpoint_save: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
     ) -> AsyncDagExecutionResult:
         started = time.perf_counter()
         node_ids = [node.node_id for node in plan.nodes]
@@ -191,16 +194,35 @@ class AsyncDagRuntime:
         for edge in plan.edges:
             dependencies[edge.to_node].add(edge.from_node)
 
-        pending = set(node_ids)
-        results: dict[str, dict[str, Any]] = {}
-        completed: list[str] = []
-        cache_hits: list[str] = []
-        failed: set[str] = set()
-        failed_nodes: list[str] = []
-        skipped: set[str] = set()
-        skipped_nodes: list[str] = []
-        total_cost = 0.0
+        checkpoint = None
+        if execution_id and checkpoint_load is not None:
+            checkpoint = await checkpoint_load(execution_id)
+        results: dict[str, dict[str, Any]] = dict(
+            (checkpoint or {}).get("node_results") or {}
+        )
+        completed: list[str] = list((checkpoint or {}).get("completed_order") or [])
+        cache_hits: list[str] = list((checkpoint or {}).get("cache_hits") or [])
+        failed_nodes: list[str] = list((checkpoint or {}).get("failed_nodes") or [])
+        failed: set[str] = set(failed_nodes)
+        skipped_nodes: list[str] = list((checkpoint or {}).get("skipped_nodes") or [])
+        skipped: set[str] = set(skipped_nodes)
+        total_cost = float((checkpoint or {}).get("total_cost") or 0.0)
+        pending = set(node_ids) - set(completed) - failed - skipped
         semaphore = asyncio.Semaphore(self.max_concurrency)
+
+        async def save_checkpoint() -> None:
+            if execution_id and checkpoint_save is not None:
+                await checkpoint_save(
+                    execution_id,
+                    {
+                        "node_results": results,
+                        "completed_order": completed,
+                        "cache_hits": cache_hits,
+                        "failed_nodes": failed_nodes,
+                        "skipped_nodes": skipped_nodes,
+                        "total_cost": total_cost,
+                    },
+                )
 
         while pending:
             dependency_skipped = [
@@ -279,6 +301,7 @@ class AsyncDagRuntime:
                             f"cost budget exceeded: {total_cost} > {self.max_cost}"
                         )
                 pending.remove(node_id)
+            await save_checkpoint()
 
         return AsyncDagExecutionResult(
             node_results=results,

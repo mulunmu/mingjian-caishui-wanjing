@@ -108,6 +108,31 @@ def replay_composition_blueprint_sync(
         )
 
 
+def load_or_migrate_composition_blueprint(
+    session: Session,
+    plan_id: str,
+    *,
+    registry_version: str,
+    modules,
+) -> CompositionPlan:
+    record = session.get(CompositionBlueprintRecord, plan_id)
+    if record is None or record.status != "active":
+        raise CompositionBlueprintVersionError(f"active blueprint not found: {plan_id}")
+    plan = CompositionPlan.model_validate(json.loads(record.plan_json or "{}"))
+    report = validate_composition_plan(plan, modules)
+    if not report.valid:
+        raise CompositionBlueprintVersionError(
+            "blueprint cannot migrate: "
+            + ", ".join(error.code for error in report.errors)
+        )
+    now = datetime.now(timezone.utc)
+    record.registry_version = registry_version
+    record.version = int(record.version or 0) + 1
+    record.updated_at = now
+    session.flush()
+    return plan
+
+
 def replay_composition_blueprint(
     session: Session,
     plan_id: str,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import hashlib
 from typing import Any
 
 from app.schemas.claim import Claim, claims_to_dict
@@ -16,6 +17,10 @@ from app.db.urls import get_sync_engine
 from app.services.composition_blueprint_store import (
     save_composition_blueprint_sync,
     snapshot_registry_version,
+)
+from app.services.composition_checkpoint_store import (
+    load_checkpoint_sync,
+    save_checkpoint_sync,
 )
 from app.services.composition_catalog import build_composition_catalog
 from app.services.composition_planner import plan_from_frame
@@ -51,6 +56,9 @@ async def execute_metric_composition(
         return None
     plan.metadata["cache_scope"] = f"session:{session_id}"
     registry_version = snapshot_registry_version(snapshot)
+    execution_id = hashlib.sha256(
+        f"{session_id}:{plan.plan_id}:{query}".encode("utf-8")
+    ).hexdigest()[:24]
     blueprint_persisted = False
     try:
         await run_blocking(
@@ -80,6 +88,30 @@ async def execute_metric_composition(
         return execute
 
     handlers = {node.module_id: handler_for(node.module_id) for node in plan.nodes}
+
+    async def load_checkpoint(execution_id_value: str):
+        try:
+            return await run_blocking(
+                load_checkpoint_sync,
+                get_sync_engine(),
+                execution_id_value,
+            )
+        except Exception:
+            return None
+
+    async def save_checkpoint(execution_id_value: str, state: dict) -> None:
+        try:
+            await run_blocking(
+                save_checkpoint_sync,
+                get_sync_engine(),
+                execution_id=execution_id_value,
+                plan_id=plan.plan_id,
+                registry_version=registry_version,
+                state=state,
+            )
+        except Exception:
+            return None
+
     execution = await AsyncDagRuntime(
         max_concurrency=max_concurrency,
         cache_get=cache_service.get,
@@ -89,7 +121,29 @@ async def execute_metric_composition(
         plan,
         handlers=handlers,
         allow_partial=True,
+        execution_id=execution_id,
+        checkpoint_load=load_checkpoint,
+        checkpoint_save=save_checkpoint,
     )
+    try:
+        await run_blocking(
+            save_checkpoint_sync,
+            get_sync_engine(),
+            execution_id=execution_id,
+            plan_id=plan.plan_id,
+            registry_version=registry_version,
+            state={
+                "node_results": execution.node_results,
+                "completed_order": execution.completed_order,
+                "cache_hits": execution.cache_hits,
+                "failed_nodes": execution.failed_nodes,
+                "skipped_nodes": execution.skipped_nodes,
+                "total_cost": execution.total_cost,
+            },
+            status="completed",
+        )
+    except Exception:
+        pass
     claims: list[Claim] = []
     followups: list[str] = []
     for output in execution.node_results.values():
@@ -144,6 +198,7 @@ async def execute_metric_composition(
             "composition_total_cost": execution.total_cost,
             "composition_registry_version": registry_version,
             "composition_blueprint_persisted": blueprint_persisted,
+            "composition_execution_id": execution_id,
             "composition_claims": claims_to_dict(claims),
         },
     )

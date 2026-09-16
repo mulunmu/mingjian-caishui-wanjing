@@ -89,3 +89,26 @@ def test_replay_validates_loaded_plan():
             modules=_modules(),
         )
     assert replayed == _plan()
+
+
+def test_compatible_plan_migrates_to_new_registry_version():
+    from app.services.composition_blueprint_store import load_or_migrate_composition_blueprint
+
+    engine = _engine()
+    with Session(engine) as session:
+        save_composition_blueprint(
+            session,
+            _plan(),
+            registry_version="registry-v1",
+        )
+        session.commit()
+        migrated = load_or_migrate_composition_blueprint(
+            session,
+            "plan-persist-1",
+            registry_version="registry-v2",
+            modules=_modules(),
+        )
+        assert migrated == _plan()
+        record = session.get(CompositionBlueprintRecord, "plan-persist-1")
+        assert record.registry_version == "registry-v2"
+        assert record.version == 2
