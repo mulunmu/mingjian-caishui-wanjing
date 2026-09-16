@@ -146,3 +146,37 @@ docker compose exec -T backend python -m scripts.deployment_gate --min-samples 2
 - 路由、业务域、工具覆盖率和 switch-eligible 比例全部达标。
 
 如果输出 `decision=stay_on_legacy`，必须继续使用旧路径，不得进入 canary。
+
+## 九、Canary 演练与休眠回滚
+
+Canary 仍然先执行旧路径；只有新语义回答状态为 `answered` 时才替换返回内容，
+并且必须先成功覆盖会话历史。路由、组装、配置或历史持久化任一失败都会保留旧回答。
+
+演练时临时设置：
+
+```env
+SHADOW_SEMANTIC_ENABLED=false
+SHADOW_ANSWER_EVAL_ENABLED=false
+SHADOW_SEMANTIC_INDEPENDENT_ROUTE=true
+SEMANTIC_CANARY_PERCENT=100
+```
+
+重建后端并运行 HTTP 级冒烟：
+
+```bash
+docker compose up -d --build backend
+STAGING_CONFIRM=true python backend/scripts/run_staging_canary_smoke.py
+```
+
+脚本会验证分析问句进入语义回答、回答与会话历史一致，并验证寒暄、能力询问、
+天气、拒绝编造、脏话和多语言输入不会产生 5xx 或被 canary 替换。
+
+演练完成后必须恢复休眠：
+
+```env
+SEMANTIC_CANARY_PERCENT=0
+```
+
+重新启动后端，并确认响应中不再出现 `data.canary`。生产灰度应从
+`SEMANTIC_CANARY_PERCENT=1` 或 `5` 开始，以 `session_id` 稳定分流，先观察错误率、
+回答延迟、历史一致性和回退日志，再逐级增加。

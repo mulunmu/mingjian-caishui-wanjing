@@ -17,6 +17,7 @@ __pycache__/
 
 # tooling
 .impeccable/
+.claude/
 *.zip
 
 # 源库数据（大文件，不提交；schema 见 data/mysql-init/*.sql 仍纳入版本管理）

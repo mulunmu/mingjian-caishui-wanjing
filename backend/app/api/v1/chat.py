@@ -106,6 +106,49 @@ async def _maybe_run_shadow(
     except Exception as exc:
         logger.warning("shadow semantic evaluation skipped: %s", exc)
 
+async def _maybe_apply_canary(
+    query: str,
+    result: dict,
+    *,
+    session_id: str | None,
+    owner: str | None,
+    db=None,
+) -> None:
+    try:
+        from app.services.canary_router import (
+            apply_canary_result,
+            canary_percent,
+            is_canary_selected,
+        )
+
+        percent = canary_percent()
+        selection_key = session_id or result.get("session_id") or query
+        if not is_canary_selected(selection_key, percent):
+            return
+        raw_route = await _resolve_shadow_raw_route(query)
+        if raw_route is None or db is None:
+            result.setdefault("data", {})["canary"] = {
+                "status": "skipped",
+                "reason": "route_or_db_unavailable",
+            }
+            return
+        from app.services.semantic_answer_composer import compose_semantic_turn
+
+        semantic = await compose_semantic_turn(
+            db=db,
+            session_id=session_id or result.get("session_id") or "",
+            query=query,
+            raw_route=raw_route,
+        )
+        await apply_canary_result(result, semantic, owner=owner)
+    except Exception as exc:
+        logger.warning("canary semantic response skipped: %s", exc)
+        result.setdefault("data", {})["canary"] = {
+            "status": "error",
+            "fallback": "legacy",
+        }
+
+
 @router.get("/sessions", response_class=UTF8JSONResponse)
 async def list_chat_sessions(user: dict = Depends(get_current_user)):
     owner = _owner_from_user(user)
@@ -170,6 +213,13 @@ async def chat(
         result,
         session_id=result.get("session_id") or body.session_id,
         legacy_latency_ms=legacy_latency_ms,
+        db=db,
+    )
+    await _maybe_apply_canary(
+        query,
+        result,
+        session_id=result.get("session_id") or body.session_id,
+        owner=_owner_from_user(_user),
         db=db,
     )
     result["session_note"] = SESSION_NOTE

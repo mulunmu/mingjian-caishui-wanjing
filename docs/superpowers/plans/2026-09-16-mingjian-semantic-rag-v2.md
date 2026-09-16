@@ -320,6 +320,29 @@ decision=ready_for_canary
 Full backend suite: 1169 passed, 13 skipped, 0 failed
 ```
 
+### Stage 9G: Canary Activation And Dormant Rollback
+
+- [x] Route a deterministic percentage of real staging traffic to the semantic composer.
+- [x] Replace the legacy reply only after the semantic turn is answered.
+- [x] Persist the replacement through the session history before returning it.
+- [x] Fall back to legacy on route, composition, configuration, or persistence failure.
+- [x] Keep canary disabled by default with `SEMANTIC_CANARY_PERCENT=0`.
+- [x] Run an HTTP-level staging drill and restore the dormant configuration.
+
+Verification evidence:
+
+```text
+targeted canary/session tests=17 passed
+full backend suite=1177 passed, 13 skipped, 0 failed
+live staging cases=7
+analysis canary status=answered
+analysis reply source=llm
+analysis history match=true
+non-analysis cases=6, http errors=0
+dormant check: canary_present=false, reply_source=template
+SEMANTIC_CANARY_PERCENT restored to 0
+```
+
 ### Stage 9: Retirement And Cleanup
 
 - [ ] Remove replaced hard-coded routing and chapter mappings.

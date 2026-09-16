@@ -370,6 +370,27 @@ def store_session(
     _persist(entry)
 
 
+def replace_last_reply(
+    session_id: str,
+    reply: str,
+    followups: list[str] | None = None,
+) -> bool:
+    """Replace the latest persisted assistant reply after a canary override."""
+    entry = store.get(session_id) or _load_from_pg(session_id)
+    if entry is None:
+        return False
+    history = entry.get("history") or []
+    for item in reversed(history):
+        if isinstance(item, dict):
+            item["reply"] = reply
+            if followups is not None:
+                item["followups"] = list(followups)[:8]
+            entry["updated_at"] = _now()
+            store[session_id] = entry
+            _persist(entry)
+            return True
+    return False
+
 def list_sessions(owner: str, limit: int = 20) -> list[dict[str, Any]]:
     """按 owner 返回最近会话：sid + 首条摘要 + updated_at。"""
     owner_n = _normalize_owner(owner)

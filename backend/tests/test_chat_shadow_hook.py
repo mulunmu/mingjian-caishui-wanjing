@@ -43,3 +43,70 @@ async def test_shadow_hook_swallows_its_own_failures(monkeypatch):
         legacy_latency_ms=12.0,
     )
     assert result["reply"] == "legacy ok"
+
+@pytest.mark.asyncio
+async def test_canary_hook_selected_replaces_legacy_reply(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.services import canary_router, semantic_answer_composer, session_store
+
+    monkeypatch.setattr(canary_router, "canary_percent", lambda: 100)
+    monkeypatch.setattr(
+        chat_api,
+        "_resolve_shadow_raw_route",
+        AsyncMock(return_value={"route": "analysis", "domain": "warn"}),
+    )
+    semantic = MagicMock(
+        status="answered",
+        reply="semantic reply",
+        reply_source="llm",
+        claims=[],
+        followups=[],
+        route=MagicMock(route="analysis", domain="warn"),
+        plan=None,
+        candidates=[],
+    )
+    monkeypatch.setattr(
+        semantic_answer_composer,
+        "compose_semantic_turn",
+        AsyncMock(return_value=semantic),
+    )
+    monkeypatch.setattr(session_store, "replace_last_reply", lambda *a, **k: True)
+    result = {"reply": "legacy reply", "session_id": "s1", "data": {}}
+    await chat_api._maybe_apply_canary(
+        "企业1资产负债率高不高",
+        result,
+        session_id="s1",
+        owner=None,
+        db=object(),
+    )
+    assert result["reply"] == "semantic reply"
+    assert result["data"]["canary"]["status"] == "answered"
+
+
+@pytest.mark.asyncio
+async def test_canary_hook_failure_does_not_leak_error_or_replace_reply(monkeypatch):
+    from app.services import canary_router, semantic_answer_composer
+
+    monkeypatch.setattr(canary_router, "canary_percent", lambda: 100)
+    monkeypatch.setattr(
+        chat_api,
+        "_resolve_shadow_raw_route",
+        AsyncMock(return_value={"route": "analysis", "domain": "warn"}),
+    )
+    monkeypatch.setattr(
+        semantic_answer_composer,
+        "compose_semantic_turn",
+        AsyncMock(side_effect=RuntimeError("internal-secret")),
+    )
+    result = {"reply": "legacy reply", "session_id": "s1", "data": {}}
+    await chat_api._maybe_apply_canary(
+        "企业1资产负债率高不高",
+        result,
+        session_id="s1",
+        owner=None,
+        db=object(),
+    )
+    assert result["reply"] == "legacy reply"
+    assert result["data"]["canary"] == {"status": "error", "fallback": "legacy"}
+    assert "internal-secret" not in str(result)
