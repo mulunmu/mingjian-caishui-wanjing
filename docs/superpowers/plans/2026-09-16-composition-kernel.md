@@ -3,9 +3,10 @@
 > Execution status 2026-09-16: Tasks 1-5 are implemented. Multi-metric composition
 > executes through per-node async sessions and the DAG runtime. Dynamic pattern
 > selection, node caching, cache idempotency keys, partial-result execution, report
-> chapter concurrency, and the 30-case staging matrix are implemented and verified.
-> General conditional patterns, turn budgets, and the final retirement audit remain
-> pending. Task 6 is not complete.
+> chapter concurrency, conditional node execution, turn budgets, and the 30-case
+> staging matrix are implemented and verified. General planner-generated conditional
+> patterns, persistent plan replay, and the final retirement audit remain pending.
+> Task 6 is not complete.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
