@@ -80,6 +80,9 @@ def _primary_meta(turn, *, fallback: bool = False, fallback_reason: str | None =
         "fallback_reason": fallback_reason,
         "referenced_topic_id": turn.meta.get("referenced_topic_id"),
         "semantic_frame": turn.meta.get("semantic_frame"),
+        "composition_plan_id": turn.meta.get("composition_plan_id"),
+        "composition_elapsed_ms": turn.meta.get("composition_elapsed_ms"),
+        "composition_completed_order": turn.meta.get("composition_completed_order"),
         "candidate_tool_ids": [item.tool_id for item in turn.candidates],
         "plan_tool_ids": [step.tool_id for step in (turn.plan.steps if turn.plan else [])],
     }
