@@ -123,4 +123,5 @@ def test_template_from_claims_no_machine_prefix():
     assert "行业趋势平稳" in reply or "偏稳" in reply or "平稳" in reply
     assert "建议" in reply
     assert "72" in reply
-    assert "追问A" in reply
+    # 追问只走结构化 chips，正文不再拼「追问A」字面量
+    assert "下方按钮可继续追问" in reply

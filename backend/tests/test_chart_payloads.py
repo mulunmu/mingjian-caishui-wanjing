@@ -95,3 +95,33 @@ def test_signal_industry_heatmap_requires_two_industries():
     pie = signal_pie_chart({"e2"}, {"e1"}, set())
     assert pie["type"] == "pie"
     assert sum(pie["data"]["series"][0]["values"]) == 2
+
+
+def test_infer_chart_from_shape_without_hardcoded_type():
+    """§9#8：带 shape 的数据块自动出图，不依赖手写 type。"""
+    from app.services.chart_payloads import infer_chart, normalize_chart_payload
+
+    block = {
+        "shape": "categorical_distribution",
+        "data": {"labels": ["制造", "服务"], "series": [{"name": "n", "values": [3, 2]}]},
+    }
+    chart = infer_chart(block)
+    assert chart is not None
+    assert chart["type"] == "bar"
+    assert "制造" in chart["data"]["labels"]
+
+    normalized = normalize_chart_payload(dict(block))
+    assert normalized["type"] == "bar"
+    assert normalized["shape"] == "categorical_distribution"
+
+
+def test_normalize_overwrites_wrong_type_from_shape():
+    from app.services.chart_payloads import normalize_chart_payload
+
+    wrong = {
+        "type": "pie",
+        "shape": "ordered_series",
+        "data": {"labels": ["2023", "2024"], "series": [{"name": "yoy", "values": [1, 2]}]},
+    }
+    fixed = normalize_chart_payload(wrong)
+    assert fixed["type"] == "line"

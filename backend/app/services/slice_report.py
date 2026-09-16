@@ -35,6 +35,7 @@ from app.services.assessment_weights import DIMENSION_LABELS
 from app.services.metric_registry import revenue_deviation_warn_label
 from app.services.report_html import build_report_html, try_generate_weasyprint_pdf
 from app.services.report_templates import (
+    CHAPTER_REGISTRY,
     CUSTOM_CHAPTER_DIMENSIONS,
     PremiumReportLocked,
     compose_purpose_from_claims,
@@ -1200,7 +1201,7 @@ async def _chapter_available(
 
     空时不传 enterprise_ids kwarg，兼容测试 monkeypatch 的 _chapter_claims 签名。
     """
-    dim = CUSTOM_CHAPTER_DIMENSIONS.get(fn, "overall")
+    dim = (CHAPTER_REGISTRY.get(fn) or {}).get("default_dimension", "overall")
     try:
         if enterprise_ids:
             claims, meta = await _chapter_claims(

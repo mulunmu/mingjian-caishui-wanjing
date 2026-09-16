@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 from app.services import followup_items as fu
@@ -44,6 +45,7 @@ def empty_dialogue_state() -> dict[str, Any]:
         "scenario": None,
         "inventory_focus": None,
         "analysis_focus": None,
+        "focus_history": [],  # M2 焦点栈
     }
 
 
@@ -104,6 +106,20 @@ def normalize_dialogue_state(raw: dict[str, Any] | None) -> dict[str, Any]:
         }
     else:
         state["analysis_focus"] = None
+    # M2：焦点栈校验
+    raw_fh = raw.get("focus_history")
+    if isinstance(raw_fh, list):
+        valid = []
+        for item in raw_fh:
+            if isinstance(item, dict) and item.get("kind") and item.get("value"):
+                valid.append({
+                    "kind": str(item["kind"]),
+                    "value": str(item["value"]),
+                    "ts": float(item.get("ts") or 0),
+                })
+        state["focus_history"] = valid[-20:]  # 上限 20 条
+    else:
+        state["focus_history"] = []
     return state
 
 
@@ -405,5 +421,28 @@ def merge_analysis_focus(
             "industry_l1": industry_l1 if industry_l1 is not None else prev.get("industry_l1"),
             "province": province if province is not None else prev.get("province"),
         }
+        # M2：焦点入栈
+        history = state.get("focus_history") or []
+        now = time.time()
+        if industry_l1:
+            history.append({"kind": "industry", "value": industry_l1, "ts": now})
+        if province:
+            history.append({"kind": "province", "value": province, "ts": now})
+        state["focus_history"] = history[-20:]
     return state
+
+
+def resolve_focus_from_history(
+    state: dict[str, Any], kind: str, *, skip_current: bool = True
+) -> str | None:
+    """从焦点栈回溯匹配焦点。skip_current=True 时跳过栈顶同 kind（回到上一层）。"""
+    matches = [
+        item for item in reversed(state.get("focus_history") or [])
+        if item.get("kind") == kind
+    ]
+    if not matches:
+        return None
+    if skip_current and len(matches) >= 2:
+        return matches[1].get("value")
+    return matches[0].get("value")
 

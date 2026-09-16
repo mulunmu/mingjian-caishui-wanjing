@@ -84,6 +84,14 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
       LLM_FALLBACK_MODEL: ${LLM_FALLBACK_MODEL:-deepseek-v4-flash}
       LLM_DAILY_LIMIT: ${LLM_DAILY_LIMIT:-1000}
+      # M1 通义点金金融解读层
+      FINANCIAL_LLM_MODEL: ${FINANCIAL_LLM_MODEL:-}
+      FINANCIAL_LLM_API_KEY: ${FINANCIAL_LLM_API_KEY:-}
+      FINANCIAL_LLM_BASE_URL: ${FINANCIAL_LLM_BASE_URL:-}
+      # 阶段 8：影子语义评估，默认关闭；生产切换前先在预发布开启
+      SHADOW_SEMANTIC_ENABLED: ${SHADOW_SEMANTIC_ENABLED:-false}
+      SHADOW_SEMANTIC_INDEPENDENT_ROUTE: ${SHADOW_SEMANTIC_INDEPENDENT_ROUTE:-true}
+      SHADOW_ANSWER_EVAL_ENABLED: ${SHADOW_ANSWER_EVAL_ENABLED:-false}
       # JWT_SECRET 无代码兜底：必须由 .env 提供（≥32 随机）；AUTH 默认 true（fail-closed）
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
       AUTH_REQUIRED: ${AUTH_REQUIRED:-true}

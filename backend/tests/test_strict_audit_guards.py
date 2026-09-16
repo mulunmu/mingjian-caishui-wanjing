@@ -16,6 +16,16 @@ from app.services.judgment_service import (
 from app.services.report_templates import PremiumReportLocked
 
 
+def _analysis_act_patch():
+    from app.services.dialog_act import DialogAct
+
+    return patch(
+        "app.services.dialog_act.classify",
+        new_callable=AsyncMock,
+        return_value=DialogAct(act="analyze", confidence=1.0),
+    )
+
+
 def test_synthesis_roundtrip_headline_not_polluted():
     """C1：synthesis 不入库时，下轮 headline 仍是业务 claim。"""
     from app.services import conclusion_store
@@ -147,25 +157,39 @@ async def test_chat_premium_locked_surfaces_message():
 
     db = AsyncMock()
     subscriber = {"sub": "sub@example.com", "role": "user", "plan": "subscriber"}
-    with patch("app.services.judgment_service.run_judgment", new_callable=AsyncMock) as run_j:
-        run_j.return_value = ([], [], {})
+    with _analysis_act_patch():
         with patch(
-            "app.services.slice_report.generate_slice_report",
-            new_callable=AsyncMock,
-            side_effect=PremiumReportLocked("custom"),
+            "app.services.intent_engine.recognize",
+            return_value=MagicMock(
+                function="report",
+                dimension="overall",
+                industry_l1=None,
+                province=None,
+                confidence=0.9,
+                intent="report_overall",
+                recipient=None,
+                extras={},
+            ),
         ):
-            with patch("app.services.conclusion_store.save_conclusion", return_value="c1"):
-                with patch("app.services.conclusion_store.covered_functions", return_value=set()):
-                    with patch("app.services.session_store.ensure_session_id", return_value="s1"):
-                        with patch("app.services.session_store.store_session"):
-                            with patch(
-                                "app.services.llm_reply.generate_claim_reply",
-                                new_callable=AsyncMock,
-                                return_value=("ok", MagicMock(followups=[]), "template"),
-                            ):
-                                out = await route_chat(
-                                    db, "生成综合尽调报告", session_id="s1", user=subscriber
-                                )
+            with patch("app.services.judgment_service.run_judgment", new_callable=AsyncMock) as run_j:
+                run_j.return_value = ([], [], {})
+                with patch(
+                    "app.services.slice_report.generate_slice_report",
+                    new_callable=AsyncMock,
+                    side_effect=PremiumReportLocked("custom"),
+                ):
+                    with patch("app.services.conclusion_store.save_conclusion", return_value="c1"):
+                        with patch("app.services.conclusion_store.covered_functions", return_value=set()):
+                            with patch("app.services.session_store.ensure_session_id", return_value="s1"):
+                                with patch("app.services.session_store.store_session"):
+                                    with patch(
+                                        "app.services.llm_reply.generate_claim_reply",
+                                        new_callable=AsyncMock,
+                                        return_value=("ok", MagicMock(followups=[]), "template"),
+                                    ):
+                                        out = await route_chat(
+                                            db, "生成综合尽调报告", session_id="s1", user=subscriber
+                                        )
     claims = out["data"]["claims"]
     assert any("付费" in (c.get("claim") or "") for c in claims)
     assert out["data"].get("slice", {}).get("report_locked") is True
@@ -178,32 +202,33 @@ async def test_chat_custom_report_guides_not_generates():
 
     db = AsyncMock()
     subscriber = {"sub": "sub@example.com", "role": "user", "plan": "subscriber"}
-    with patch(
-        "app.services.intent_engine.recognize",
-        return_value=MagicMock(
-            function="report",
-            dimension="overall",
-            industry_l1=None,
-            province=None,
-            confidence=0.9,
-            intent="report_overall",
-            recipient=None,
-            extras={},
-        ),
-    ):
-        with patch("app.services.judgment_service.run_judgment", new_callable=AsyncMock) as run_j:
-            run_j.return_value = ([], [], {})
-            with patch("app.services.slice_report.generate_slice_report", new_callable=AsyncMock) as gen:
-                with patch("app.services.conclusion_store.save_conclusion", return_value="c1"):
-                    with patch("app.services.conclusion_store.covered_functions", return_value=set()):
-                        with patch("app.services.session_store.ensure_session_id", return_value="s1"):
-                            with patch("app.services.session_store.store_session"):
-                                with patch(
-                                    "app.services.llm_reply.generate_claim_reply",
-                                    new_callable=AsyncMock,
-                                    return_value=("ok", MagicMock(followups=[]), "template"),
-                                ):
-                                    out = await route_chat(db, "生成定制化的报告", session_id="s1", user=subscriber)
+    with _analysis_act_patch():
+        with patch(
+            "app.services.intent_engine.recognize",
+            return_value=MagicMock(
+                function="report",
+                dimension="overall",
+                industry_l1=None,
+                province=None,
+                confidence=0.9,
+                intent="report_overall",
+                recipient=None,
+                extras={},
+            ),
+        ):
+            with patch("app.services.judgment_service.run_judgment", new_callable=AsyncMock) as run_j:
+                run_j.return_value = ([], [], {})
+                with patch("app.services.slice_report.generate_slice_report", new_callable=AsyncMock) as gen:
+                    with patch("app.services.conclusion_store.save_conclusion", return_value="c1"):
+                        with patch("app.services.conclusion_store.covered_functions", return_value=set()):
+                            with patch("app.services.session_store.ensure_session_id", return_value="s1"):
+                                with patch("app.services.session_store.store_session"):
+                                    with patch(
+                                        "app.services.llm_reply.generate_claim_reply",
+                                        new_callable=AsyncMock,
+                                        return_value=("ok", MagicMock(followups=[]), "template"),
+                                    ):
+                                        out = await route_chat(db, "生成定制化的报告", session_id="s1", user=subscriber)
     gen.assert_not_called()
     claims = out["data"]["claims"]
     # 引导分支：二选一（固定模板 vs AI 定制），而非直接生成、也非「范围+场景」表单式追问
@@ -211,7 +236,7 @@ async def test_chat_custom_report_guides_not_generates():
     # 引导动作：固定向导 + AI 定制两个入口
     actions = out["data"].get("actions") or []
     targets = [a.get("target") for a in actions]
-    assert "/?wizard=1" in targets
+    assert "/report?wizard=1" in targets
     assert "/research?custom=1" in targets
 
 
@@ -232,45 +257,46 @@ async def test_chat_email_report_attempts_send():
     async def _run_blocking(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
-    with patch("app.services.judgment_service.run_judgment", new_callable=AsyncMock) as run_j:
-        run_j.return_value = ([biz_claim], [], {})
-        with patch(
-            "app.services.slice_report.generate_slice_report",
-            new_callable=AsyncMock,
-            return_value=("rid", "/tmp/x.pdf", {"title": "报告", "chapters": [], "validation": {"ok": True}}),
-        ):
-            with patch("app.services.email_service.is_configured", return_value=True):
-                with patch("app.services.email_service.send_report_to", new_callable=AsyncMock) as send:
-                    with patch("app.services.chat_router.run_blocking", side_effect=_run_blocking):
-                        with patch("app.services.conclusion_store.save_conclusion", return_value="c1"):
-                            with patch("app.services.conclusion_store.covered_functions", return_value=set()):
-                                with patch("app.services.session_store.ensure_session_id", return_value="s1"):
-                                    with patch("app.services.session_store.store_session"):
-                                        with patch(
-                                            "app.services.llm_reply.generate_claim_reply",
-                                            new_callable=AsyncMock,
-                                            return_value=("ok", MagicMock(followups=[]), "template"),
-                                        ):
+    with _analysis_act_patch():
+        with patch("app.services.judgment_service.run_judgment", new_callable=AsyncMock) as run_j:
+            run_j.return_value = ([biz_claim], [], {})
+            with patch(
+                "app.services.slice_report.generate_slice_report",
+                new_callable=AsyncMock,
+                return_value=("rid", "/tmp/x.pdf", {"title": "报告", "chapters": [], "validation": {"ok": True}}),
+            ):
+                with patch("app.services.email_service.is_configured", return_value=True):
+                    with patch("app.services.email_service.send_report_to", new_callable=AsyncMock) as send:
+                        with patch("app.services.chat_router.run_blocking", side_effect=_run_blocking):
+                            with patch("app.services.conclusion_store.save_conclusion", return_value="c1"):
+                                with patch("app.services.conclusion_store.covered_functions", return_value=set()):
+                                    with patch("app.services.session_store.ensure_session_id", return_value="s1"):
+                                        with patch("app.services.session_store.store_session"):
                                             with patch(
-                                                "app.services.intent_engine.recognize",
-                                                return_value=MagicMock(
-                                                    function="email_report",
-                                                    dimension="overall",
-                                                    industry_l1=None,
-                                                    province=None,
-                                                    confidence=0.9,
-                                                    intent="email_report_overall",
-                                                    recipient="user@example.com",
-                                                    extras={},
-                                                ),
+                                                "app.services.llm_reply.generate_claim_reply",
+                                                new_callable=AsyncMock,
+                                                return_value=("ok", MagicMock(followups=[]), "template"),
                                             ):
-                                                await route_chat(
-                                                    db,
-                                                    "把报告发到 user@example.com",
-                                                    session_id="s1",
-                                                    user=subscriber,
-                                                )
-                    send.assert_awaited_once()
+                                                with patch(
+                                                    "app.services.intent_engine.recognize",
+                                                    return_value=MagicMock(
+                                                        function="email_report",
+                                                        dimension="overall",
+                                                        industry_l1=None,
+                                                        province=None,
+                                                        confidence=0.9,
+                                                        intent="email_report_overall",
+                                                        recipient="user@example.com",
+                                                        extras={},
+                                                    ),
+                                                ):
+                                                    await route_chat(
+                                                        db,
+                                                        "把报告发到 user@example.com",
+                                                        session_id="s1",
+                                                        user=subscriber,
+                                                    )
+                        send.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -279,32 +305,33 @@ async def test_chat_report_denied_without_subscription():
     from app.services.chat_router import route_chat
 
     db = AsyncMock()
-    with patch(
-        "app.services.intent_engine.recognize",
-        return_value=MagicMock(
-            function="report",
-            dimension="overall",
-            industry_l1=None,
-            province=None,
-            confidence=0.9,
-            intent="report_overall",
-            recipient=None,
-            extras={},
-        ),
-    ):
-        with patch("app.services.judgment_service.run_judgment", new_callable=AsyncMock) as run_j:
-            run_j.return_value = ([], [], {})
-            with patch("app.services.slice_report.generate_slice_report", new_callable=AsyncMock) as gen:
-                with patch("app.services.conclusion_store.save_conclusion", return_value="c1"):
-                    with patch("app.services.conclusion_store.covered_functions", return_value=set()):
-                        with patch("app.services.session_store.ensure_session_id", return_value="s1"):
-                            with patch("app.services.session_store.store_session"):
-                                with patch(
-                                    "app.services.llm_reply.generate_claim_reply",
-                                    new_callable=AsyncMock,
-                                    return_value=("denied", MagicMock(followups=[]), "template"),
-                                ):
-                                    out = await route_chat(db, "生成行业趋势风控报告", session_id="s1")
+    with _analysis_act_patch():
+        with patch(
+            "app.services.intent_engine.recognize",
+            return_value=MagicMock(
+                function="report",
+                dimension="overall",
+                industry_l1=None,
+                province=None,
+                confidence=0.9,
+                intent="report_overall",
+                recipient=None,
+                extras={},
+            ),
+        ):
+            with patch("app.services.judgment_service.run_judgment", new_callable=AsyncMock) as run_j:
+                run_j.return_value = ([], [], {})
+                with patch("app.services.slice_report.generate_slice_report", new_callable=AsyncMock) as gen:
+                    with patch("app.services.conclusion_store.save_conclusion", return_value="c1"):
+                        with patch("app.services.conclusion_store.covered_functions", return_value=set()):
+                            with patch("app.services.session_store.ensure_session_id", return_value="s1"):
+                                with patch("app.services.session_store.store_session"):
+                                    with patch(
+                                        "app.services.llm_reply.generate_claim_reply",
+                                        new_callable=AsyncMock,
+                                        return_value=("denied", MagicMock(followups=[]), "template"),
+                                    ):
+                                        out = await route_chat(db, "生成行业趋势风控报告", session_id="s1")
     gen.assert_not_called()
     claims = out["data"]["claims"]
     assert any("登录" in (c.get("claim") or "") or "定制" in (c.get("claim") or "") for c in claims)

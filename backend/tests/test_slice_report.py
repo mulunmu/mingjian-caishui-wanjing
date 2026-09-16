@@ -165,12 +165,21 @@ def test_scenario_tone_profiles():
 
 
 def test_tone_prompt_injects_persona_and_banned():
+    """红线 §4：所有 LLM 调用必须注入 PERSONA；tone=None 也注入基础人格。"""
     from app.services import llm_reply
 
     p = llm_reply._tone_prompt({"persona": "资深财务分析师", "style": "简洁克制。"})
+    # 统一基础 PERSONA 必须存在
+    assert "明鉴财税风控顾问" in p
+    # tone 自带的 persona/style 作为补充身份/文风保留（不与 base 冲突）
     assert "资深财务分析师" in p
-    assert "禁用套话" in p
-    assert llm_reply._tone_prompt(None) == ""
+    assert "简洁克制" in p
+    # tone=None 仍注入基础 PERSONA（不再返回空串）
+    p_none = llm_reply._tone_prompt(None)
+    assert "明鉴财税风控顾问" in p_none
+    # tone 带 scenario 时叠加变体
+    p_loan = llm_reply._tone_prompt({"scenario": "loan"})
+    assert "信贷风控顾问" in p_loan
 
 
 def test_filter_unanchored_sentences():

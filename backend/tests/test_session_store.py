@@ -114,3 +114,29 @@ def test_owner_isolation():
     assert session_store.load_history("b@x.com", sid) is None
     assert session_store.delete_session("b@x.com", sid) is False
     assert session_store.delete_session("a@x.com", sid) is True
+
+
+def test_row_to_entry_restores_focus_history_into_dialogue_state():
+    from datetime import datetime, timezone
+
+    from app.services import session_store
+
+    class Record:
+        session_id = "focus-restore"
+        owner = "focus@example.com"
+        last_intent = None
+        last_function = None
+        last_dimension = None
+        industry_l1 = None
+        province = None
+        enterprise_id = None
+        covered_functions_json = "[]"
+        history_json = "[]"
+        custom_state_json = None
+        focus_history_json = '[{"kind": "industry", "value": "制造", "ts": 1}]'
+        updated_at = datetime.now(timezone.utc)
+
+    entry = session_store._row_to_entry(Record())
+    assert entry is not None
+    assert entry["focus_history"][0]["value"] == "制造"
+    assert entry["dialogue_state"]["focus_history"][0]["value"] == "制造"

@@ -44,3 +44,12 @@ def test_detect_scenario():
     assert ss.detect_scenario("信用怎么样？") == "rating"
     assert ss.detect_scenario("哪里不对劲？") == "warn"
     assert ss.detect_scenario("哪里可疑要查？") == "audit"
+
+
+def test_focus_history_skip_current_on_recall():
+    """§9#4：A→B 后再回溯应回到 A，而不是当前 tip。"""
+    st = ss.empty_dialogue_state()
+    st = ss.merge_analysis_focus(st, industry_l1="制造")
+    st = ss.merge_analysis_focus(st, industry_l1="IT软件")
+    assert ss.resolve_focus_from_history(st, "industry") == "制造"
+    assert ss.resolve_focus_from_history(st, "industry", skip_current=False) == "IT软件"

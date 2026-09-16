@@ -108,7 +108,7 @@ def test_enterprise_followups_include_report():
 
     f = derive_enterprise_followups({}, [])
     assert any("报告" in x for x in f)
-    assert len(f) == 3
+    assert len(f) == 4
 
 
 def test_build_enterprise_report_context(monkeypatch):

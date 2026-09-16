@@ -54,3 +54,5 @@ backend/_downloaded.txt
 企划书/_render/
 企划书/_extract_design.py
 企划书/*.pdf
+
+_staging_risk_db.dump

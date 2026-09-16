@@ -118,6 +118,10 @@ def _persist(entry: dict[str, Any]) -> None:
             rec.history_json = json.dumps(entry.get("history") or [], ensure_ascii=False)
             custom = entry.get("custom_report")
             rec.custom_state_json = json.dumps(custom, ensure_ascii=False) if custom is not None else None
+            # M2：焦点栈持久化
+            ds = entry.get("dialogue_state") or {}
+            fh = ds.get("focus_history") if isinstance(ds, dict) else None
+            rec.focus_history_json = json.dumps(fh or [], ensure_ascii=False)
             rec.updated_at = ts
             session.merge(rec)
             session.commit()
@@ -137,6 +141,7 @@ def _row_to_entry(rec: Any) -> dict[str, Any] | None:
             last_semantic = h.get("semantic")
             last_query_type = h.get("query_type")
             break
+    focus_history = json.loads(getattr(rec, "focus_history_json", None) or "[]")
     return {
         "session_id": rec.session_id,
         "owner": getattr(rec, "owner", None),
@@ -154,6 +159,9 @@ def _row_to_entry(rec: Any) -> dict[str, Any] | None:
         "last_query_type": last_query_type,
         "custom_report": json.loads(rec.custom_state_json) if rec.custom_state_json else None,
         "updated_at": updated,
+        # M2：焦点栈从 PG 恢复，并放回 dialogue_state 以参与后续路由
+        "focus_history": focus_history,
+        "dialogue_state": {"focus_history": focus_history},
     }
 
 

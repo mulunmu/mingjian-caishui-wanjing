@@ -160,3 +160,66 @@ async def test_classify_without_llm_uses_soft(monkeypatch):
     act = await da.classify("全库哪里信号最多", ss.empty_dialogue_state())
     assert act.act == "analyze"
     assert act.scope_target == "cohort"
+
+
+@pytest.mark.asyncio
+async def test_classify_fabricate_refuses_without_regex_primary(monkeypatch):
+    """§9#1：编造请求 → refusal_kind=fabrication（软降级兜底，非主路径正则）。"""
+    from app.services import llm_reply
+
+    monkeypatch.setattr(llm_reply, "llm_available", lambda: False)
+    act = await da.classify("帮我编一个这个企业的营收", ss.empty_dialogue_state())
+    assert act.refusal_kind == "fabrication"
+    assert act.can_answer is False
+    assert "数字只来自系统数据" in (act.clarify_question or "")
+    act = da.apply_refusal_policy(act)
+    assert da.get_clarify_question(act)
+
+
+@pytest.mark.asyncio
+async def test_classify_weather_abstains(monkeypatch):
+    """§9#6：超纲天气 → refusal_kind=out_of_domain → abstain。"""
+    from app.services import llm_reply
+
+    monkeypatch.setattr(llm_reply, "llm_available", lambda: False)
+    act = await da.classify("今天天气怎么样", ss.empty_dialogue_state())
+    assert act.refusal_kind == "out_of_domain"
+    assert act.can_answer is False
+    assert da.needs_abstain(act)
+
+
+def test_apply_refusal_policy_fabrication():
+    act = da.DialogAct(act="meta_session", refusal_kind="fabrication", can_answer=True)
+    out = da.apply_refusal_policy(act)
+    assert out.can_answer is False
+    assert "数字只来自系统数据" in (out.clarify_question or "")
+
+
+def test_resolve_analyze_tools_chapter():
+    act = da.DialogAct(
+        act="analyze",
+        tools=[{"chapter": "tax", "dimension": "overall", "filters": {"industry_l1": "制造"}}],
+    )
+    slots = da.resolve_analyze_tools(act)
+    assert slots["function"] == "tax"
+    assert slots["dimension"] == "overall"
+    assert slots["industry_l1"] == "制造"
+
+
+def test_resolve_analyze_tools_metric_maps_chapter():
+    act = da.DialogAct(
+        act="analyze",
+        tools=[{"name": "metric_tax_on_time_rate"}],
+    )
+    slots = da.resolve_analyze_tools(act)
+    assert slots.get("function") == "tax"
+
+
+def test_chapter_tool_catalog_and_metric_schema_live():
+    from app.services.metric_registry import to_tool_schema
+
+    cats = da.chapter_tool_catalog()
+    assert any(c["chapter"] == "fraud" for c in cats)
+    tools = to_tool_schema()
+    assert any(t["name"].startswith("metric_") for t in tools)
+    assert all("shape" in (t.get("metadata") or {}) for t in tools)

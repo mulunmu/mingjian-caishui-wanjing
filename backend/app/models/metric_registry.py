@@ -37,6 +37,13 @@ class MetricDefinition(Base):
     default_filters_json: Mapped[str] = mapped_column(Text, default="{}")  # 默认过滤
     edge_cases: Mapped[str | None] = mapped_column(Text, nullable=True)  # 边缘情况说明
     is_canonical: Mapped[bool] = mapped_column(Boolean, default=False)  # 系统内建口径
+    category: Mapped[str] = mapped_column(String(32), default="composite")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(20), default="planned", index=True)
+    shape: Mapped[str] = mapped_column(String(64), default="")
+    retrieval_enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    aliases_json: Mapped[str] = mapped_column(Text, default="[]")
+    source_tables_json: Mapped[str] = mapped_column(Text, default="[]")
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

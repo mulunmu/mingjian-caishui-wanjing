@@ -25,6 +25,7 @@ from app.services import (
 from app.services.intent_engine import IntentResult, industry_l1_options
 from app.services.judgment_service import without_synthesis_claims
 from app.services.report_templates import (
+    CHAPTER_REGISTRY,
     CUSTOM_CHAPTERS,
     PremiumReportLocked,
     has_scenario_keyword,
@@ -232,8 +233,8 @@ def _custom_report_response(
 
 def _chapter_name_to_fn(name: str) -> str | None:
     """章节标题/键 → 章节键（用于「换章节：标题」卡片反解）。"""
-    for fn, (title, _desc) in CUSTOM_CHAPTERS.items():
-        if title == name or fn == name:
+    for fn, entry in CHAPTER_REGISTRY.items():
+        if entry["title"] == name or fn == name:
             return fn
     return None
 
@@ -286,7 +287,7 @@ async def _custom_adjustment_followups(db, spec, validation) -> list[dict]:
         cards.append({"label": "保留企业，去掉范围过滤", "description": f"保留 {ent_names}，取消行业、地区筛选"})
 
     # ③ 换章节：当前范围（含指定企业）下其他有数据的章节
-    alt_chapters = [f for f in CUSTOM_CHAPTERS if f not in chapters]
+    alt_chapters = [f for f in CHAPTER_REGISTRY if f not in chapters]
     if alt_chapters:
         alts = await validate_custom_report(
             db, chapters=alt_chapters,
@@ -295,7 +296,7 @@ async def _custom_adjustment_followups(db, spec, validation) -> list[dict]:
         )
         for fn in alt_chapters:
             if alts["chapters"].get(fn, {}).get("available"):
-                title = CUSTOM_CHAPTERS[fn][0]
+                title = CHAPTER_REGISTRY[fn]["title"]
                 cards.append({"label": f"换章节：{title}", "description": f"改为当前范围下有数据的章节「{title}」"})
 
     # ④ 自定义修改范围
@@ -335,7 +336,7 @@ async def _custom_proposal_with_validation(db, spec) -> dict:
             enterprise_ids=enterprise_ids or None,
             scope_sample_count=validation.get("scope_sample_count") or 0,
         )
-        names = "、".join(CUSTOM_CHAPTERS[fn][0] for fn in empty if fn in CUSTOM_CHAPTERS)
+        names = "、".join(CHAPTER_REGISTRY[fn]["title"] for fn in empty if fn in CHAPTER_REGISTRY)
         reply = (
             f"{base}\n\n"
             f"❗ 当前组合没有匹配的「{names}」数据，无法生成这份报告。\n"
@@ -348,7 +349,7 @@ async def _custom_proposal_with_validation(db, spec) -> dict:
     else:
         reply = base
         if empty:
-            names = "、".join(CUSTOM_CHAPTERS[fn][0] for fn in empty if fn in CUSTOM_CHAPTERS)
+            names = "、".join(CHAPTER_REGISTRY[fn]["title"] for fn in empty if fn in CHAPTER_REGISTRY)
             reply += (
                 f"\n\n⚠️ 提示：「{names}」在当前范围暂无可用数据，生成后该章节将不出现。"
                 "可改用「全部样本」或换章节，或直接确认生成（其余章节照常输出）。"
@@ -462,7 +463,7 @@ async def _route_custom_report(
                         generated_fns = {ch.get("function") for ch in (ctx.get("chapters") or [])}
                         skipped = [fn for fn in spec_obj.chapters if fn not in generated_fns]
                         if skipped:
-                            names = "、".join(CUSTOM_CHAPTERS[fn][0] for fn in skipped if fn in CUSTOM_CHAPTERS)
+                            names = "、".join(CHAPTER_REGISTRY[fn]["title"] for fn in skipped if fn in CHAPTER_REGISTRY)
                             reply = (
                                 f"已生成《{ctx.get('title')}》（编号 {report_id}）。"
                                 f"注意：「{names}」在当前范围暂无数据已跳过，建议改用「全部样本」范围查看。"
@@ -763,6 +764,17 @@ async def route_chat(
                 subject={"enterprise_id": enterprise_id, "display_name": sub.get("display_name") or "选定企业"},
             )
 
+    # P2 焦点回溯：检测「回到刚才那批/回到之前的」类查询
+    if query and re.search(r"回到|刚才那批|之前的|上次.*行业|上次.*地区", query):
+        recalled_ind = ss.resolve_focus_from_history(dialogue_state, "industry")
+        recalled_prov = ss.resolve_focus_from_history(dialogue_state, "province")
+        if recalled_ind or recalled_prov:
+            if recalled_ind:
+                dialogue_state = ss.merge_analysis_focus(dialogue_state, industry_l1=recalled_ind)
+            if recalled_prov:
+                dialogue_state = ss.merge_analysis_focus(dialogue_state, province=recalled_prov)
+            logger.info("focus recall: industry=%s province=%s", recalled_ind, recalled_prov)
+
     # ── bootstrap：首屏只下发 state 派生 UI，不算数 ──
     if followup and isinstance(followup, dict) and followup.get("type") == "bootstrap":
         ui = ss.ui_bundle(dialogue_state)
@@ -984,6 +996,17 @@ async def route_chat(
                     claims, followups, with_prefix=False, report_hint=None, query=query
                 )
                 reply_source = "template"
+            # P0 硬闸门：drilldown 路径同样过闸（含空 allowed）
+            from app.services.hallucination_guard import apply_chat_hallucination_guard
+
+            reply, _, followups = apply_chat_hallucination_guard(
+                reply, claims, report_hint=None, followups=followups
+            )
+            if not (reply or "").strip():
+                reply = llm_reply._ensure_reply("")
+        from app.services.chart_payloads import normalize_meta_charts
+
+        meta = normalize_meta_charts(meta or {})
         charts = meta.get("charts")
         conclusion_id = await run_blocking(
             conclusion_store.save_conclusion,
@@ -1124,6 +1147,39 @@ async def route_chat(
         act = await da.classify(query, classify_state)
     else:
         act = da.merge_inventory_focus(act, classify_state)
+
+    # M1 弃权三态：can_answer=False 时提前返回
+    if not act.can_answer:
+        cq = da.get_clarify_question(act)
+        if cq:
+            # clarify：反问用户
+            return _attach_ui(
+                {
+                    "reply": cq,
+                    "reply_source": "template",
+                    "parse_source": "clarify",
+                    "intent": "clarify",
+                    "function": "general",
+                    "session_id": sid,
+                    "data": {"claims": [], "followups": [], "dialog_act": act.model_dump()},
+                },
+                dialogue_state,
+            )
+        else:
+            # abstain：弃权 + 引导回财税风控
+            abstain_reply = "这个问题超出了我的数据范围。我可以帮你查询企业的税务健康、经营真实性、发票舞弊、风险预警等。请问想了解哪方面？"
+            return _attach_ui(
+                {
+                    "reply": abstain_reply,
+                    "reply_source": "template",
+                    "parse_source": "abstain",
+                    "intent": "abstain",
+                    "function": "general",
+                    "session_id": sid,
+                    "data": {"claims": [], "followups": [], "dialog_act": act.model_dump()},
+                },
+                dialogue_state,
+            )
 
     # 寒暄：短应答 + 入口 chips，不进分析门禁
     if act.act == "meta_session" and da.looks_greeting(query or ""):
@@ -1559,6 +1615,21 @@ async def route_chat(
         intent = intent_result.intent
         industry_l1 = intent_result.industry_l1
         province = intent_result.province
+        # 能力地图：act.tools 优先覆盖 function/dimension/filters（替代纯关键词）
+        tool_slots = da.resolve_analyze_tools(act)
+        if tool_slots.get("function"):
+            function = tool_slots["function"]
+            dimension = tool_slots.get("dimension") or dimension
+            intent_result.function = function
+            intent_result.dimension = dimension
+            intent_result.intent = f"{function}_{dimension}"
+            intent = intent_result.intent
+        if tool_slots.get("industry_l1"):
+            industry_l1 = tool_slots["industry_l1"]
+            intent_result.industry_l1 = industry_l1
+        if tool_slots.get("province"):
+            province = tool_slots["province"]
+            intent_result.province = province
         # DialogAct=analyze 时禁止落 general：按场景对齐引擎 function（根贯通）
         if act.act == "analyze" and intent_result.function == "general":
             _sc_fn = {
@@ -1681,22 +1752,96 @@ async def route_chat(
             intent = f"{sq.query_type.value}_{function}"
             industry_l1 = (sq.filters.get("industry_l1") or [None])[0]
             province = (sq.filters.get("province") or [None])[0]
-            try:
-                claims, followups, meta = await judgment_service.run_semantic_query(
-                    db, sq, sid, intent=intent_result
+
+            # 红线 §2.2 多意图并行：act.tools ≥2 个合法工具时，并行执行并合并 claims
+            multi_tool_plans = (
+                da.resolve_all_analyze_tools(act)
+                if act.act == "analyze" and len(act.tools or []) >= 2
+                else []
+            )
+
+            async def _run_one_plan(plan: dict) -> tuple[list, list, dict]:
+                """按单个 tool 计划构造 sq 子查询并跑引擎；失败返回空 claims。"""
+                sub_ir = intent_engine.IntentResult(
+                    function=plan["function"],
+                    dimension=plan.get("dimension") or dimension,
+                    industry_l1=plan.get("industry_l1") or industry_l1,
+                    province=plan.get("province") or province,
+                    raw_query=query or "",
+                    intent=f"{plan['function']}_{plan.get('dimension') or dimension}",
                 )
-            except Exception as exc:
-                logger.warning("semantic judgment failed: %s", exc)
-                claims = [
-                    Claim(
-                        claim="风控引擎暂时不可用，请稍后重试。",
-                        value=ClaimValue(metric="error", number=None, unit=""),
-                        trace=ClaimTrace(table="core_metrics", field="enterprise_id", query_id="Q_error"),
-                        confidence="inferred",
+                try:
+                    sub_sq = semantic_query.intent_to_semantic_query(sub_ir)
+                    c, f, m = await judgment_service.run_semantic_query(
+                        db, sub_sq, sid, intent=sub_ir
                     )
-                ]
-                followups = judgment_service.DEFAULT_FOLLOWUPS["general"]
-                meta = {"error": str(exc)}
+                    return c, f, m
+                except Exception as exc:
+                    logger.warning(
+                        "multi-intent tool %s failed: %s", plan.get("function"), exc
+                    )
+                    return [], [], {}
+
+            if len(multi_tool_plans) >= 2:
+                # 并行执行所有工具计划（asyncio.gather）
+                import asyncio as _asyncio
+
+                results = await _asyncio.gather(
+                    *[_run_one_plan(p) for p in multi_tool_plans]
+                )
+                merged_claims: list = []
+                merged_followups: list = []
+                merged_meta: dict = {"multi_intent": True, "tools": []}
+                for plan, (c, f, m) in zip(multi_tool_plans, results):
+                    merged_claims.extend(c or [])
+                    for fu in f or []:
+                        if fu and fu not in merged_followups:
+                            merged_followups.append(fu)
+                    merged_meta["tools"].append(
+                        {
+                            "function": plan.get("function"),
+                            "dimension": plan.get("dimension"),
+                            "claims_count": len(c or []),
+                        }
+                    )
+                    if isinstance(m, dict):
+                        # 保留首个非空 meta 的部分键（避免相互覆盖）
+                        for k, v in m.items():
+                            if k not in merged_meta and k not in ("multi_intent", "tools"):
+                                merged_meta[k] = v
+
+                run_single_intent_fallback = not merged_claims
+                if not run_single_intent_fallback:
+                    claims = merged_claims
+                    # 仅在并行路径拿到非空 followups 时扩展；保留 followups 初值
+                    if merged_followups:
+                        # 与初值合并去重（保留原顺序）
+                        seen: list[str] = []
+                        for fu in list(followups or []) + merged_followups:
+                            if fu and fu not in seen:
+                                seen.append(fu)
+                        followups = seen
+                    meta = {**(meta if isinstance(meta, dict) else {}), **merged_meta}
+            else:
+                run_single_intent_fallback = True
+
+            if run_single_intent_fallback:
+                try:
+                    claims, followups, meta = await judgment_service.run_semantic_query(
+                        db, sq, sid, intent=intent_result
+                    )
+                except Exception as exc:
+                    logger.warning("semantic judgment failed: %s", exc)
+                    claims = [
+                        Claim(
+                            claim="风控引擎暂时不可用，请稍后重试。",
+                            value=ClaimValue(metric="error", number=None, unit=""),
+                            trace=ClaimTrace(table="core_metrics", field="enterprise_id", query_id="Q_error"),
+                            confidence="inferred",
+                        )
+                    ]
+                    followups = judgment_service.DEFAULT_FOLLOWUPS["general"]
+                    meta = {"error": str(exc)}
             if want_synthesis:
                 meta["include_synthesis"] = True
                 # 再跑一遍带综合（轻量：仅标记，本轮已算完；综合留给显式入口）
@@ -1997,11 +2142,29 @@ async def route_chat(
     followup_items = fu.enrich_followups_for_meta(followups, enrich_meta)
     followups = fu.labels_of(followup_items)
 
+    # M2：从 scenario 派生统一人格
+    from app.services.persona import get_persona
+    _scenario_for_persona = dialogue_state.get("scenario") or (meta or {}).get("scenario")
+    _persona = get_persona(_scenario_for_persona)
+
+    # ③ 通义点金（在 DeepSeek 校验润色之前；只解释，不直接拼进终态）
+    financial_interp = None
+    if claims and llm_reply.financial_llm_available():
+        fi_context = {
+            "industry_l1": industry_l1 or (meta or {}).get("industry_l1"),
+            "scope": dialogue_state.get("scope") or "cohort",
+            "scenario": _scenario_for_persona,
+        }
+        financial_interp = await llm_reply.generate_financial_interpretation(claims, fi_context)
+
+    # ④ DeepSeek 校验润色：Claims + 金融因果参考 → 大白话
     reply, bundle, reply_source = await llm_reply.generate_claim_reply(
         query,
         claims,
         followups,
         report_hint=report_hint,
+        persona=_persona,
+        financial_interp=financial_interp,
     )
     if not (reply or "").strip():
         reply = llm_reply._template_from_claims(
@@ -2009,11 +2172,26 @@ async def route_chat(
         )
         reply_source = "template"
 
-    # 叙述层若改写了 followups，再规范化一次（去掉附录、FAQ 闭环）
+    # ⑤ P0 硬闸门：对话终态 hallucination_guard（永不跳过，含空 allowed）
+    from app.services.hallucination_guard import apply_chat_hallucination_guard
+
+    reply, report_hint, followups = apply_chat_hallucination_guard(
+        reply, claims, report_hint=report_hint, followups=followups
+    )
+    if not (reply or "").strip():
+        reply = llm_reply._ensure_reply("")
+
+    # 叙述层若改写了 followups，再规范化一次（去掉附录、FAQ 闭环）后二次过闸
     if bundle and getattr(bundle, "followups", None):
         followup_items = fu.enrich_followups_for_meta(list(bundle.followups), enrich_meta)
         followups = fu.labels_of(followup_items)
+        _, _, followups = apply_chat_hallucination_guard(
+            "", claims, report_hint=None, followups=followups
+        )
 
+    from app.services.chart_payloads import normalize_meta_charts
+
+    meta = normalize_meta_charts(meta or {})
     charts = meta.get("charts")
 
     # synthesis 仅用于当轮展示，不写入 conclusion_store，避免多轮 headline 自污染
@@ -2134,13 +2312,21 @@ def _radar_chart(ent: dict) -> dict:
 
 
 def _bar_chart(items: list[dict], metric: str = "overall_score", title: str = "综合分") -> dict:
-    return {
-        "type": "bar",
-        "data": {
-            "labels": [i.get("enterprise_name") or i.get("display_label") or i.get("industry_l1", "") for i in items],
-            "series": [{"name": title, "values": [i.get(metric, 0) for i in items]}],
-        },
-    }
+    from app.services.chart_payloads import normalize_chart_payload
+
+    return normalize_chart_payload(
+        {
+            "shape": "categorical_distribution",
+            "title": title,
+            "data": {
+                "labels": [
+                    i.get("enterprise_name") or i.get("display_label") or i.get("industry_l1", "")
+                    for i in items
+                ],
+                "series": [{"name": title, "values": [i.get(metric, 0) for i in items]}],
+            },
+        }
+    )
 
 
 def _missing_enterprise_message(intent: str) -> str:

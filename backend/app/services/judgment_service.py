@@ -206,6 +206,7 @@ async def build_trend_industry_claims(
 
     chart = {
         "type": "line",
+        "shape": "ordered_series",
         "data": {
             "labels": [zh_industry(s["industry_l1"]) for s in stats],
             "series": [{"name": "营收同比%", "values": [s["avg_revenue_yoy"] for s in stats]}],
@@ -251,6 +252,8 @@ def _score_overall_from_attr(
         "sample_count": attr.get("sample_count"),
     }
     if radar:
+        if isinstance(radar, dict):
+            radar["shape"] = "multi_dim_vector"
         meta["charts"] = radar
     return claims, meta
 
@@ -362,6 +365,7 @@ async def build_score_claims(
             )
         chart = {
             "type": "bar",
+            "shape": "categorical_distribution",
             "data": {
                 "labels": [p["industry_l1"] for p in payload],
                 "series": [
@@ -431,6 +435,7 @@ async def build_score_claims(
                 chart_stats.append(s)
     chart = {
         "type": "bar",
+        "shape": "categorical_distribution",
         "orientation": "horizontal" if len(chart_stats) > 8 else "vertical",
         "data": {
             "labels": [s["province"] for s in chart_stats],
@@ -484,6 +489,7 @@ async def build_benchmark_claims(
     labels = [zh_industry(p["industry_l1"]) for p in payload]
     chart = {
         "type": "bar",
+        "shape": "categorical_distribution",
         "data": {
             "labels": labels,
             "series": [
@@ -575,6 +581,7 @@ async def build_financial_claims(
     if group_pass_rate:
         chart = {
             "type": "bar",
+            "shape": "categorical_distribution",
             "data": {
                 "labels": [g["group"] for g in group_pass_rate],
                 "series": [
@@ -689,6 +696,7 @@ async def build_tax_claims(
         chart_values.append(round(income * 100, 2))
     chart = {
         "type": "bar",
+        "shape": "categorical_distribution",
         "data": {
             "labels": chart_labels or ["无有效比率"],
             "series": [{"name": "%", "values": chart_values or [0]}],
@@ -820,11 +828,18 @@ async def build_signal_claims(
 
     heatmap = signal_industry_heatmap(rows)
     if heatmap:
+        heatmap["shape"] = "matrix_heatmap"
         meta["charts"] = heatmap
     elif unique_affected:
-        meta["charts"] = signal_funnel_chart(len(rows), bucket_tax, bucket_dev, bucket_credit)
+        _funnel = signal_funnel_chart(len(rows), bucket_tax, bucket_dev, bucket_credit)
+        if _funnel:
+            _funnel["shape"] = "hierarchical_stages"
+        meta["charts"] = _funnel
     else:
-        meta["charts"] = signal_pie_chart(bucket_tax, bucket_dev, bucket_credit)
+        _pie = signal_pie_chart(bucket_tax, bucket_dev, bucket_credit)
+        if _pie:
+            _pie["shape"] = "proportion_buckets"
+        meta["charts"] = _pie
     return claims, meta
 
 
@@ -922,6 +937,7 @@ async def build_authenticity_claims(
     ok_count = max(0, result["sample_count"] - result["suspicious_count"])
     result["charts"] = {
         "type": "pie",
+        "shape": "proportion_buckets",
         "data": {
             "labels": ["可疑主体", "正常主体"],
             "series": [{"name": "家数", "values": [result["suspicious_count"], ok_count]}],
@@ -1045,11 +1061,13 @@ async def build_fraud_claims(
         if len(labels) >= 2:
             out["charts"] = {
                 "type": "funnel",
+                "shape": "hierarchical_stages",
                 "data": {"labels": labels, "values": values},
             }
         else:
             out["charts"] = {
                 "type": "bar",
+                "shape": "categorical_distribution",
                 "data": {
                     "labels": labels,
                     "series": [{"name": "信号次数", "values": values}],
@@ -1426,6 +1444,8 @@ async def build_enterprise_claims(
         )
 
     radar = enterprise_radar_chart(profile)
+    if isinstance(radar, dict):
+        radar["shape"] = "multi_dim_vector"
     meta: dict[str, Any] = {
         "enterprise_id": enterprise_id,
         "enterprise_label": name,
@@ -1629,6 +1649,28 @@ def _metric_to_source_field(metric: str) -> str | None:
         "avg_credit_score": "credit_score",
         "avg_composite": "fraud_composite_score",
         "revenue_yoy": "revenue_yoy",
+        "tax_arrears_cnt": "tax_arrears_cnt",
+        "tax_violation_cnt": "tax_violation_cnt",
+        "high_severity_cnt": "high_severity_cnt",
+        "invoice_cnt": "invoice_cnt",
+        "invoice_monthly_avg": "invoice_monthly_avg",
+        "red_invoice_cnt": "red_invoice_cnt",
+        "vat_revenue": "vat_revenue",
+        "invoice_revenue": "invoice_revenue",
+        "finance_revenue": "finance_revenue",
+        "loan_cnt": "loan_cnt",
+        "loan_amount": "loan_amount",
+        "cash_flow_net": "cash_flow_net",
+        "current_ratio": "current_ratio",
+        "quick_ratio": "quick_ratio",
+        "gross_margin": "gross_margin",
+        "net_margin": "net_margin",
+        "roe": "roe",
+        "roa": "roa",
+        "receivables_turnover": "receivables_turnover",
+        "inventory_turnover": "inventory_turnover",
+        "asset_turnover": "asset_turnover",
+        "social_months": "social_months",
         "revenue_deviation": "revenue_deviation",
         "profit_margin": "profit_margin",
         "tax_on_time_rate": "tax_on_time_rate",
@@ -1789,6 +1831,7 @@ async def _generic_simple_avg(
         ]
         chart = {
             "type": "bar",
+            "shape": "categorical_distribution",
             "data": {
                 "labels": [s["group"] for s in stats[:8]],
                 "series": [{"name": label, "values": [s["avg"] for s in stats[:8]]}],
@@ -1917,6 +1960,7 @@ async def build_comparison_claims(
 
     chart = {
         "type": "bar",
+        "shape": "categorical_distribution",
         "data": {
             "labels": [p["value"] for p in per_value],
             "series": [{"name": label, "values": [p["avg"] for p in per_value]}],
@@ -1992,6 +2036,7 @@ async def build_ranking_claims(
             ]
             chart = {
                 "type": "bar",
+                "shape": "categorical_distribution",
                 "data": {
                     "labels": [s["group"] for s in stats],
                     "series": [{"name": label, "values": [s["avg"] for s in stats]}],
@@ -2042,6 +2087,7 @@ async def build_ranking_claims(
         ]
         chart = {
             "type": "bar",
+            "shape": "categorical_distribution",
             "data": {
                 "labels": [s["group"] for s in stats],
                 "series": [{"name": label, "values": [s["avg"] for s in stats]}],
@@ -2072,6 +2118,7 @@ async def build_ranking_claims(
     ]
     chart = {
         "type": "bar",
+        "shape": "categorical_distribution",
         "data": {
             "labels": [it.get("display_name") or it.get("enterprise_name") or it.get("display_label") or "—" for it in items],
             "series": [{"name": "综合经营表现", "values": [float(it.get("overall_score") or 0) for it in items]}],
@@ -2115,6 +2162,7 @@ async def build_distribution_claims(
     ]
     chart = {
         "type": "pie",
+        "shape": "proportion_buckets",
         "data": {
             "labels": list(dist.keys()),
             "series": [{"name": "主体数", "values": [dist[k] for k in dist]}],
@@ -2205,6 +2253,7 @@ async def build_segmentation_claims(
     if stats:
         chart = {
             "type": "bar",
+            "shape": "categorical_distribution",
             "data": {
                 "labels": [s["group"] for s in stats],
                 "series": [{"name": _metric_label(metric), "values": [s["avg"] for s in stats]}],
@@ -2270,6 +2319,8 @@ async def build_correlation_claims(
     from app.services.chart_payloads import correlation_scatter_chart
 
     chart = correlation_scatter_chart(xs, ys, x_label=la, y_label=lb)
+    if isinstance(chart, dict):
+        chart["shape"] = "two_var_correlation"
     return claims, {"correlation": round(r, 4), "n": len(xs), "charts": chart}
 
 

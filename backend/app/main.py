@@ -98,6 +98,23 @@ async def lifespan(app: FastAPI):
         except Exception as col_exc:
             logger.debug("chat_sessions custom_state column ensure: %s", col_exc)
 
+        def _ensure_chat_session_focus_history_column() -> None:
+            """已有库 create_all 不会加列；补 chat_sessions.focus_history_json（焦点回溯）。"""
+            from sqlalchemy import text
+
+            with eng.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE chat_sessions "
+                        "ADD COLUMN IF NOT EXISTS focus_history_json TEXT NOT NULL DEFAULT '[]'"
+                    )
+                )
+
+        try:
+            await asyncio.to_thread(_ensure_chat_session_focus_history_column)
+        except Exception as col_exc:
+            logger.debug("chat_sessions focus_history column ensure: %s", col_exc)
+
         def _ensure_chat_session_owner_column() -> None:
             """已有库 create_all 不会加列；补 chat_sessions.owner（M0 账号记忆）。"""
             from sqlalchemy import text
@@ -155,6 +172,13 @@ async def lifespan(app: FastAPI):
         except Exception as col_exc:
             logger.debug("app_users pwd_ver column ensure: %s", col_exc)
 
+        try:
+            from app.db.semantic_migrations import ensure_metric_definition_v2_columns
+
+            await asyncio.to_thread(ensure_metric_definition_v2_columns, eng)
+        except Exception as col_exc:
+            logger.debug("metric_definition v2 columns ensure: %s", col_exc)
+
         from app.services.auth_service import ensure_demo_user, validate_production_config
 
         auth_check = validate_production_config()
@@ -168,6 +192,11 @@ async def lifespan(app: FastAPI):
         from app.services.metric_registry import ensure_canonical_metrics
 
         _startup_checks["canonical_metrics_seeded"] = await asyncio.to_thread(ensure_canonical_metrics)
+        from app.services.semantic_registry_seed import seed_semantic_registry
+
+        _startup_checks["semantic_registry_seeded"] = await asyncio.to_thread(
+            seed_semantic_registry
+        )
     except RuntimeError:
         raise
     except Exception as exc:

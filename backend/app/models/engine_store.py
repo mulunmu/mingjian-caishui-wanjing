@@ -73,6 +73,7 @@ class ChatSessionRecord(Base):
     covered_functions_json: Mapped[str] = mapped_column(Text, default="[]")
     history_json: Mapped[str] = mapped_column(Text, default="[]")
     custom_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    focus_history_json: Mapped[str] = mapped_column(Text, default="[]")  # M2 焦点栈
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

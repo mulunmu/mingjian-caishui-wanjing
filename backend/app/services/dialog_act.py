@@ -33,6 +33,21 @@ AskKind = Literal["overview", "list", "count", "entry_help"]
 
 CONFIDENCE_CLARIFY = 0.55
 
+RefusalKind = Literal["fabrication", "out_of_domain"]
+
+FABRICATION_REFUSE_MSG = (
+    "数字只来自系统数据，无法编造或伪造。请问想查询哪方面的真实数据？"
+)
+
+# 无 LLM 软降级兜底用的关键词（非主路径；主路径由 schema refusal_kind 判定）
+_SOFT_FABRICATE_KW = (
+    "编造", "编一个", "帮我编", "伪造", "假造", "捏造", "虚构", "造假数据", "造一个", "编一份",
+)
+_SOFT_OOD_KW = (
+    "天气", "午饭", "晚饭", "吃什么", "电影", "电视剧", "足球", "篮球",
+    "游戏", "讲个笑话", "星座", "算命", "股票行情",
+)
+
 # 聚合语义：未绑定主体时 analyze 默认 cohort（契约，非词表白名单堆砌）
 _AGGREGATE_ANALYZE_RE = re.compile(
     r"(各行业|行业趋势|趋势走向|走向|走势|同比|分布|信号最多|群体|"
@@ -90,6 +105,49 @@ class DialogAct(BaseModel):
     industry_l1: str | None = None
     province: str | None = None
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    # M1 弃权三态：can_answer=False → clarify（有 clarify_question）或 abstain（无）
+    can_answer: bool = Field(default=True, description="False 时走 clarify 或 abstain 路径")
+    clarify_question: str | None = Field(default=None, description="反问内容（一句话），can_answer=False 时使用")
+    # 强制弃权类别：由 LLM/软降级填入，路由层统一落地文案（禁止正则主路径）
+    refusal_kind: RefusalKind | None = Field(
+        default=None,
+        description="fabrication=拒绝编造；out_of_domain=超纲弃权；null=非弃权",
+    )
+    # M1 工具调用计划：LLM 从能力地图选出的工具列表
+    tools: list[dict] = Field(default_factory=list, description="LLM 选出的工具调用计划（MetricTool 列表）")
+
+
+def apply_refusal_policy(act: DialogAct) -> DialogAct:
+    """将 refusal_kind 落到 can_answer / clarify_question（单一真源）。"""
+    if act.refusal_kind == "fabrication":
+        return act.model_copy(
+            update={
+                "can_answer": False,
+                "clarify_question": FABRICATION_REFUSE_MSG,
+                "confidence": max(float(act.confidence or 0), 0.95),
+            }
+        )
+    if act.refusal_kind == "out_of_domain":
+        return act.model_copy(
+            update={
+                "can_answer": False,
+                "clarify_question": None,
+                "confidence": max(float(act.confidence or 0), 0.95),
+            }
+        )
+    return act
+
+
+def _soft_refusal_kind(query: str) -> RefusalKind | None:
+    """无 LLM 时的弃权兜底（关键词，非正则主路径）。"""
+    q = (query or "").strip()
+    if not q:
+        return None
+    if any(k in q for k in _SOFT_FABRICATE_KW):
+        return "fabrication"
+    if any(k in q for k in _SOFT_OOD_KW):
+        return "out_of_domain"
+    return None
 
 
 def merge_inventory_focus(act: DialogAct, state: dict[str, Any] | None) -> DialogAct:
@@ -180,7 +238,7 @@ def from_followup(followup: dict[str, Any] | None) -> DialogAct | None:
 
 
 async def classify(query: str | None, state: dict[str, Any] | None = None) -> DialogAct:
-    """主路径：LLM 结构化分类；不可用或失败 → 软降级。"""
+    """主路径：LLM 结构化分类（含 refusal_kind）；不可用或失败 → 软降级。"""
     q = (query or "").strip()
     state = state or {}
     if not q:
@@ -194,10 +252,36 @@ async def classify(query: str | None, state: dict[str, Any] | None = None) -> Di
     if llm_reply.llm_available():
         act = await _llm_classify(q, state)
         if act is not None:
-            return merge_inventory_focus(_normalize_act(act, q, state), state)
+            # 红线 §2.3：LLM 主路径禁止正则 _normalize_act；只合并会话焦点 + 弃权策略
+            act = apply_refusal_policy(merge_inventory_focus(act, state))
+            if (
+                act.refusal_kind is None
+                and act.confidence < CONFIDENCE_CLARIFY
+                and act.can_answer
+            ):
+                act = act.model_copy(
+                    update={
+                        "can_answer": False,
+                        "clarify_question": act.clarify_question
+                        or "您能说得更具体一些吗？比如想看哪个行业或哪家企业？",
+                    }
+                )
+            return act
         logger.info("dialog_act llm classify failed, soft fallback q=%r", q[:40])
 
-    return merge_inventory_focus(_normalize_act(_soft_fallback(q, state), q, state), state)
+    # 无 LLM / LLM 失败：软降级才允许 _normalize_act（关键词兜底）
+    act = apply_refusal_policy(
+        merge_inventory_focus(_normalize_act(_soft_fallback(q, state), q, state), state)
+    )
+    if act.refusal_kind is None and act.confidence < CONFIDENCE_CLARIFY and act.can_answer:
+        act = act.model_copy(
+            update={
+                "can_answer": False,
+                "clarify_question": act.clarify_question
+                or "您能说得更具体一些吗？比如想看哪个行业或哪家企业？",
+            }
+        )
+    return act
 
 
 def _normalize_act(act: DialogAct, query: str, state: dict[str, Any]) -> DialogAct:
@@ -377,6 +461,8 @@ async def _llm_classify(query: str, state: dict[str, Any]) -> DialogAct | None:
 
 def _build_system(state: dict[str, Any]) -> str:
     from app.services.intent_engine import industry_l1_options, province_options
+    from app.services.metric_registry import to_tool_schema
+    from app.services.persona import build_persona_prompt
 
     scope = (state or {}).get("scope") or "unbound"
     subject = (state or {}).get("subject") or {}
@@ -384,7 +470,13 @@ def _build_system(state: dict[str, Any]) -> str:
     focus = (state or {}).get("inventory_focus") or {}
     inds = "、".join(industry_l1_options()[:12])
     provs = "、".join(province_options()[:12])
+    persona = build_persona_prompt((state or {}).get("scenario"))
+    chapters = chapter_tool_catalog()
+    chap_desc = "|".join(f"{c['chapter']}({c['title']})" for c in chapters)
+    # 能力地图：章节工具为主；指标工具名作补充白名单（动态自 registry）
+    metric_names = "、".join(t["name"] for t in to_tool_schema()[:16])
     return (
+        persona + "\n"
         "你是对话行为分类器。只输出 DialogAct JSON，不要解释、不要编造数字或企业名单。\n"
         "act：negotiate_scope|bind_subject|analyze|drill|product_faq|meta_session|custom_report。\n"
         "- negotiate_scope：库存/名单/计数/怎么选。ask_kind=overview|list|count|entry_help。"
@@ -402,15 +494,33 @@ def _build_system(state: dict[str, Any]) -> str:
         f"industry_l1 只能从 [{inds}] 选或 null；province 从 [{provs}] 选或 null。\n"
         "scenario 仅 analyze：loan|rating|warn|audit。\n"
         "confidence：乱码/答非所问 <0.55。\n"
+        "refusal_kind：用户要求编造/伪造数字或名单 → fabrication；"
+        "完全超出财税风控（天气/闲聊/娱乐等）→ out_of_domain；其余 null。\n"
+        "can_answer：refusal_kind 非 null 时必须 false；意图不清/缺槽位时也 false。\n"
+        "clarify_question：fabrication 时填一句拒绝说明；out_of_domain 必须 null；"
+        "仅意图不清时填反问。\n"
+        f"tools：act=analyze 时从章节工具选 1..N：{chap_desc}。"
+        "每项填 {chapter, dimension, filters}；filters 可含 industry_l1/province。"
+        f"也可填指标工具名（如 {metric_names}）映射到对应章节。非 analyze 时 tools=[]。\n"
         f"当前 scope={scope} 主体={name} inventory_focus={focus or '无'}。"
     )
 
 
 def _soft_fallback(query: str, state: dict[str, Any]) -> DialogAct:
-    """无 LLM：软提示填槽；不确定则低置信。"""
+    """无 LLM：软提示填槽；不确定则低置信。编造/超纲仅作兜底关键词。"""
     from app.services.intent_engine import _match_industry, _match_province
 
     q = query.strip()
+    soft_refuse = _soft_refusal_kind(q)
+    if soft_refuse:
+        return DialogAct(
+            act="meta_session",
+            confidence=1.0,
+            can_answer=False,
+            refusal_kind=soft_refuse,
+            clarify_question=FABRICATION_REFUSE_MSG if soft_refuse == "fabrication" else None,
+        )
+
     ind = _match_industry(q)
     prov = _match_province(q)
 
@@ -524,6 +634,103 @@ def _soft_fallback(query: str, state: dict[str, Any]) -> DialogAct:
 
 def needs_clarify(act: DialogAct) -> bool:
     return float(act.confidence or 0) < CONFIDENCE_CLARIFY
+
+
+def needs_abstain(act: DialogAct) -> bool:
+    """M1：是否需要弃权（can_answer=False 且无 clarify_question）。"""
+    return not act.can_answer and not act.clarify_question
+
+
+def get_clarify_question(act: DialogAct) -> str | None:
+    """M1：获取反问内容。can_answer=False 且有 clarify_question 时返回。"""
+    if not act.can_answer and act.clarify_question:
+        return act.clarify_question
+    return None
+
+
+def _resolve_one_tool(first: dict[str, Any]) -> dict[str, Any]:
+    """解析单个 tool dict → {function, dimension, industry_l1?, province?}；不合法返回 {}。"""
+    from app.services.report_templates import CHAPTER_REGISTRY
+
+    if not isinstance(first, dict):
+        return {}
+    raw = (
+        first.get("chapter")
+        or first.get("name")
+        or first.get("tool")
+        or ""
+    )
+    raw = str(raw).strip()
+    if raw.startswith("chapter_"):
+        raw = raw[len("chapter_"):]
+    if raw.startswith("metric_"):
+        # 指标工具：按 KPI 反查章节
+        metric_key = raw[len("metric_"):]
+        for chap, entry in CHAPTER_REGISTRY.items():
+            for kpi in entry.get("kpis") or []:
+                if kpi.get("metric") == metric_key:
+                    raw = chap
+                    break
+            else:
+                continue
+            break
+    if raw not in CHAPTER_REGISTRY:
+        return {}
+    entry = CHAPTER_REGISTRY[raw]
+    dim = first.get("dimension") or entry.get("default_dimension") or "overall"
+    if dim not in ("overall", "industry", "region", "time", "signal"):
+        dim = entry.get("default_dimension") or "overall"
+    out: dict[str, Any] = {"function": raw, "dimension": dim}
+    filters = first.get("filters") if isinstance(first.get("filters"), dict) else {}
+    ind = filters.get("industry_l1") or first.get("industry_l1")
+    prov = filters.get("province") or first.get("province")
+    if ind:
+        out["industry_l1"] = str(ind)
+    if prov:
+        out["province"] = str(prov)
+    return out
+
+
+def resolve_analyze_tools(act: DialogAct) -> dict[str, Any]:
+    """从 act.tools 解析第一个工具的章节/过滤槽位（兼容旧单意图路径）。
+
+    多意图请用 resolve_all_analyze_tools 拿全部工具计划。
+    """
+    tools = act.tools or []
+    if not tools or not isinstance(tools[0], dict):
+        return {}
+    return _resolve_one_tool(tools[0])
+
+
+def resolve_all_analyze_tools(act: DialogAct) -> list[dict[str, Any]]:
+    """红线 §2.2 多意图并行：解析 act.tools 中所有合法工具计划。
+
+    返回 [{function, dimension, industry_l1?, province?}, ...]；
+    空工具 / 全不合法 → 空列表（路由层走单意图 intent_engine 兜底）。
+    """
+    out: list[dict[str, Any]] = []
+    for t in act.tools or []:
+        resolved = _resolve_one_tool(t)
+        if resolved:
+            out.append(resolved)
+    return out
+
+
+def chapter_tool_catalog() -> list[dict[str, Any]]:
+    """章节工具表（能力地图之一），供 prompt / 路由共用。"""
+    from app.services.report_templates import CHAPTER_REGISTRY
+
+    return [
+        {
+            "chapter": key,
+            "name": f"chapter_{key}",
+            "title": entry.get("title"),
+            "description": entry.get("desc"),
+            "default_dimension": entry.get("default_dimension") or "overall",
+            "data_shapes": list(entry.get("data_shapes") or []),
+        }
+        for key, entry in CHAPTER_REGISTRY.items()
+    ]
 
 
 def multi_intent_clarify(parts: list[str]) -> dict[str, Any]:

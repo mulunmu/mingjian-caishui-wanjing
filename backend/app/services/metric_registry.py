@@ -11,7 +11,9 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "scale_label", "time"],
         "default_filters": {},
         "edge_cases": "六维权重见 assessment_weights.DIMENSION_WEIGHTS；法律维度缺事件时按部分覆盖权重 0.05 折算。",
+        "shape": "multi_dim_vector",
     },
     {
         "metric_key": "tax_health_score",
@@ -90,6 +93,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "scale_label", "time"],
         "default_filters": {},
         "edge_cases": "得分下限 -50；tax_on_time_rate=0 为弃权哨兵，不计准时率贡献（与洞察 T-04 对齐，见 assessment._calc_tax_health）。",
+        "shape": "multi_dim_vector",
     },
     {
         "metric_key": "authenticity_score",
@@ -106,6 +110,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "红字发票、进销项不匹配、开票序列断档均为负向信号。",
+        "shape": "multi_dim_vector",
     },
     {
         "metric_key": "industry_score",
@@ -119,6 +124,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "time"],
         "default_filters": {},
         "edge_cases": "非上市/其他行业无基准时退化为中性分。",
+        "shape": "multi_dim_vector",
     },
     {
         "metric_key": "legal_score",
@@ -134,6 +140,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "事件缺失按部分覆盖权重 0.05 折算（LEGAL_PARTIAL_COVERAGE_WEIGHT）。",
+        "shape": "multi_dim_vector",
     },
     {
         "metric_key": "finance_score",
@@ -149,6 +156,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "非上市口径：无 ROE/Z 值，用利润边际与现金流水平替代。",
+        "shape": "multi_dim_vector",
     },
     {
         "metric_key": "invoice_score",
@@ -165,6 +173,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "集中度 0=弃权；三字段全弃权返回中性分 50。",
+        "shape": "multi_dim_vector",
     },
     {
         "metric_key": "revenue_yoy",
@@ -178,6 +187,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "报告展示时 ×100 呈现百分比。",
+        "shape": "ordered_series",
     },
     {
         "metric_key": "credit_score",
@@ -191,6 +201,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "",
+        "shape": "single_value",
     },
     {
         "metric_key": "revenue_deviation",
@@ -204,6 +215,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "单一口径缺失时以可用口径计。",
+        "shape": "single_value",
     },
     {
         "metric_key": "profit_margin",
@@ -217,6 +229,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "",
+        "shape": "single_value",
     },
     {
         "metric_key": "customer_concentration",
@@ -230,6 +243,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "报告展示时 ×100 呈现百分比；0 表源缺失弃权。",
+        "shape": "single_value",
     },
     {
         "metric_key": "supplier_concentration",
@@ -243,6 +257,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "报告展示时 ×100 呈现百分比；0 表源缺失弃权。",
+        "shape": "single_value",
     },
     {
         "metric_key": "category_concentration",
@@ -256,6 +271,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "报告展示时 ×100 呈现百分比；0 表源缺失弃权。",
+        "shape": "single_value",
     },
     {
         "metric_key": "vat_burden",
@@ -269,6 +285,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "报告展示时 ×100 呈现百分比；0 表源缺失弃权。",
+        "shape": "single_value",
     },
     {
         "metric_key": "income_tax_burden",
@@ -282,6 +299,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "报告展示时 ×100 呈现百分比；0 表源缺失弃权。",
+        "shape": "single_value",
     },
     {
         "metric_key": "correction_times",
@@ -295,6 +313,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "",
+        "shape": "single_value",
     },
     {
         "metric_key": "social_headcount",
@@ -308,6 +327,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "0 表弃权，仅展示/问答不评分。",
+        "shape": "single_value",
     },
     {
         "metric_key": "tax_late_penalty_cnt",
@@ -321,6 +341,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "",
+        "shape": "single_value",
     },
     {
         "metric_key": "void_invoice_cnt",
@@ -334,6 +355,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "",
+        "shape": "single_value",
     },
     {
         "metric_key": "unit_price_ratio",
@@ -347,6 +369,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "0 表源缺失弃权。",
+        "shape": "single_value",
     },
     {
         "metric_key": "change_cnt",
@@ -360,6 +383,7 @@ CANONICAL_METRICS: list[dict] = [
         "dimensions": ["industry_l1", "province", "time"],
         "default_filters": {},
         "edge_cases": "",
+        "shape": "single_value",
     },
 ]
 
@@ -374,8 +398,27 @@ def _ensure_tables() -> bool:
         from app.db.session import Base
         from app.db.urls import get_sync_engine
         from app.models.metric_registry import MetricDefinition
+        from app.models.semantic_registry import (
+            ConversationTopic,
+            ThresholdRule,
+            ToolAlias,
+            ToolDefinition,
+            ToolDependency,
+            ToolExample,
+        )
 
-        Base.metadata.create_all(get_sync_engine(), tables=[MetricDefinition.__table__])
+        Base.metadata.create_all(
+            get_sync_engine(),
+            tables=[
+                MetricDefinition.__table__,
+                ThresholdRule.__table__,
+                ToolDefinition.__table__,
+                ToolAlias.__table__,
+                ToolDependency.__table__,
+                ToolExample.__table__,
+                ConversationTopic.__table__,
+            ],
+        )
         _tables_ready = True
         return True
     except Exception as exc:
@@ -423,6 +466,13 @@ def _apply_metric(rec, m: dict) -> None:
     rec.dimensions_json = json.dumps(m["dimensions"], ensure_ascii=False)
     rec.default_filters_json = json.dumps(m["default_filters"], ensure_ascii=False)
     rec.edge_cases = m["edge_cases"] or ""
+    rec.category = m.get("category") or "composite"
+    rec.version = int(m.get("version") or 1)
+    rec.status = m.get("status") or "validated"
+    rec.shape = m.get("shape") or ""
+    rec.retrieval_enabled = bool(m.get("retrieval_enabled", True))
+    rec.aliases_json = json.dumps(m.get("aliases") or [], ensure_ascii=False)
+    rec.source_tables_json = json.dumps(m.get("source_tables") or [], ensure_ascii=False)
 
 
 def _metric_to_dict(rec) -> dict:
@@ -439,6 +489,13 @@ def _metric_to_dict(rec) -> dict:
         "default_filters": _loads(rec.default_filters_json, {}),
         "edge_cases": rec.edge_cases or "",
         "is_canonical": bool(rec.is_canonical),
+        "category": getattr(rec, "category", "composite"),
+        "version": int(getattr(rec, "version", 1) or 1),
+        "status": getattr(rec, "status", "validated"),
+        "shape": getattr(rec, "shape", ""),
+        "retrieval_enabled": bool(getattr(rec, "retrieval_enabled", True)),
+        "aliases": _loads(getattr(rec, "aliases_json", "[]"), []),
+        "source_tables": _loads(getattr(rec, "source_tables_json", "[]"), []),
     }
 
 
@@ -587,6 +644,47 @@ RUNTIME_TO_CANONICAL: dict[str, str] = {
 ALLOWED_METRIC_KEYS: list[str] = sorted(
     {m["metric_key"] for m in CANONICAL_METRICS} | {"fraud_composite_score"}
 )
+
+
+# ── M0 冻结：指标工具表（Metric Tools）──
+# LLM 从能力地图里选一个指标工具 + 参数，用于 function calling。
+class MetricTool(BaseModel):
+    """LLM 从能力地图里选一个指标工具 + 参数。"""
+    metric: str = Field(..., description="指标 key，如 overall_score / revenue_yoy")
+    dimension: Literal["overall", "industry", "region", "time", "signal"] = Field(
+        default="overall", description="分析维度"
+    )
+    filters: dict[str, str] = Field(
+        default_factory=dict,
+        description="过滤条件，如 {industry_l1: 制造, province: 广东}",
+    )
+    op: Literal["lookup", "aggregate", "compare", "trend", "rank", "distribute"] = Field(
+        default="lookup",
+        description="操作类型：lookup=单值, aggregate=汇总, compare=对比, trend=趋势, rank=排名, distribute=分布",
+    )
+
+
+def to_tool_schema() -> list[dict]:
+    """把 CANONICAL_METRICS 每个指标转成 Pydantic tool JSON Schema 列表。
+
+    每个 tool 包含 metric 的 name/description/shape + MetricTool 的参数 schema。
+    供 LLM function calling 使用。
+    """
+    base_schema = MetricTool.model_json_schema()
+    tools: list[dict] = []
+    for m in CANONICAL_METRICS:
+        tools.append({
+            "name": f"metric_{m['metric_key']}",
+            "description": f"{m['name']}：{m['description']}（单位：{m['unit'] or '无'}，数据形态：{m['shape']}）",
+            "parameters": base_schema,
+            "metadata": {
+                "metric_key": m["metric_key"],
+                "shape": m["shape"],
+                "unit": m["unit"],
+                "dimensions": m["dimensions"],
+            },
+        })
+    return tools
 
 
 def build_llm_dictionary() -> dict:

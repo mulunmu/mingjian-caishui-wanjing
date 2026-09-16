@@ -64,6 +64,74 @@ def filter_unanchored_sentences(sentences: list[str], claims: list[Claim]) -> tu
     return kept, dropped
 
 
+_CHAT_SENT_SPLIT_RE = re.compile(r"(?<=[。！？\n；])")
+
+
+def _split_chat_sentences(text: str) -> list[str]:
+    return [s for s in _CHAT_SENT_SPLIT_RE.split(text or "") if s]
+
+
+def _filter_followups_by_allowed(followups: list[str], allowed: set[str]) -> list[str]:
+    """followups：无数字保留；有数字则必须全部落在 allowed。"""
+    out: list[str] = []
+    for fu in followups or []:
+        nums = [_normalize_num(n) for n in _NUM_RE.findall(fu or "")]
+        if not nums or all(n in allowed for n in nums):
+            out.append(fu)
+    return out
+
+
+def apply_chat_hallucination_guard(
+    reply: str,
+    claims: list[Claim] | None,
+    *,
+    report_hint: str | None = None,
+    followups: list[str] | None = None,
+) -> tuple[str, str | None, list[str]]:
+    """对话终态硬闸门（永不跳过）。
+
+    - 有 allowed 数字：剥离未锚定数字句
+    - 无 allowed（无 Claim 或 Claim 无数字）：剥离一切含数字的句子，禁止凭空数字
+    返回 (reply, report_hint, followups)。
+    """
+    kept_claims = filter_claims(claims or [])
+    allowed = collect_allowed_numbers(kept_claims) if kept_claims else set()
+
+    def _gate_text(text: str) -> tuple[str, list[str]]:
+        parts = _split_chat_sentences(text or "")
+        if not parts:
+            return (text or "").strip(), []
+        if allowed:
+            kept_sents, dropped = filter_unanchored_sentences(parts, kept_claims)
+        else:
+            kept_sents, dropped = [], []
+            for s in parts:
+                if _NUM_RE.search(s or ""):
+                    dropped.append(s)
+                else:
+                    kept_sents.append(s)
+        return "".join(kept_sents).strip(), dropped
+
+    new_reply, dropped_reply = _gate_text(reply or "")
+    if dropped_reply:
+        pass  # caller may log
+
+    new_hint = report_hint
+    if report_hint:
+        gated_hint, dropped_hint = _gate_text(report_hint)
+        new_hint = gated_hint or None
+        if dropped_hint and not dropped_reply:
+            dropped_reply = dropped_hint  # signal something was dropped
+
+    fus = list(followups or [])
+    if allowed:
+        fus = _filter_followups_by_allowed(fus, allowed)
+    else:
+        fus = [f for f in fus if not _NUM_RE.search(f or "")]
+
+    return new_reply, new_hint, fus
+
+
 def validate_report_chapters(chapters: list[dict[str, Any]]) -> dict[str, Any]:
     """渲染前校验（claim 唯一化铁律）：除了溯源（asserted/missing_trace），再加两条运行时断言：
 

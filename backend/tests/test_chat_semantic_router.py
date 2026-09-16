@@ -13,14 +13,23 @@ async def _run_blocking(fn, *args, **kwargs):
 
 
 def _patch_common(monkeypatch):
-    monkeypatch.setattr("app.services.session_store.ensure_session_id", lambda sid=None: "s1")
+    monkeypatch.setattr(
+        "app.services.session_store.ensure_session_id",
+        lambda sid=None, owner=None: "s1",
+    )
     monkeypatch.setattr("app.services.session_store.get_session", lambda sid=None: {})
     monkeypatch.setattr("app.services.session_store.store_session", lambda *a, **k: None)
     monkeypatch.setattr("app.services.conclusion_store.save_conclusion", lambda **k: "c1")
     monkeypatch.setattr("app.services.conclusion_store.covered_functions", lambda sid, dimension=None: set())
     from app.services import chat_router
+    from app.services import dialog_act
 
     monkeypatch.setattr(chat_router, "run_blocking", _run_blocking)
+    monkeypatch.setattr(
+        dialog_act,
+        "classify",
+        AsyncMock(return_value=dialog_act.DialogAct(act="analyze", confidence=1.0)),
+    )
 
 
 @pytest.mark.asyncio
@@ -42,7 +51,15 @@ async def test_route_chat_llm_path_returns_query_type(monkeypatch):
     async def fake_run_semantic(db, sq, session_id, *, intent=None):
         return [], [], {}
 
-    async def fake_reply(query, claims, followups, *, report_hint=None):
+    async def fake_reply(
+        query,
+        claims,
+        followups,
+        *,
+        report_hint=None,
+        persona=None,
+        financial_interp=None,
+    ):
         return "ok", MagicMock(followups=[]), "template"
 
     monkeypatch.setattr("app.services.llm_semantic_parser.parse_semantic_query", fake_parse)
@@ -74,7 +91,15 @@ async def test_route_chat_no_llm_trend_not_hint(monkeypatch):
     async def fake_run_semantic(db, sq, session_id, *, intent=None):
         return [trend_claim], [], {}
 
-    async def fake_reply(query, claims, followups, *, report_hint=None):
+    async def fake_reply(
+        query,
+        claims,
+        followups,
+        *,
+        report_hint=None,
+        persona=None,
+        financial_interp=None,
+    ):
         return "ok", MagicMock(followups=[]), "template"
 
     monkeypatch.setattr("app.services.judgment_service.run_semantic_query", fake_run_semantic)
@@ -102,7 +127,15 @@ async def test_route_chat_no_llm_comparison(monkeypatch):
         captured["sq"] = sq
         return [], [], {}
 
-    async def fake_reply(query, claims, followups, *, report_hint=None):
+    async def fake_reply(
+        query,
+        claims,
+        followups,
+        *,
+        report_hint=None,
+        persona=None,
+        financial_interp=None,
+    ):
         return "ok", MagicMock(followups=[]), "template"
 
     monkeypatch.setattr("app.services.judgment_service.run_semantic_query", fake_run_semantic)
@@ -124,6 +157,13 @@ async def test_route_chat_report_question_routes_to_faq_not_report(monkeypatch):
     from app.services import chat_router
 
     _patch_common(monkeypatch)
+    from app.services import dialog_act
+
+    monkeypatch.setattr(
+        dialog_act,
+        "classify",
+        AsyncMock(return_value=dialog_act.DialogAct(act="product_faq", confidence=1.0)),
+    )
     # 规则层会把「报告怎么生成」判成 report —— 正是要防的劫持
     monkeypatch.setattr(
         "app.services.intent_engine.recognize",
@@ -137,7 +177,15 @@ async def test_route_chat_report_question_routes_to_faq_not_report(monkeypatch):
         captured["sq"] = sq
         return [], [], {}
 
-    async def fake_reply(query, claims, followups, *, report_hint=None):
+    async def fake_reply(
+        query,
+        claims,
+        followups,
+        *,
+        report_hint=None,
+        persona=None,
+        financial_interp=None,
+    ):
         return "ok", MagicMock(followups=[]), "template"
 
     monkeypatch.setattr("app.services.judgment_service.run_semantic_query", fake_run_semantic)
@@ -145,10 +193,9 @@ async def test_route_chat_report_question_routes_to_faq_not_report(monkeypatch):
 
     db = AsyncMock()
     out = await chat_router.route_chat(db, "报告怎么生成", session_id="s1")
-    # 走 FAQ 语义路径，而非报告意图（report 意图会走 run_judgment + 切片报告，而不是 run_semantic_query）
-    assert captured["sq"].query_type == QueryType.faq
-    assert out["query_type"] == "faq"
-    assert out["function"] == "general"
+    # 走产品 FAQ 分支，而非报告意图（report 意图会生成切片报告）
+    assert out["function"] == "faq"
+    assert out["parse_source"] == "product_faq"
 
 
 def test_no_llm_fallback_semantic_layer_not_hint():

@@ -7,6 +7,8 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+from app.services.chart_payloads import infer_chart
+
 # 一期只开放这 3 个下钻 op
 DRILLDOWN_OPS = frozenset({"group_by_industry", "top_list", "show_funnel"})
 
@@ -305,14 +307,15 @@ async def run_drilldown(
                 evidence_chain=[f"{k}={v}" for k, v in rows[:6]],
             )
         ]
-        chart = {
-            "type": "bar",
-            "title": "异常主体 · 行业分布",
+        chart = infer_chart({
+            "shape": "categorical_distribution",
             "data": {
                 "labels": [zh_industry(i) or i for i, _ in rows[:8]],
                 "series": [{"name": "异常家数", "values": [n for _, n in rows[:8]]}],
             },
-        }
+        })
+        if chart:
+            chart["title"] = "异常主体 · 行业分布"
         out_meta = {
             "function": "fraud",
             "query_type": "segmentation",
@@ -365,22 +368,24 @@ async def run_drilldown(
             "flagged_count": len(firms),
             "flagged_firms": firms,
             "drilldown_op": op,
-            "charts": {
-                "type": "table",
-                "title": "异常主体 TopN",
-                "data": {
-                    "columns": ["主体", "行业", "信号"],
-                    "rows": [
-                        [
-                            f.get("display_name") or f.get("display_label") or "—",
-                            zh_industry(f.get("industry_l1")) or f.get("industry_l1") or "—",
-                            "、".join(zh_signal(s) for s in (f.get("signals") or [])[:3]) or "—",
-                        ]
-                        for f in top
-                    ],
-                },
-            },
         }
+        _table_chart = infer_chart({
+            "shape": "tabular_rows",
+            "data": {
+                "columns": ["主体", "行业", "信号"],
+                "rows": [
+                    [
+                        f.get("display_name") or f.get("display_label") or "—",
+                        zh_industry(f.get("industry_l1")) or f.get("industry_l1") or "—",
+                        "、".join(zh_signal(s) for s in (f.get("signals") or [])[:3]) or "—",
+                    ]
+                    for f in top
+                ],
+            },
+        })
+        if _table_chart:
+            _table_chart["title"] = "异常主体 TopN"
+        out_meta["charts"] = _table_chart
         return {
             "ok": True,
             "reply": None,
@@ -431,9 +436,15 @@ async def run_drilldown(
         "sample_count": sample_n,
         "signal_counts": sc,
         "flagged_firms": firms,
-        "charts": {"type": "funnel", "title": "风险筛查漏斗", "data": {"labels": labels, "values": values}},
         "drilldown_op": op,
     }
+    _funnel_chart = infer_chart({
+        "shape": "hierarchical_stages",
+        "data": {"labels": labels, "values": values},
+    })
+    if _funnel_chart:
+        _funnel_chart["title"] = "风险筛查漏斗"
+    out_meta["charts"] = _funnel_chart
     return {
         "ok": True,
         "reply": None,

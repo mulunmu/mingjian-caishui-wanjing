@@ -3,11 +3,19 @@
 
 功能：score / authenticity / fraud / benchmark / trend / report / email_report / signal / general
 维度：overall / industry / region / time / signal
+
+红线 §8.1：行业/地区列表禁止硬编码——必须动态从数据源读取。
+_INDUSTY_KW / _PROVINCE_KW 仅作为「同义词→标准名」映射（LLM 不可用时的兜底），
+industry_l1_options / province_options 的值域以 DB distinct 为准。
 """
 from __future__ import annotations
 
+import logging
 import re
+import time
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 FUNCTIONS = (
     "score",
@@ -206,22 +214,62 @@ def _match_dimension(q: str, function: str) -> tuple[str, float]:
     return "overall", 0.45
 
 
+# 行业/地区值域缓存：从 DB 动态读取（红线 §8.1），60 秒 TTL
+_DOMAIN_CACHE_TTL_SECONDS = 60.0
+_domain_cache: dict[str, tuple[float, list[str]]] = {}
+
+
+def _load_distinct_from_db(column: str) -> list[str]:
+    """从 core_metrics 表读取指定列的 distinct 值；失败返回空列表。"""
+    try:
+        from sqlalchemy import text
+
+        from app.db.urls import get_sync_engine
+
+        engine = get_sync_engine()
+        sql = f"SELECT DISTINCT {column} FROM core_metrics WHERE {column} IS NOT NULL ORDER BY {column}"
+        with engine.connect() as conn:
+            return [str(r[0]) for r in conn.execute(text(sql)) if r[0]]
+    except Exception as exc:
+        logger.info("load %s from db failed, fallback to static kw: %s", column, exc)
+        return []
+
+
+def _domain_values(column: str, static_fallback: list[str]) -> list[str]:
+    """动态读取行业/地区值域，60 秒 TTL 缓存；与静态映射合并（并集）。
+
+    静态同义词映射中的标准名是能力地图的一部分，DB 是事实数据源；
+    两者取并集以确保新增数据/新指标注册后选项即时可用（红线 §8.1）。
+    """
+    now = time.time()
+    cached = _domain_cache.get(column)
+    if cached and (now - cached[0]) < _DOMAIN_CACHE_TTL_SECONDS:
+        return cached[1]
+    dynamic = _load_distinct_from_db(column)
+    merged: list[str] = []
+    for v in list(static_fallback) + list(dynamic):
+        if v and v not in merged:
+            merged.append(v)
+    _domain_cache[column] = (now, merged)
+    return merged
+
+
 def industry_l1_options() -> list[str]:
-    """去重后的行业大类列表（供 LLM 白名单与测试）。"""
-    seen: list[str] = []
+    """行业大类值域（红线 §8.1：DB 动态读取，失败回退静态映射）。"""
+    static: list[str] = []
     for _, ind in _INDUSTRY_KW:
-        if ind not in seen:
-            seen.append(ind)
-    return seen
+        if ind not in static:
+            static.append(ind)
+    return _domain_values("industry_l1", static)
 
 
 def province_options() -> list[str]:
-    """去重后的地区白名单（供 LLM 定制对话槽位约束）。"""
-    seen: list[str] = []
+    """省份值域（红线 §8.1：DB 动态读取，失败回退静态映射）。"""
+    static: list[str] = []
     for _, prov in _PROVINCE_KW:
-        if prov not in seen:
-            seen.append(prov)
-    return seen
+        if prov not in static:
+            static.append(prov)
+    return _domain_values("province", static)
 
 
 def _match_industry(q: str) -> str | None:

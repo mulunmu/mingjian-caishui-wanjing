@@ -198,3 +198,67 @@ def correlation_scatter_chart(
             "y_label": y_label,
         },
     }
+
+
+# ── M0 冻结：数据形态 → 图映射表（Shape → Chart）──
+# 引擎产出的数据块带 shape 字段，渲染层 infer_chart(shape) 自动出图。
+# DS 从头到尾不参与选图——加新指标只要数据块带已知 shape，图自动出现。
+SHAPE_TO_CHART: dict[str, str | None] = {
+    "single_value": None,                # 无图 → 数字卡片
+    "categorical_distribution": "bar",   # 分类计数（按行业/按地区）
+    "ordered_series": "line",            # 有序序列（同比趋势）
+    "proportion_buckets": "pie",         # 互斥分桶占比
+    "multi_dim_vector": "radar",         # 六维向量
+    "hierarchical_stages": "funnel",     # 分层递减
+    "two_var_correlation": "scatter",    # 两变量相关
+    "matrix_heatmap": "heatmap",         # 行业×信号
+    "tabular_rows": "table",             # 名单 TopN
+}
+
+
+def infer_chart(result_block: dict[str, Any]) -> dict[str, Any] | None:
+    """输入引擎产出的数据块（必须带 shape 字段），输出 chart payload。
+
+    数据形态决定图，与意图无关。纯函数，无副作用。
+    返回 None 表示该数据形态不需要图表（如 single_value）。
+    """
+    shape = result_block.get("shape")
+    if not shape:
+        return None
+    chart_type = SHAPE_TO_CHART.get(shape)
+    if chart_type is None:
+        return None
+    data = result_block.get("data", {})
+    return {"type": chart_type, "data": data}
+
+
+def normalize_chart_payload(chart: Any) -> Any:
+    """按 shape 重写 type；保留 title 等附加字段。无 shape 则原样返回。"""
+    if chart is None:
+        return None
+    if isinstance(chart, list):
+        return [c for c in (normalize_chart_payload(x) for x in chart) if c]
+    if not isinstance(chart, dict):
+        return chart
+    shape = chart.get("shape")
+    if not shape:
+        return chart
+    inferred = infer_chart({"shape": shape, "data": chart.get("data") or {}})
+    if not inferred:
+        # single_value 等：去掉 type，避免假图
+        out = {k: v for k, v in chart.items() if k != "type"}
+        out["shape"] = shape
+        return out
+    out = {**chart, "type": inferred["type"], "shape": shape}
+    if "data" not in out or out.get("data") is None:
+        out["data"] = inferred.get("data")
+    return out
+
+
+def normalize_meta_charts(meta: dict[str, Any] | None) -> dict[str, Any]:
+    """规范化 meta['charts']，供路由/报告统一调用。"""
+    if not meta:
+        return {}
+    if "charts" not in meta:
+        return meta
+    return {**meta, "charts": normalize_chart_payload(meta.get("charts"))}

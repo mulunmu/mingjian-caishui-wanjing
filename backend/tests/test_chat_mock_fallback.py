@@ -52,4 +52,4 @@ def test_template_reply_with_claims():
     }
     reply = _template_reply("trend_industry", data, with_prefix=True)
     assert "3.5" in reply
-    assert "看真实性" in reply
+    assert "下方按钮可继续追问" in reply

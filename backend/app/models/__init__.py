@@ -10,6 +10,17 @@ from app.models.engine_store import (
     EnterpriseEngineFeatures,
 )
 from app.models.metric_registry import FieldMapping, MetricDefinition
+from app.models.report_blueprint import ReportBlueprintRecord
+from app.models.shadow_answer_evaluation import ShadowAnswerObservationRecord
+from app.models.shadow_evaluation import ShadowEvaluationRecord
+from app.models.semantic_registry import (
+    ConversationTopic,
+    ThresholdRule,
+    ToolAlias,
+    ToolDefinition,
+    ToolDependency,
+    ToolExample,
+)
 from app.models.subscription import Subscription
 from app.models.trusted_email import TrustedEmail
 from app.models.verification import EmailVerificationCode, PasswordResetTicket
@@ -29,6 +40,15 @@ __all__ = [
     "AppUser",
     "MetricDefinition",
     "FieldMapping",
+    "ReportBlueprintRecord",
+    "ShadowEvaluationRecord",
+    "ShadowAnswerObservationRecord",
+    "ThresholdRule",
+    "ToolDefinition",
+    "ToolAlias",
+    "ToolDependency",
+    "ToolExample",
+    "ConversationTopic",
     "Subscription",
     "TrustedEmail",
     "EmailVerificationCode",

@@ -30,15 +30,22 @@ logger = logging.getLogger(__name__)
 
 
 class NarrationPlan(BaseModel):
-    """A.4 章节解读 document plan：只允许改写句列表（禁止自由散文）。"""
+    """A.4 章节解读 document plan：只允许改写句列表（禁止自由散文）。
 
-    sentences: list[str] = Field(default_factory=list, max_length=5)
+    红线 §2.1：不限制句数句式，只约束数字来源。max_length 上限仅作为
+    API 边界防护（防御异常 LLM 输出爆炸），不再作为对 LLM 表达的硬约束。
+    """
+
+    sentences: list[str] = Field(default_factory=list, max_length=32)
 
 
 class SummaryPlan(BaseModel):
-    """A.4 执行摘要 document plan：只允许改写句列表。"""
+    """A.4 执行摘要 document plan：只允许改写句列表。
 
-    sentences: list[str] = Field(default_factory=list, max_length=6)
+    同 NarrationPlan：不限制句数，只约束数字与事实来源。
+    """
+
+    sentences: list[str] = Field(default_factory=list, max_length=32)
 
 TEMPLATE_PREFIX = ""  # M3：去掉「[规则模板生成]」前缀；保留常量名兼容旧引用
 FALLBACK_REPLY = "分析完成。整体判断请结合关键数字；可继续追问放贷、评级、预警或稽查场景。"
@@ -155,6 +162,143 @@ def _llm_extra_body(model: str) -> dict | None:
     return None
 
 
+# ── M1：通义点金金融解读层 ──
+def _llm_financial_params() -> tuple[str, dict]:
+    """通义点金模型参数（金融解读层专用）。
+
+    优先读 FINANCIAL_LLM_* 环境变量，回退到主 LLM 配置。
+    """
+    model = (os.getenv("FINANCIAL_LLM_MODEL") or "").strip()
+    key = (os.getenv("FINANCIAL_LLM_API_KEY") or "").strip()
+    base = (os.getenv("FINANCIAL_LLM_BASE_URL") or "").strip()
+    if not model:
+        # 未配置金融模型时回退到主模型
+        return _llm_completion_params()
+    params: dict = {"api_key": key or (os.getenv("LLM_API_KEY") or "").strip()}
+    if base:
+        params["api_base"] = base.rstrip("/")
+    if not model.startswith(("openai/", "azure/", "gemini/", "zhipu/", "zai/", "qwen/")):
+        model = f"openai/{model}"
+    return model, params
+
+
+def financial_llm_available() -> bool:
+    """M1：金融解读层 LLM 是否已配置且可用。"""
+    model = (os.getenv("FINANCIAL_LLM_MODEL") or "").strip()
+    key = (os.getenv("FINANCIAL_LLM_API_KEY") or "").strip()
+    if not model or not key:
+        return False
+    from app.services import rate_limiter
+    return rate_limiter.check_llm_limit()
+
+
+class FinancialInterpPlan(BaseModel):
+    """通义点金结构化输出：禁止任何数字；句数不限（按结论密度自然展开）。"""
+
+    sentences: list[str] = Field(default_factory=list, max_length=16)
+
+
+async def generate_financial_interpretation(
+    claims: list[Claim],
+    context: dict | None = None,
+) -> str | None:
+    """通义点金金融解读——只解释已有 Claim，不新增数字；供 DeepSeek 校验层引用。"""
+    if not financial_llm_available():
+        return None
+    kept = filter_claims(claims)
+    claim_lines = [c.claim for c in kept if c.claim]
+    if not claim_lines:
+        return None
+    ctx = context or {}
+    industry = ctx.get("industry_l1") or ""
+    scope = ctx.get("scope") or "cohort"
+    scenario = ctx.get("scenario")
+    from app.services.persona import build_persona_prompt
+
+    persona = build_persona_prompt(scenario)
+    system = (
+        persona + "\n"
+        "你是金融风控解读专家。根据给定的风控结论，用中文给出带金融因果的解读。\n"
+        "规则：\n"
+        "1. 禁止出现任何数字（阿拉伯数字与百分号）。只用定性描述（偏低/偏高/承压/稳健）\n"
+        "2. 输出若干句（按结论密度自然展开），建议以「因为…所以…」或「这表明…」的因果结构组织\n"
+        "3. 使用金融专业术语，但要让非专业人士能理解\n"
+        "4. 不要重复结论原文，而是给出「为什么」和「意味着什么」\n"
+        "5. 禁用 AI 套话（如：值得注意的是、需要指出的是）\n"
+        "6. 禁止计算或推导任何新数字"
+    )
+    user = (
+        f"{'行业：' + industry if industry else ''}\n"
+        f"{'分析范围：' + ('单企业' if scope == 'individual' else '群体/行业')}\n"
+        f"引擎结论（唯一事实来源）：\n" + "\n".join(f"- {line}" for line in claim_lines[:8])
+    )
+    try:
+        raw_text: str | None = None
+        # 优先 instructor 结构化
+        try:
+            model, params = _llm_financial_params()
+            import instructor
+            from openai import OpenAI
+
+            api_key = params.get("api_key") or ""
+            base_url = params.get("api_base")
+            client_kwargs: dict = {"api_key": api_key}
+            if base_url:
+                client_kwargs["base_url"] = base_url
+            client = instructor.from_openai(OpenAI(**client_kwargs))
+            plan = client.chat.completions.create(
+                model=model.replace("openai/", "") if model.startswith("openai/") else model,
+                response_model=FinancialInterpPlan,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                max_tokens=300,
+                temperature=0.3,
+            )
+            if plan and plan.sentences:
+                raw_text = "".join(s.strip() for s in plan.sentences if s and s.strip())
+        except Exception as exc:
+            logger.info("financial instructor unavailable, litellm fallback: %s", exc)
+
+        if not raw_text:
+            model, params = _llm_financial_params()
+            import litellm
+
+            response = litellm.completion(
+                model=model,
+                **params,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                max_tokens=300,
+                temperature=0.3,
+                timeout=30,
+            )
+            raw_text = _extract_llm_content(response)
+
+        if not raw_text:
+            return None
+        # 硬规则：金融层句子不得含数字
+        sentences = re.split(r"(?<=[。！？])", raw_text)
+        kept_sentences = []
+        for s in sentences:
+            s = s.strip()
+            if not s:
+                continue
+            if re.search(r"\d", s):
+                logger.info("drop financial interp sentence with digit: %r", s[:60])
+                continue
+            kept_sentences.append(s)
+        result = "".join(kept_sentences).strip()
+        _record_llm_usage()
+        return result or None
+    except Exception as exc:
+        logger.warning("financial interpretation failed: %s", exc)
+        return None
+
+
 def _extract_llm_content(response) -> str:
     if not response or not getattr(response, "choices", None):
         return ""
@@ -225,16 +369,29 @@ def materialize_plan_sentences(sentences: list[str], claims: list[Claim]) -> str
 
 
 def _tone_prompt(tone: dict | None) -> str:
-    """L2 语气：把场景人格/文风 + 去 AI 味注入 system prompt。"""
-    if not tone:
-        return ""
-    parts: list[str] = []
-    if tone.get("persona"):
-        parts.append(f"你的身份是：{tone['persona']}。")
-    if tone.get("style"):
-        parts.append(f"文风要求：{tone['style']}。")
-    parts.append(f"禁用套话与 AI 过渡词（如：{BANNED_AI_PHRASES}），直接给结论，不客套。")
-    return " ".join(parts)
+    """L2 语气：注入统一 PERSONA + 场景变体（红线 §4）。
+
+    所有 LLM 调用必须携带 persona；tone=None 时仍返回基础 PERSONA prompt。
+    tone 携带 scenario 时，persona prompt 自动叠加对应语气变体（TONE_VARIANTS）。
+    tone 单独传 persona 字段（无 scenario）时，作为附加身份行注入，确保旧调用方
+    的自定义 persona 不丢失。
+    """
+    from app.services.persona import build_persona_prompt
+
+    if tone is None:
+        return build_persona_prompt(None)
+
+    scenario = tone.get("scenario")
+    base = build_persona_prompt(scenario)
+    extras: list[str] = []
+    # tone.persona 与 base 的「当前角色」不同时，作为附加身份保留（如报告定制身份）
+    if tone.get("persona") and tone["persona"] not in base:
+        extras.append(f"补充身份：{tone['persona']}。")
+    if tone.get("style") and tone["style"] not in base:
+        extras.append(f"补充文风：{tone['style']}。")
+    if extras:
+        return base + " " + " ".join(extras)
+    return base
 
 
 async def generate_narration(title: str, claims: list[Claim], tone: dict | None = None) -> str | None:
@@ -250,10 +407,11 @@ async def generate_narration(title: str, claims: list[Claim], tone: dict | None 
     if not claim_lines:
         return None
     system = (
-        "你只做表面润色：把给定结论改写成 1-2 句中文解读（精简，禁止写成执行摘要）。"
-        "必须输出 JSON 对象，格式严格为 {\"sentences\":[\"句1\",\"句2\"]}。"
-        "第一句给风险结论方向（承压/稳健/越线/达标），可用一两处关键数字点睛；"
-        "最后一句给可执行建议。禁止逐条罗列各类信号命中家数（数字已在关键数字表中）。"
+        "你只做表面润色：把给定结论改写成中文解读（句数不限，按结论密度自然展开；"
+        "禁止写成执行摘要，禁止逐条罗列各类信号命中家数——数字已在关键数字表中）。"
+        "必须输出 JSON 对象，格式严格为 {\"sentences\":[\"句1\",\"句2\",...]}。"
+        "开篇给风险结论方向（承压/稳健/越线/达标），可用一两处关键数字点睛；"
+        "收尾给可执行建议。"
         "禁用内部开发词（如「积木」），改用「预警类型/信号类型」。"
         "只能使用给定结论中的数字与事实，禁止新增任何数字、企业名或未经给定的事实。"
         + _tone_prompt(tone)
@@ -283,9 +441,9 @@ async def generate_executive_summary(
     claim_lines = [c.claim for c in kept if c.claim][:12]
     fact_lines = [f"{k.get('label', '')}{k.get('value', '')}{k.get('unit', '')}" for k in kpis]
     system = (
-        "你只做表面润色：用 3-5 句概括报告。"
-        "必须输出 JSON 对象，格式严格为 {\"sentences\":[\"句1\",\"句2\"]}。"
-        "第一句给整体风险判断，随后点出最需关注的风险点，最后给一句可执行建议。"
+        "你只做表面润色：概括报告全文（句数不限，按报告密度自然展开；"
+        "开篇给整体风险判断，中段点出最需关注的风险点，收尾给可执行建议）。"
+        "必须输出 JSON 对象，格式严格为 {\"sentences\":[\"句1\",\"句2\",...]}。"
         "只能使用给定的事实与结论，禁止新增任何数字、企业名或未经给定的事实。"
         + _tone_prompt(tone)
     )
@@ -358,7 +516,10 @@ async def classify_intent_llm(query: str) -> dict | None:
     from app.services.intent_engine import DIMENSIONS, FUNCTIONS, industry_l1_options
 
     industries = "、".join(industry_l1_options())
+    from app.services.persona import build_persona_prompt
+    persona = build_persona_prompt(None)
     system = (
+        persona + "\n"
         "你是意图分类器，把用户问题映射到固定组合。"
         "function 只能从 [score, authenticity, fraud, benchmark, trend, report, email_report, signal, general] 选；"
         "dimension 只能从 [overall, industry, region, time, signal] 选；"
@@ -397,8 +558,12 @@ async def generate_claim_reply(
     followups: list[str],
     *,
     report_hint: str | None = None,
+    persona: dict | None = None,
+    financial_interp: str | None = None,
 ) -> tuple[str, ClaimBundle, str]:
-    """返回 (用户可见回复, ClaimBundle, reply_source)。reply_source ∈ {"llm","template"}。证据链不写入回复正文。"""
+    """DeepSeek 校验润色层：Claims(+可选金融因果参考) → 大白话。reply_source ∈ {llm,template}。"""
+    from app.services.hallucination_guard import apply_chat_hallucination_guard
+    from app.services.persona import build_persona_prompt
     from app.services.plain_language import (
         build_advisor_reply,
         detect_scenario,
@@ -413,6 +578,11 @@ async def generate_claim_reply(
         report_hint=report_hint,
     )
     scenario = detect_scenario(query)
+    persona_scenario = scenario
+    if isinstance(persona, dict) and persona.get("scenario") in ("loan", "rating", "warn", "audit", None):
+        # 会话 scenario 优先（含 None→默认人格）
+        if "scenario" in persona:
+            persona_scenario = persona.get("scenario")
 
     if not llm_available():
         reply = build_advisor_reply(
@@ -433,12 +603,19 @@ async def generate_claim_reply(
     ]
 
     system = scenario_system_prompt(scenario) + " 输出 conclusions、followups（追问建议）、可选 report_hint。"
+    if persona:
+        persona_prompt = build_persona_prompt(persona_scenario)
+        system = persona_prompt + "\n" + system
     user = (
         f"用户问题：{query}\n"
         f"场景侧重：{scenario}\n"
         f"给定结论（唯一事实来源）：{json.dumps(claim_payload, ensure_ascii=False)}\n"
         f"建议追问：{json.dumps(followups[:5], ensure_ascii=False)}"
     )
+    if financial_interp:
+        user += (
+            f"\n金融因果参考（只可融入措辞，禁止新增任何数字或事实）：{financial_interp}\n"
+        )
 
     try:
         bundle = await _instructor_bundle(system, user)
@@ -448,15 +625,17 @@ async def generate_claim_reply(
             translate_terms(c.claim) for c in kept
         ]
         conclusions = [translate_terms(s) for s in conclusions]
-        # 硬结构：确保至少结论 + 建议两层；不足则回落顾问模板
         if len(conclusions) < 2:
             raise RuntimeError("advisor structure too short")
         fus = (bundle.followups or followups)[:3]
         hint = bundle.report_hint or report_hint
+        # report_hint 内数字必须过闸
+        if hint:
+            _, hint, _ = apply_chat_hallucination_guard("", kept, report_hint=translate_terms(hint), followups=[])
         out = ClaimBundle(conclusions=conclusions, followups=fus, report_hint=hint)
         text = "\n".join(out.conclusions)
         if hint:
-            text += "\n" + translate_terms(hint)
+            text += "\n" + hint
         if fus:
             text += "\n\n（下方按钮可继续追问）"
         if "规则模板生成" in text:
@@ -548,9 +727,9 @@ async def llm_custom_report_turn(state: dict) -> "object | None":
         return None
     from app.schemas.custom_report import CustomReportTurn
     from app.services.intent_engine import industry_l1_options, province_options
-    from app.services.report_templates import CUSTOM_CHAPTERS
+    from app.services.report_templates import CHAPTER_REGISTRY, CUSTOM_CHAPTERS
 
-    chapters_vocab = "；".join(f"{k}:{desc}" for k, (_t, desc) in CUSTOM_CHAPTERS.items())
+    chapters_vocab = "；".join(f"{k}:{entry['desc']}" for k, entry in CHAPTER_REGISTRY.items())
     industries = "、".join(industry_l1_options())
     provinces = "、".join(province_options())
 
@@ -559,7 +738,7 @@ async def llm_custom_report_turn(state: dict) -> "object | None":
     determined = ""
     if spec:
         det_names = "、".join(
-            CUSTOM_CHAPTERS[c][0] for c in (spec.get("chapters") or []) if c in CUSTOM_CHAPTERS
+            CHAPTER_REGISTRY[c]["title"] for c in (spec.get("chapters") or []) if c in CHAPTER_REGISTRY
         )
         det_parts: list[str] = []
         if det_names:
@@ -600,6 +779,8 @@ async def llm_custom_report_turn(state: dict) -> "object | None":
 
 async def generate_reply(query: str, intent: str, data: dict) -> str:
     """兼容旧 chat 路径。"""
+    from app.services.hallucination_guard import apply_chat_hallucination_guard
+
     if data.get("claims"):
         claims = [Claim.model_validate(c) if isinstance(c, dict) else c for c in data["claims"]]
         reply, _, _ = await generate_claim_reply(
@@ -608,6 +789,7 @@ async def generate_reply(query: str, intent: str, data: dict) -> str:
             data.get("followups") or [],
             report_hint=data.get("report_hint"),
         )
+        reply, _, _ = apply_chat_hallucination_guard(reply, claims)
         return reply
     if not llm_available():
         return _template_reply(intent, data, with_prefix=False)
@@ -642,7 +824,9 @@ async def generate_reply(query: str, intent: str, data: dict) -> str:
         if not raw:
             return _template_reply(intent, data, with_prefix=False)
         _record_llm_usage()
-        return _ensure_reply(raw[:400])
+        # 无 Claim：剥离一切含数字句子
+        gated, _, _ = apply_chat_hallucination_guard(raw[:400], [])
+        return _ensure_reply(gated)
     except Exception as exc:
         logger.warning("LLM reply failed: %s", exc)
         return _template_reply(intent, data, with_prefix=False)
