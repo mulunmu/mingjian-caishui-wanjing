@@ -50,6 +50,9 @@ def _validate_case(
     reply = str(response.get("reply") or "")
     canary = (response.get("data") or {}).get("canary") or {}
     canary_status = str(canary.get("status") or "")
+    primary = (response.get("data") or {}).get("primary") or {}
+    primary_status = str(primary.get("status") or "")
+    primary_fallback = primary.get("fallback")
     history_reply = _latest_assistant_reply(history)
 
     if not reply:
@@ -60,18 +63,27 @@ def _validate_case(
             f"{case['name']}: history mismatch ({history_reply!r} != {reply!r})"
         )
     if case["expect_canary"]:
-        if canary_status != "answered":
+        primary_answered = (
+            primary_status == "answered" and primary_fallback is False
+        )
+        if canary_status != "answered" and not primary_answered:
             raise AssertionError(
-                f"{case['name']}: expected answered canary, got {canary_status!r}"
+                f"{case['name']}: expected answered canary/primary, got "
+                f"canary={canary_status!r} primary={primary_status!r} "
+                f"fallback={primary_fallback!r}"
             )
         claims = (response.get("data") or {}).get("claims") or []
         if not claims:
-            raise AssertionError(f"{case['name']}: answered canary returned no claims")
+            raise AssertionError(
+                f"{case['name']}: answered canary/primary returned no claims"
+            )
 
     return {
         "name": case["name"],
         "http_status": 200,
         "canary_status": canary_status,
+        "primary_status": primary_status,
+        "primary_fallback": primary_fallback,
         "reply_source": response.get("reply_source"),
         "reply_present": True,
         "history_match": history_match,

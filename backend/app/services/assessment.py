@@ -957,6 +957,7 @@ async def get_dashboard_summary(db: AsyncSession, *, top_n: int = 10) -> dict:
             "conclusion": "暂无样本，态势结论弃权。",
             "top_warnings": [],
             "top_warnings_total": 0,
+            "enterprises": [],
         }
 
     dist: dict[str, int] = {}

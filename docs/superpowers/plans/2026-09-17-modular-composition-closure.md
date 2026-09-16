@@ -53,11 +53,11 @@ scenario constraints without arbitrary composition or unexplained composition ga
 
 ## Stage 14G: End-To-End Verification
 
-- [ ] Run 105+ dialogue cases.
-- [ ] Run 30+ report combinations.
-- [ ] Run 10+ turn memory and topic-rollback cases.
-- [ ] Compare custom DAG and LangGraph on correctness, latency and recovery.
-- [ ] Run full regression and production smoke tests.
+- [x] Run 105+ dialogue cases.
+- [x] Run 30+ report combinations.
+- [x] Run 10+ turn memory and topic-rollback cases.
+- [x] Compare custom DAG and LangGraph on correctness, latency and recovery.
+- [x] Run full regression and production smoke tests.
 
 ## Stage 14H: Freeze And Operations
 

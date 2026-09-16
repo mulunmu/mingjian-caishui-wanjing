@@ -34,6 +34,7 @@ def _use_memory_store(monkeypatch):
     `_ensure_tables` 返回 False 时，_run() 会统一走内存分支。
     """
     vs.clear_memory_store()
+    monkeypatch.setattr(vs, "_get_redis", lambda: None)
     monkeypatch.setattr(vs, "_ensure_tables", lambda: False)
     yield
     vs.clear_memory_store()
