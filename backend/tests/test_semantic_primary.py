@@ -131,8 +131,13 @@ async def test_primary_turn_injects_referenced_topic_context(monkeypatch):
 @pytest.mark.asyncio
 async def test_primary_turn_injects_explicit_enterprise_id(monkeypatch):
     from app.services import semantic_primary
+    from app.services.dialog_act import DialogAct
 
     captured = {}
+
+    async def classify(query, context):
+        del query, context
+        return DialogAct(act="analyze", scenario="warn", confidence=0.9)
 
     async def composer(**kwargs):
         captured.update(kwargs)
@@ -149,6 +154,7 @@ async def test_primary_turn_injects_explicit_enterprise_id(monkeypatch):
 
     monkeypatch.setattr(semantic_primary, "compose_semantic_turn", composer)
     monkeypatch.setattr(semantic_primary, "persist_primary_turn", persist)
+    monkeypatch.setattr(semantic_primary, "classify_dialog_act", classify)
     await semantic_primary.run_primary_turn(
         db=object(),
         session_id="s1",

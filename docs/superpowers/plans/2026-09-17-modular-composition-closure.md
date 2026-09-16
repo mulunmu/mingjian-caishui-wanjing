@@ -31,11 +31,11 @@ scenario constraints without arbitrary composition or unexplained composition ga
 
 ## Stage 14D: LangGraph Outer Orchestration
 
-- [ ] Add LangGraph in an isolated dependency group.
-- [ ] Build adapters around existing DialogAct, Tool RAG, ToolPlan, reports and memory.
-- [ ] Keep AsyncDagRuntime as the deterministic inner execution layer.
-- [ ] Add feature flag and dual-engine parity tests.
-- [ ] Add interrupt/resume for report confirmation and approvals.
+- [x] Add LangGraph in an isolated dependency group.
+- [x] Build adapters around existing DialogAct, Tool RAG, ToolPlan, reports and memory.
+- [x] Keep AsyncDagRuntime as the deterministic inner execution layer.
+- [x] Add feature flag and dual-engine parity tests.
+- [x] Add interrupt/resume for report confirmation and approvals.
 
 ## Stage 14E: Dialogue Intent And Content Assembly
 

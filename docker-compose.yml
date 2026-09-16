@@ -68,7 +68,10 @@ services:
       retries: 5
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        INSTALL_ORCHESTRATION: ${INSTALL_ORCHESTRATION:-false}
     ports:
       - "127.0.0.1:8000:8000"
     environment:
@@ -95,6 +98,9 @@ services:
       SEMANTIC_CANARY_PERCENT: ${SEMANTIC_CANARY_PERCENT:-0}
       SEMANTIC_PRIMARY_ENABLED: ${SEMANTIC_PRIMARY_ENABLED:-false}
       SEMANTIC_PRIMARY_PERCENT: ${SEMANTIC_PRIMARY_PERCENT:-0}
+      LANGGRAPH_OUTER_ENABLED: ${LANGGRAPH_OUTER_ENABLED:-false}
+      LANGGRAPH_REPORT_APPROVAL_REQUIRED: ${LANGGRAPH_REPORT_APPROVAL_REQUIRED:-false}
+      LANGGRAPH_CHECKPOINT_DATABASE_URL: postgresql://risk_user:${POSTGRES_PASSWORD:-risk_pass}@db:5432/risk_db
       # JWT_SECRET 无代码兜底：必须由 .env 提供（≥32 随机）；AUTH 默认 true（fail-closed）
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
       AUTH_REQUIRED: ${AUTH_REQUIRED:-true}

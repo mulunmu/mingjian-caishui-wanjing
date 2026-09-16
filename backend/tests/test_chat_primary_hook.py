@@ -68,3 +68,30 @@ async def test_disabled_primary_is_fail_closed(monkeypatch):
             _user=None,
         )
     assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_chat_passes_report_approval_to_outer_orchestrator(monkeypatch):
+    from app.services import outer_orchestrator
+
+    monkeypatch.setenv("SEMANTIC_PRIMARY_ENABLED", "true")
+    monkeypatch.setenv("SEMANTIC_PRIMARY_PERCENT", "100")
+    run = AsyncMock(
+        return_value={
+            "reply": "resumed",
+            "session_id": "s1",
+            "data": {"primary": {"status": "answered", "fallback": False}},
+        }
+    )
+    monkeypatch.setattr(outer_orchestrator, "run_outer_turn", run)
+    out = await chat_api.chat(
+        body=chat_api.ChatRequest(
+            query="确认生成报告",
+            session_id="s1",
+            approval=True,
+        ),
+        db=AsyncMock(),
+        _user=None,
+    )
+    assert out["reply"] == "resumed"
+    assert run.await_args.kwargs["approval"] is True

@@ -22,6 +22,7 @@ class ChatRequest(BaseModel):
     query: str = Field(default="", max_length=2000)
     session_id: str | None = Field(default=None, max_length=64)
     enterprise_id: str | None = None
+    approval: bool | None = None
     # 刀 1：结构化追问（drilldown / action / navigate）；与 query 二选一或并用
     followup: dict | None = None
 
@@ -113,21 +114,24 @@ async def _maybe_run_primary(
     owner: str | None,
     user: dict | None = None,
     enterprise_id: str | None,
+    approval: bool | None = None,
     db=None,
 ) -> dict | None:
     from app.services import semantic_primary
+    from app.services import outer_orchestrator
 
     if not semantic_primary.primary_enabled():
         return None
     if not semantic_primary.primary_selected(session_id):
         return None
-    return await semantic_primary.run_primary_turn(
+    return await outer_orchestrator.run_outer_turn(
         db=db,
         session_id=session_id,
         owner=owner,
         query=query,
         enterprise_id=enterprise_id,
         user=user,
+        approval=approval,
     )
 
 
@@ -226,6 +230,7 @@ async def chat(
             owner=owner,
             user=_user,
             enterprise_id=body.enterprise_id,
+            approval=body.approval,
             db=db,
         )
     except Exception as exc:
