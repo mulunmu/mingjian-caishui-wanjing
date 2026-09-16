@@ -12,10 +12,16 @@ from app.schemas.semantic_turn import SemanticTurnResult
 from app.schemas.tool_plan import ToolPlan, ToolStep
 from app.services.async_dag_runtime import AsyncDagRuntime
 from app.services import cache_service
+from app.db.urls import get_sync_engine
+from app.services.composition_blueprint_store import (
+    save_composition_blueprint_sync,
+    snapshot_registry_version,
+)
 from app.services.composition_catalog import build_composition_catalog
 from app.services.composition_planner import plan_from_frame
 from app.services.composition_validator import validate_composition_plan
 from app.services.semantic_tool_executors import build_semantic_tool_executors
+from app.services.sync_runner import run_blocking
 
 
 def _build_plan(frame: SemanticFrame, snapshot) -> CompositionPlan | None:
@@ -31,6 +37,7 @@ async def execute_metric_composition(
     policy: ConversationPolicy,
     query: str,
     session_id: str,
+    owner: str | None = None,
     snapshot,
     session_factory,
     executor_factory: Callable[..., dict[str, Callable[..., Any]]] | None = None,
@@ -43,6 +50,20 @@ async def execute_metric_composition(
     if plan is None:
         return None
     plan.metadata["cache_scope"] = f"session:{session_id}"
+    registry_version = snapshot_registry_version(snapshot)
+    blueprint_persisted = False
+    try:
+        await run_blocking(
+            save_composition_blueprint_sync,
+            get_sync_engine(),
+            plan,
+            registry_version=registry_version,
+            owner=owner,
+            session_id=session_id,
+        )
+        blueprint_persisted = True
+    except Exception:
+        blueprint_persisted = False
 
     make_executors = executor_factory or build_semantic_tool_executors
 
@@ -121,6 +142,8 @@ async def execute_metric_composition(
             "composition_failed_nodes": execution.failed_nodes,
             "composition_skipped_nodes": execution.skipped_nodes,
             "composition_total_cost": execution.total_cost,
+            "composition_registry_version": registry_version,
+            "composition_blueprint_persisted": blueprint_persisted,
             "composition_claims": claims_to_dict(claims),
         },
     )

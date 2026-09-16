@@ -11,6 +11,7 @@ from app.models.engine_store import (
 )
 from app.models.metric_registry import FieldMapping, MetricDefinition
 from app.models.report_blueprint import ReportBlueprintRecord
+from app.models.composition_blueprint import CompositionBlueprintRecord
 from app.models.shadow_answer_evaluation import ShadowAnswerObservationRecord
 from app.models.shadow_evaluation import ShadowEvaluationRecord
 from app.models.semantic_registry import (
@@ -41,6 +42,7 @@ __all__ = [
     "MetricDefinition",
     "FieldMapping",
     "ReportBlueprintRecord",
+    "CompositionBlueprintRecord",
     "ShadowEvaluationRecord",
     "ShadowAnswerObservationRecord",
     "ThresholdRule",

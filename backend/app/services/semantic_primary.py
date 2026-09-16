@@ -105,6 +105,10 @@ def _primary_meta(turn, *, fallback: bool = False, fallback_reason: str | None =
         "composition_failed_nodes": turn.meta.get("composition_failed_nodes") or [],
         "composition_skipped_nodes": turn.meta.get("composition_skipped_nodes") or [],
         "composition_total_cost": turn.meta.get("composition_total_cost"),
+        "composition_registry_version": turn.meta.get("composition_registry_version"),
+        "composition_blueprint_persisted": turn.meta.get(
+            "composition_blueprint_persisted"
+        ),
         "candidate_tool_ids": [item.tool_id for item in turn.candidates],
         "plan_tool_ids": [step.tool_id for step in (turn.plan.steps if turn.plan else [])],
     }
@@ -215,6 +219,7 @@ async def run_primary_turn(
                 policy=policy,
                 query=effective_query,
                 session_id=session_id,
+                owner=owner,
                 snapshot=snapshot,
                 session_factory=get_async_session_factory(),
             )
