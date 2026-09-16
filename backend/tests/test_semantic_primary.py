@@ -4,6 +4,7 @@ import pytest
 
 from app.schemas.conversation_route import ConversationPolicyRegistry, ConversationRoute
 from app.schemas.semantic_turn import SemanticTurnResult
+from app.schemas.semantic_frame import SemanticFrame
 
 
 @pytest.mark.asyncio
@@ -156,3 +157,20 @@ async def test_primary_turn_injects_explicit_enterprise_id(monkeypatch):
         enterprise_id="ENT9",
     )
     assert captured["raw_route"]["entities"] == ["ENT9"]
+
+
+def test_structured_multi_metric_frame_promotes_weak_route():
+    from app.services import semantic_primary
+
+    route = ConversationRoute(route="clarify", entities=["ENT1"])
+    frame = SemanticFrame(
+        policy_route="clarify",
+        task_type="multi_metric",
+        subject_scope="individual",
+        entities=["ENT1"],
+        metrics=["debt_ratio", "red_invoice_cnt"],
+    )
+    promoted = semantic_primary.promote_route_with_frame(route, frame)
+    assert promoted.route == "analysis"
+    assert promoted.needs_tools is True
+    assert promoted.needs_clarification is False

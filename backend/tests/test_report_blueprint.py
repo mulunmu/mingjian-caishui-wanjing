@@ -14,6 +14,7 @@ from app.services.report_blueprint import (
     load_report_blueprint,
     save_report_blueprint,
 )
+from app.services.report_blueprint_async import execute_report_blueprint_async
 from app.services.semantic_registry_seed import seed_semantic_registry
 from app.services.tool_rag import load_tool_snapshot_sync
 from tests.test_semantic_registry_seed import _engine
@@ -192,3 +193,18 @@ def test_blueprint_persistence_roundtrip_and_rerun():
     execution = execute_report_blueprint(compiled, snapshot, _tool_fns())
     assert execution.blueprint_id == blueprint_id
     assert set(execution.sections) == {"financial", "tax"}
+
+
+@pytest.mark.asyncio
+async def test_async_blueprint_execution_matches_sync_result():
+    engine = _engine_with_blueprints()
+    snapshot = load_tool_snapshot_sync(engine)
+    compiled = compile_report_blueprint(_blueprint(), snapshot)
+    sync_result = execute_report_blueprint(compiled, snapshot, _tool_fns())
+    async_result = await execute_report_blueprint_async(
+        compiled,
+        snapshot,
+        _tool_fns(),
+        max_concurrency=2,
+    )
+    assert async_result == sync_result

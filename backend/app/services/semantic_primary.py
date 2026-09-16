@@ -26,6 +26,24 @@ class PrimaryContractError(RuntimeError):
     """Raised when a primary handler violates the formal-response contract."""
 
 
+def promote_route_with_frame(route, frame):
+    if (
+        len(frame.metrics) >= 2
+        and frame.entities
+        and route.route in {"clarify", "capability"}
+    ):
+        return route.model_copy(
+            update={
+                "route": "analysis",
+                "domain": route.domain or "warn",
+                "needs_tools": True,
+                "needs_clarification": False,
+                "confidence": max(float(route.confidence or 0.0), 0.85),
+            }
+        )
+    return route
+
+
 _TOPIC_REFERENCE_RE = re.compile(r"上一个|上上个|上上上|回到.*问题|刚才|之前的")
 
 
@@ -180,6 +198,11 @@ async def run_primary_turn(
     route = normalize_route(raw_route, effective_query)
     policy = ConversationPolicyRegistry.resolve(route)
     frame = frame_from_route(route, query=effective_query)
+    promoted_route = promote_route_with_frame(route, frame)
+    if promoted_route.route != route.route:
+        route = promoted_route
+        policy = ConversationPolicyRegistry.resolve(route)
+        frame = frame_from_route(route, query=effective_query)
     turn = None
     if route.route == "analysis" and len(frame.metrics) >= 2:
         try:
