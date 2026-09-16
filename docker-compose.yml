@@ -101,6 +101,7 @@ services:
       LANGGRAPH_OUTER_ENABLED: ${LANGGRAPH_OUTER_ENABLED:-false}
       LANGGRAPH_REPORT_APPROVAL_REQUIRED: ${LANGGRAPH_REPORT_APPROVAL_REQUIRED:-false}
       LANGGRAPH_CHECKPOINT_DATABASE_URL: postgresql://risk_user:${POSTGRES_PASSWORD:-risk_pass}@db:5432/risk_db
+      REPORT_BLOCK_TREE_ENABLED: ${REPORT_BLOCK_TREE_ENABLED:-true}
       # JWT_SECRET 无代码兜底：必须由 .env 提供（≥32 随机）；AUTH 默认 true（fail-closed）
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
       AUTH_REQUIRED: ${AUTH_REQUIRED:-true}

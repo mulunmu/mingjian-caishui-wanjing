@@ -13,8 +13,16 @@ def test_langgraph_dependency_is_isolated():
     optional = (root / "requirements-orchestration.txt").read_text(
         encoding="utf-8"
     ).lower()
+    core_lock = (root / "requirements.lock.txt").read_text(
+        encoding="utf-8"
+    ).lower()
+    optional_lock = (root / "requirements-orchestration.lock.txt").read_text(
+        encoding="utf-8"
+    ).lower()
     assert "langgraph" not in core
+    assert "langgraph" not in core_lock
     assert "langgraph" in optional
+    assert "langgraph" in optional_lock
 
 
 @pytest.mark.asyncio

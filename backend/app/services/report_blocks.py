@@ -1,6 +1,7 @@
 """Chapter/block contracts and Claim-derived paragraph block assembly."""
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -35,6 +36,14 @@ _TREND_METRICS = {
 }
 _COMPARISON_RE = re.compile(r"对比|相比|高于|低于|高于均值|低于均值|同业|行业均值|差距|优于|劣于")
 _TREND_RE = re.compile(r"同比|环比|趋势|上升|下降|增长|回落|增速|变化")
+
+
+def report_block_tree_enabled() -> bool:
+    return os.getenv("REPORT_BLOCK_TREE_ENABLED", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
 
 def normalize_chapter_key(chapter_key: str | None) -> str:
@@ -95,7 +104,11 @@ def build_chapter_blocks(chapter: dict[str, Any]) -> list[dict[str, Any]]:
         value = claim.get("value") or {}
         metric = _claim_metric(claim)
         trace = claim.get("trace") or {}
-        block_kind = block_kind_for_claim(chapter_key, claim)
+        block_kind = (
+            block_kind_for_claim(chapter_key, claim)
+            if report_block_tree_enabled()
+            else "metric_paragraph"
+        )
         blocks.append(
             {
                 "type": block_kind,

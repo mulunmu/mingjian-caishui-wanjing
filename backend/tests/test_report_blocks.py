@@ -60,6 +60,25 @@ def test_chapter_block_contract_rejects_cross_scenario_kind():
     assert validate_report_block_kinds("financial", ["trend_paragraph"]) == []
 
 
+def test_report_block_tree_rollback_flag_restores_legacy_blocks(monkeypatch):
+    monkeypatch.setenv("REPORT_BLOCK_TREE_ENABLED", "false")
+    chapter = {
+        "function": "trend",
+        "claims": [
+            {
+                "claim": "营收同比增长 5%。",
+                "value": {"metric": "revenue_yoy", "number": 5, "unit": "%"},
+                "trace": {"table": "core_metrics", "field": "revenue_yoy"},
+            }
+        ],
+        "narration": "综合判断。",
+    }
+    assert [block["type"] for block in build_chapter_blocks(chapter)] == [
+        "metric_paragraph",
+        "synthesis_paragraph",
+    ]
+
+
 def test_snapshot_api_and_html_share_same_block_tree(tmp_path, monkeypatch):
     monkeypatch.setattr(slice_report, "REPORTS_DIR", tmp_path)
     context = {

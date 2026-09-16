@@ -61,6 +61,6 @@ scenario constraints without arbitrary composition or unexplained composition ga
 
 ## Stage 14H: Freeze And Operations
 
-- [ ] Freeze dependency versions and rollback switches.
-- [ ] Update redline, runbooks, architecture documentation and rollout report.
-- [ ] Tag the accepted candidate.
+- [x] Freeze dependency versions and rollback switches.
+- [x] Update redline, runbooks, architecture documentation and rollout report.
+- [x] Tag the accepted candidate.
