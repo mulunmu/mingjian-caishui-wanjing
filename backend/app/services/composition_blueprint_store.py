@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.models.composition_blueprint import CompositionBlueprintRecord
+from app.models.composition_migration import CompositionMigrationApproval
 from app.schemas.composition import CompositionPlan
 from app.services.composition_validator import validate_composition_plan
 
@@ -119,6 +120,21 @@ def load_or_migrate_composition_blueprint(
     if record is None or record.status != "active":
         raise CompositionBlueprintVersionError(f"active blueprint not found: {plan_id}")
     plan = CompositionPlan.model_validate(json.loads(record.plan_json or "{}"))
+    if record.registry_version != registry_version:
+        approval = (
+            session.query(CompositionMigrationApproval)
+            .filter(
+                CompositionMigrationApproval.plan_id == plan_id,
+                CompositionMigrationApproval.from_version == record.registry_version,
+                CompositionMigrationApproval.to_version == registry_version,
+                CompositionMigrationApproval.status == "approved",
+            )
+            .first()
+        )
+        if approval is None:
+            raise CompositionBlueprintVersionError(
+                f"registry migration approval required: {record.registry_version} -> {registry_version}"
+            )
     report = validate_composition_plan(plan, modules)
     if not report.valid:
         raise CompositionBlueprintVersionError(
@@ -131,6 +147,40 @@ def load_or_migrate_composition_blueprint(
     record.updated_at = now
     session.flush()
     return plan
+
+
+def approve_composition_migration(
+    session: Session,
+    *,
+    plan_id: str,
+    from_version: str,
+    to_version: str,
+    approved_by: str,
+    note: str = "",
+) -> CompositionMigrationApproval:
+    existing = (
+        session.query(CompositionMigrationApproval)
+        .filter(
+            CompositionMigrationApproval.plan_id == plan_id,
+            CompositionMigrationApproval.from_version == from_version,
+            CompositionMigrationApproval.to_version == to_version,
+            CompositionMigrationApproval.status == "approved",
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing
+    approval = CompositionMigrationApproval(
+        plan_id=plan_id,
+        from_version=from_version,
+        to_version=to_version,
+        approved_by=approved_by,
+        note=note,
+        created_at=datetime.now(timezone.utc),
+    )
+    session.add(approval)
+    session.flush()
+    return approval
 
 
 def replay_composition_blueprint(

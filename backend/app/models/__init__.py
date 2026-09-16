@@ -13,6 +13,7 @@ from app.models.metric_registry import FieldMapping, MetricDefinition
 from app.models.report_blueprint import ReportBlueprintRecord
 from app.models.composition_blueprint import CompositionBlueprintRecord
 from app.models.composition_checkpoint import CompositionExecutionCheckpoint
+from app.models.composition_migration import CompositionMigrationApproval
 from app.models.shadow_answer_evaluation import ShadowAnswerObservationRecord
 from app.models.shadow_evaluation import ShadowEvaluationRecord
 from app.models.semantic_registry import (
@@ -45,6 +46,7 @@ __all__ = [
     "ReportBlueprintRecord",
     "CompositionBlueprintRecord",
     "CompositionExecutionCheckpoint",
+    "CompositionMigrationApproval",
     "ShadowEvaluationRecord",
     "ShadowAnswerObservationRecord",
     "ThresholdRule",

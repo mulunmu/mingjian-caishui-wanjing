@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import Base
 from app.models.composition_blueprint import CompositionBlueprintRecord
+from app.models.composition_migration import CompositionMigrationApproval
 from app.schemas.composition import CompositionNode, CompositionPlan
 from app.services.composition_blueprint_store import (
     CompositionBlueprintVersionError,
@@ -19,7 +20,13 @@ def _engine():
     from tests.test_semantic_registry_seed import _engine as registry_engine
 
     engine = registry_engine()
-    Base.metadata.create_all(engine, tables=[CompositionBlueprintRecord.__table__])
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            CompositionBlueprintRecord.__table__,
+            CompositionMigrationApproval.__table__,
+        ],
+    )
     return engine
 
 
@@ -92,7 +99,10 @@ def test_replay_validates_loaded_plan():
 
 
 def test_compatible_plan_migrates_to_new_registry_version():
-    from app.services.composition_blueprint_store import load_or_migrate_composition_blueprint
+    from app.services.composition_blueprint_store import (
+        approve_composition_migration,
+        load_or_migrate_composition_blueprint,
+    )
 
     engine = _engine()
     with Session(engine) as session:
@@ -100,6 +110,13 @@ def test_compatible_plan_migrates_to_new_registry_version():
             session,
             _plan(),
             registry_version="registry-v1",
+        )
+        approve_composition_migration(
+            session,
+            plan_id="plan-persist-1",
+            from_version="registry-v1",
+            to_version="registry-v2",
+            approved_by="admin@example.com",
         )
         session.commit()
         migrated = load_or_migrate_composition_blueprint(
