@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
@@ -30,19 +32,42 @@ class NodeExecutionError(DagRuntimeError):
 class AsyncDagExecutionResult(BaseModel):
     node_results: dict[str, dict[str, Any]] = Field(default_factory=dict)
     completed_order: list[str] = Field(default_factory=list)
+    cache_hits: list[str] = Field(default_factory=list)
+    failed_nodes: list[str] = Field(default_factory=list)
     elapsed_ms: float = 0.0
 
 
 class AsyncDagRuntime:
-    def __init__(self, max_concurrency: int = 8):
+    def __init__(
+        self,
+        max_concurrency: int = 8,
+        *,
+        cache_get: Callable[[str], Awaitable[Any | None]] | None = None,
+        cache_set: Callable[..., Awaitable[None]] | None = None,
+        cache_ttl_seconds: int = 300,
+    ):
         self.max_concurrency = max(1, int(max_concurrency or 1))
+        self.cache_get = cache_get
+        self.cache_set = cache_set
+        self.cache_ttl_seconds = cache_ttl_seconds
+
+    def _cache_key(
+        self,
+        plan: CompositionPlan,
+        node,
+        inputs: dict[str, Any],
+    ) -> str:
+        payload = json.dumps(inputs, ensure_ascii=False, sort_keys=True, default=str)
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        scope = plan.metadata.get("cache_scope") or "global"
+        return f"composition:node:{scope}:{node.module_id}:{digest}"
 
     def _bind_inputs(
         self,
         plan: CompositionPlan,
         node_id: str,
         results: dict[str, dict[str, Any]],
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], bool]:
         node = next(item for item in plan.nodes if item.node_id == node_id)
         inputs = dict(node.input_bindings)
         for edge in plan.edges:
@@ -81,23 +106,42 @@ class AsyncDagRuntime:
         if handler is None:
             raise NodeExecutionError(f"handler not found: {node.module_id}")
         inputs = self._bind_inputs(plan, node_id, results)
+        cache_key = self._cache_key(plan, node, inputs)
+        if self.cache_get is not None:
+            cached = await self.cache_get(cache_key)
+            if cached is not None:
+                return cached, True
 
         last_error: Exception | None = None
         for _attempt in range(node.retry_count + 1):
             try:
                 async with semaphore:
-                    return await self._invoke(handler, inputs, timeout_ms=node.timeout_ms)
+                    output = await self._invoke(handler, inputs, timeout_ms=node.timeout_ms)
+                    if self.cache_set is not None:
+                        await self.cache_set(
+                            cache_key,
+                            output,
+                            ttl_seconds=self.cache_ttl_seconds,
+                        )
+                    return output, False
             except Exception as exc:
                 last_error = exc
 
         fallback_handler = handlers.get(node.fallback_module_id or "")
         if fallback_handler is not None:
             async with semaphore:
-                return await self._invoke(
+                output = await self._invoke(
                     fallback_handler,
                     inputs,
                     timeout_ms=node.timeout_ms,
                 )
+                if self.cache_set is not None:
+                    await self.cache_set(
+                        cache_key,
+                        output,
+                        ttl_seconds=self.cache_ttl_seconds,
+                    )
+                return output, False
         if isinstance(last_error, DagRuntimeError):
             raise last_error
         raise NodeExecutionError(str(last_error)) from last_error
@@ -107,6 +151,7 @@ class AsyncDagRuntime:
         plan: CompositionPlan,
         *,
         handlers: dict[str, NodeHandler],
+        allow_partial: bool = False,
     ) -> AsyncDagExecutionResult:
         started = time.perf_counter()
         node_ids = [node.node_id for node in plan.nodes]
@@ -119,9 +164,25 @@ class AsyncDagRuntime:
         pending = set(node_ids)
         results: dict[str, dict[str, Any]] = {}
         completed: list[str] = []
+        cache_hits: list[str] = []
+        failed: set[str] = set()
+        failed_nodes: list[str] = []
         semaphore = asyncio.Semaphore(self.max_concurrency)
 
         while pending:
+            dependency_failed = [
+                node_id
+                for node_id in node_ids
+                if node_id in pending and dependencies[node_id] & failed
+            ]
+            if dependency_failed and not allow_partial:
+                raise DagRuntimeError(
+                    f"dependency failed for nodes: {', '.join(dependency_failed)}"
+                )
+            for node_id in dependency_failed:
+                pending.remove(node_id)
+                failed.add(node_id)
+                failed_nodes.append(node_id)
             ready = [
                 node_id
                 for node_id in node_ids
@@ -129,19 +190,32 @@ class AsyncDagRuntime:
             ]
             if not ready:
                 raise DagRuntimeError("composition plan contains a cycle")
-            outputs = await asyncio.gather(
+            outcomes = await asyncio.gather(
                 *(
                     self._run_node(plan, node_id, handlers, results, semaphore)
                     for node_id in ready
-                )
+                ),
+                return_exceptions=allow_partial,
             )
-            for node_id, output in zip(ready, outputs, strict=True):
+            for node_id, outcome in zip(ready, outcomes, strict=True):
+                if isinstance(outcome, Exception):
+                    failed.add(node_id)
+                    failed_nodes.append(node_id)
+                    pending.remove(node_id)
+                    if not allow_partial:
+                        raise outcome
+                    continue
+                output, cache_hit = outcome
                 results[node_id] = output
                 completed.append(node_id)
+                if cache_hit:
+                    cache_hits.append(node_id)
                 pending.remove(node_id)
 
         return AsyncDagExecutionResult(
             node_results=results,
             completed_order=completed,
+            cache_hits=cache_hits,
+            failed_nodes=failed_nodes,
             elapsed_ms=round((time.perf_counter() - started) * 1000, 3),
         )

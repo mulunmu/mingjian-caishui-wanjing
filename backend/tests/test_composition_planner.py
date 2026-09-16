@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from app.schemas.composition import ModuleSpec, PortSpec
-from app.services.composition_planner import build_composition_plan
+from app.services.composition_planner import (
+    build_composition_plan,
+    build_multi_metric_plan,
+    plan_from_frame,
+)
 from app.services.composition_validator import validate_composition_plan
 
 
@@ -29,6 +33,9 @@ def _modules():
     return {
         "metric_debt_ratio": _module(
             "metric_debt_ratio", outputs=[{"name": "value", "data_type": "number"}]
+        ),
+        "metric_cash_flow_net": _module(
+            "metric_cash_flow_net", outputs=[{"name": "value", "data_type": "number"}]
         ),
         "threshold_debt_ratio": _module(
             "threshold_debt_ratio",
@@ -112,3 +119,32 @@ def test_planner_builds_report_chapter_plan():
     )
     assert plan is not None
     assert plan.output_node_ids == ["chapter"]
+
+
+def test_planner_builds_dynamic_multi_metric_plan():
+    plan = build_multi_metric_plan(
+        frame={"entities": ["ENT1"], "metrics": ["debt_ratio", "cash_flow_net"]},
+        candidates=["metric_debt_ratio", "metric_cash_flow_net"],
+        modules=_modules(),
+    )
+    assert plan is not None
+    assert len(plan.nodes) == 2
+    assert plan.plan_id.startswith("plan-multi-metric")
+
+
+def test_plan_from_frame_selects_multi_metric_pattern():
+    from app.schemas.semantic_frame import SemanticFrame
+
+    frame = SemanticFrame(
+        policy_route="analysis",
+        task_type="multi_metric",
+        entities=["ENT1"],
+        metrics=["debt_ratio", "cash_flow_net"],
+    )
+    plan = plan_from_frame(
+        frame=frame,
+        candidates=["metric_debt_ratio", "metric_cash_flow_net"],
+        modules=_modules(),
+    )
+    assert plan is not None
+    assert len(plan.nodes) == 2

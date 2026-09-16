@@ -82,3 +82,77 @@ def build_composition_plan(
     )
     report = validate_composition_plan(plan, modules)
     return plan if report.valid else None
+
+
+def _frame_value(frame: Any, key: str, default=None):
+    if isinstance(frame, dict):
+        return frame.get(key, default)
+    return getattr(frame, key, default)
+
+
+def build_multi_metric_plan(
+    *,
+    frame: Any,
+    candidates: list[str],
+    modules: dict[str, ModuleSpec],
+) -> CompositionPlan | None:
+    metrics = list(_frame_value(frame, "metrics", []) or [])
+    module_ids: list[str] = []
+    for metric_key in metrics:
+        preferred = f"metric_{metric_key}"
+        if preferred in candidates and preferred in modules:
+            module_ids.append(preferred)
+            continue
+        for candidate in candidates:
+            module = modules.get(candidate)
+            if module and module.kind == "metric" and candidate not in module_ids:
+                module_ids.append(candidate)
+                break
+    if len(module_ids) < 2:
+        return None
+
+    entities = list(_frame_value(frame, "entities", []) or [])
+    filters = dict(_frame_value(frame, "filters", {}) or {})
+    common_bindings = {"query": " ".join(metrics), **filters}
+    if entities:
+        common_bindings["entity"] = entities[0]
+    nodes = [
+        CompositionNode(
+            node_id=f"metric_{index}",
+            module_id=module_id,
+            input_bindings=dict(common_bindings),
+        )
+        for index, module_id in enumerate(module_ids, 1)
+    ]
+    plan = CompositionPlan(
+        plan_id=f"plan-multi-metric-{'-'.join(metrics)}",
+        nodes=nodes,
+        output_node_ids=[node.node_id for node in nodes],
+        metadata={"pattern": "multi_metric_lookup", "metrics": metrics},
+    )
+    report = validate_composition_plan(plan, modules)
+    return plan if report.valid else None
+
+
+def plan_from_frame(
+    *,
+    frame: Any,
+    candidates: list[str],
+    modules: dict[str, ModuleSpec],
+) -> CompositionPlan | None:
+    task_type = _frame_value(frame, "task_type", "metric_lookup")
+    if task_type == "multi_metric":
+        return build_multi_metric_plan(frame=frame, candidates=candidates, modules=modules)
+    pattern = {
+        "comparison": "metric_threshold_compare",
+        "trend": "trend_then_drilldown",
+        "drilldown": "trend_then_drilldown",
+        "report": "report_chapter",
+    }.get(task_type, "metric_lookup")
+    frame_dict = frame.model_dump() if hasattr(frame, "model_dump") else dict(frame)
+    return build_composition_plan(
+        frame=frame_dict,
+        candidates=candidates,
+        pattern=pattern,
+        modules=modules,
+    )

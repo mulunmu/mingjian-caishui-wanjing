@@ -116,3 +116,53 @@ async def test_bounded_concurrency_respected():
         handlers={f"n{i}": handler for i in range(5)},
     )
     assert max_active <= 2
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_skips_handler():
+    cache: dict[str, dict] = {}
+    calls = 0
+
+    async def cache_get(key):
+        return cache.get(key)
+
+    async def cache_set(key, value, ttl_seconds=300):
+        cache[key] = value
+
+    async def handler(inputs):
+        nonlocal calls
+        calls += 1
+        return {"value": inputs["value"]}
+
+    runtime = AsyncDagRuntime(cache_get=cache_get, cache_set=cache_set)
+    plan = _plan(
+        [CompositionNode(node_id="a", module_id="a", input_bindings={"value": 3})]
+    )
+    first = await runtime.execute(plan, handlers={"a": handler})
+    second = await runtime.execute(plan, handlers={"a": handler})
+    assert first.node_results["a"]["value"] == 3
+    assert second.node_results["a"]["value"] == 3
+    assert calls == 1
+    assert second.cache_hits == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_partial_failure_keeps_independent_results():
+    async def good(_inputs):
+        return {"value": 1}
+
+    async def bad(_inputs):
+        raise RuntimeError("failed")
+
+    result = await AsyncDagRuntime().execute(
+        _plan(
+            [
+                CompositionNode(node_id="a", module_id="a"),
+                CompositionNode(node_id="b", module_id="b"),
+            ]
+        ),
+        handlers={"a": good, "b": bad},
+        allow_partial=True,
+    )
+    assert result.node_results["a"]["value"] == 1
+    assert result.failed_nodes == ["b"]

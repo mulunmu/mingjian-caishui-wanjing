@@ -87,3 +87,47 @@ async def test_execute_metric_composition_returns_none_for_single_metric():
         session_factory=None, executor_factory=None,
     )
     assert out is None
+
+
+@pytest.mark.asyncio
+async def test_execute_metric_composition_keeps_partial_results(monkeypatch):
+    @asynccontextmanager
+    async def session_factory():
+        yield object()
+
+    def executor_factory(db, session_id):
+        async def good(*, params, dependency_results):
+            return {
+                "claims": [{
+                    "claim": "good",
+                    "value": {"metric": "debt_ratio", "number": 1, "unit": "%"},
+                    "trace": {"table": "core_metrics", "field": "debt_ratio", "query_id": "Q1"},
+                    "confidence": "computed",
+                }],
+                "followups": [],
+            }
+
+        async def bad(*, params, dependency_results):
+            raise RuntimeError("node failed")
+
+        return {"metric_debt_ratio": good, "metric_cash_flow_net": bad}
+
+    async def fake_reply(query, claims, followups, **kwargs):
+        return ("partial", None, "llm")
+
+    from app.services import llm_reply
+
+    monkeypatch.setattr(llm_reply, "generate_claim_reply", fake_reply)
+    route = ConversationRoute(route="analysis", domain="loan", entities=["ENT1"])
+    frame = SemanticFrame(
+        policy_route="analysis", business_domain="loan", task_type="multi_metric",
+        subject_scope="individual", entities=["ENT1"], metrics=["debt_ratio", "cash_flow_net"],
+    )
+    out = await execute_metric_composition(
+        frame=frame, route=route, policy=ConversationPolicyRegistry.resolve(route),
+        query="组合", session_id="s-partial", snapshot=_snapshot(),
+        session_factory=session_factory, executor_factory=executor_factory,
+    )
+    assert out is not None
+    assert len(out.claims) == 1
+    assert out.meta["composition_failed_nodes"]

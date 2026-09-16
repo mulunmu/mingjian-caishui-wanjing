@@ -5,49 +5,23 @@ from collections.abc import Callable
 from typing import Any
 
 from app.schemas.claim import Claim, claims_to_dict
-from app.schemas.composition import CompositionNode, CompositionPlan
+from app.schemas.composition import CompositionPlan
 from app.schemas.conversation_route import ConversationPolicy, ConversationRoute
 from app.schemas.semantic_frame import SemanticFrame
 from app.schemas.semantic_turn import SemanticTurnResult
 from app.schemas.tool_plan import ToolPlan, ToolStep
 from app.services.async_dag_runtime import AsyncDagRuntime
+from app.services import cache_service
 from app.services.composition_catalog import build_composition_catalog
+from app.services.composition_planner import plan_from_frame
 from app.services.composition_validator import validate_composition_plan
 from app.services.semantic_tool_executors import build_semantic_tool_executors
 
 
 def _build_plan(frame: SemanticFrame, snapshot) -> CompositionPlan | None:
     catalog = build_composition_catalog(snapshot)
-    module_ids: list[str] = []
-    for metric_key in frame.metrics:
-        module_id = f"metric_{metric_key}"
-        if module_id in catalog:
-            module_ids.append(module_id)
-    if len(module_ids) < 2:
-        return None
-
-    entity = frame.entities[0] if frame.entities else None
-    nodes = [
-        CompositionNode(
-            node_id=f"metric_{index}",
-            module_id=module_id,
-            input_bindings={
-                "query": " ".join(frame.metrics),
-                **({"entity": entity} if entity else {}),
-                **frame.filters,
-            },
-        )
-        for index, module_id in enumerate(module_ids, 1)
-    ]
-    plan = CompositionPlan(
-        plan_id=f"plan-multi-metric-{'-'.join(frame.metrics)}",
-        nodes=nodes,
-        output_node_ids=[node.node_id for node in nodes],
-        metadata={"metrics": frame.metrics},
-    )
-    if not validate_composition_plan(plan, catalog).valid:
-        return None
-    return plan
+    candidates = [f"metric_{metric}" for metric in frame.metrics]
+    return plan_from_frame(frame=frame, candidates=candidates, modules=catalog)
 
 
 async def execute_metric_composition(
@@ -67,6 +41,7 @@ async def execute_metric_composition(
     plan = _build_plan(frame, snapshot)
     if plan is None:
         return None
+    plan.metadata["cache_scope"] = f"session:{session_id}"
 
     make_executors = executor_factory or build_semantic_tool_executors
 
@@ -83,9 +58,14 @@ async def execute_metric_composition(
         return execute
 
     handlers = {node.module_id: handler_for(node.module_id) for node in plan.nodes}
-    execution = await AsyncDagRuntime(max_concurrency=max_concurrency).execute(
+    execution = await AsyncDagRuntime(
+        max_concurrency=max_concurrency,
+        cache_get=cache_service.get,
+        cache_set=cache_service.set,
+    ).execute(
         plan,
         handlers=handlers,
+        allow_partial=True,
     )
     claims: list[Claim] = []
     followups: list[str] = []
@@ -135,6 +115,8 @@ async def execute_metric_composition(
             "composition_plan_id": plan.plan_id,
             "composition_completed_order": execution.completed_order,
             "composition_elapsed_ms": execution.elapsed_ms,
+            "composition_cache_hits": execution.cache_hits,
+            "composition_failed_nodes": execution.failed_nodes,
             "composition_claims": claims_to_dict(claims),
         },
     )
