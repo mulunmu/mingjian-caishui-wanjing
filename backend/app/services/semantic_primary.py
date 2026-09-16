@@ -5,18 +5,21 @@ import os
 import re
 
 from app.db.urls import get_sync_engine
+from app.db.session import get_async_session_factory
 from app.schemas.claim import claims_to_dict
 from app.schemas.conversation_route import ConversationPolicyRegistry
 from app.services.dialog_act import classify as classify_dialog_act
 from app.services.non_analysis_replies import build_non_analysis_turn
 from app.services.rollout import is_selected, normalize_percent
 from app.services.route_normalize import normalize_route
+from app.services.composition_execution_bridge import execute_metric_composition
 from app.services.semantic_answer_composer import compose_semantic_turn
 from app.services.semantic_frame import frame_from_route
 from app.services.semantic_turn_persistence import persist_primary_turn
 from app.services.shadow_integration import dialog_act_to_raw_route
 from app.services.sync_runner import run_blocking
 from app.services.topic_memory import resolve_topic_reference_blocking
+from app.services.tool_rag import load_tool_snapshot
 
 
 class PrimaryContractError(RuntimeError):
@@ -169,12 +172,32 @@ async def run_primary_turn(
         if enterprise_id not in entities:
             entities.insert(0, enterprise_id)
         raw_route = {**raw_route, "entities": entities}
-    turn = await compose_primary_turn(
-        db=db,
-        session_id=session_id,
-        query=effective_query,
-        raw_route=raw_route,
-    )
+    route = normalize_route(raw_route, effective_query)
+    policy = ConversationPolicyRegistry.resolve(route)
+    frame = frame_from_route(route, query=effective_query)
+    turn = None
+    if route.route == "analysis" and len(frame.metrics) >= 2:
+        try:
+            snapshot = await load_tool_snapshot(db)
+            turn = await execute_metric_composition(
+                frame=frame,
+                route=route,
+                policy=policy,
+                query=effective_query,
+                session_id=session_id,
+                snapshot=snapshot,
+                session_factory=get_async_session_factory(),
+            )
+        except Exception:
+            turn = None
+    if turn is None:
+        turn = await compose_primary_turn(
+            db=db,
+            session_id=session_id,
+            query=effective_query,
+            raw_route=raw_route,
+        )
+    turn.meta["semantic_frame"] = frame.model_dump()
     if referenced is not None:
         turn.meta["referenced_topic_id"] = referenced["topic_id"]
     await persist_primary_turn(
