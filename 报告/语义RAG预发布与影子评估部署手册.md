@@ -183,12 +183,14 @@ SEMANTIC_CANARY_PERCENT=0
 
 ## 十、旧路径退役审计
 
-在 canary 稳定并完成 semantic primary 观察前，旧 `route_chat` 和正则软降级必须保留。
+Stage 9 已完成：旧 `route_chat`、正则软降级和 `backend/legacy` 已退役并物理删除。
+当前活动入口只允许 semantic primary；内部异常受控返回 503，不得恢复旧路由兜底。
 运行退役审计：
 
 ```bash
 python -m scripts.audit_legacy_retirement --shadow-gate-passed
 ```
 
-只有输出 `safe_to_retire=true` 时才能删除旧入口。当前已删除无引用的章节兼容别名，
-章节唯一真源为 `CHAPTER_REGISTRY`；不得为了兼容旧代码重新引入第二套章节常量。
+只有输出 `safe_to_retire=true` 且 `legacy_package_present=false` 才算通过。当前已删除
+旧入口、无引用章节兼容别名和整个 `backend/legacy` 目录；章节唯一真源为
+`CHAPTER_REGISTRY`，不得为了兼容旧代码重新引入第二套章节常量或旧路由模块。

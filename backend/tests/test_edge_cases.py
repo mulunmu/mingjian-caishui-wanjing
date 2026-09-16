@@ -4,13 +4,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 def test_intent_empty_query():
-    from legacy.intent_engine import recognize
+    from app.services.semantic_lexicon import recognize
     result = recognize("")
     assert result.intent == "general"
 
 
 def test_intent_very_short():
-    from legacy.intent_engine import recognize
+    from app.services.semantic_lexicon import recognize
     result = recognize("?")
     assert result.function == "general"
 

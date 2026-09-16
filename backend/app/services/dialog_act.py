@@ -26,6 +26,7 @@ ActName = Literal[
     "product_faq",
     "meta_session",
     "custom_report",
+    "report",
 ]
 ScenarioName = Literal["loan", "rating", "warn", "audit"]
 ScopeTarget = Literal["individual", "cohort"]
@@ -64,6 +65,10 @@ _GREETING_RE = re.compile(
     re.I,
 )
 _MULTI_INTENT_SEP_RE = re.compile(r"[；;]|\n")
+_FIXED_REPORT_COMMAND_RE = re.compile(
+    r"(?:生成|出具|做|导出|创建|来).{0,20}报告|报告.{0,8}(?:生成|导出|下载)",
+    re.I,
+)
 
 
 def looks_aggregate_analyze(query: str) -> bool:
@@ -270,6 +275,13 @@ async def classify(query: str | None, state: dict[str, Any] | None = None) -> Di
     cr = state.get("custom_report") if isinstance(state.get("custom_report"), dict) else None
     if cr and cr.get("active"):
         return DialogAct(act="custom_report", confidence=1.0)
+
+    # 明确要求生成/导出报告是确定性命令，不应让模型偶尔判成 FAQ 或协商。
+    # 报告“怎么生成/如何导出”仍走 product_faq。
+    if _FIXED_REPORT_COMMAND_RE.search(q) and not re.search(
+        r"怎么|如何|为什么|哪里|能否|可以.*吗", q
+    ):
+        return DialogAct(act="report", confidence=0.95)
 
     if llm_reply.llm_available():
         act = await _llm_classify(q, state)
@@ -500,7 +512,7 @@ def _build_system(state: dict[str, Any]) -> str:
     return (
         persona + "\n"
         "你是对话行为分类器。只输出 DialogAct JSON，不要解释、不要编造数字或企业名单。\n"
-        "act：negotiate_scope|bind_subject|analyze|drill|product_faq|meta_session|custom_report。\n"
+        "act：negotiate_scope|bind_subject|analyze|drill|product_faq|meta_session|custom_report|report。\n"
         "- negotiate_scope：库存/名单/计数/怎么选。ask_kind=overview|list|count|entry_help。"
         "问某行业有哪些/是谁/名单→list并填 industry_l1；问多少家→count；问能分析哪些/有哪些行业→overview；"
         "问怎么选→entry_help。列名单绝不是 drill。\n"
@@ -513,6 +525,7 @@ def _build_system(state: dict[str, Any]) -> str:
         "- product_faq：仅导入/指标口径/报告怎么生成。\n"
         "- meta_session：问候寒暄、当前在看谁、帮我综合、会话状态。\n"
         "- custom_report：我要定制报告/自定义报告/AI定制。\n"
+        "- report：用户明确要求生成、导出或创建报告。\n"
         f"industry_l1 只能从 [{inds}] 选或 null；province 从 [{provs}] 选或 null。\n"
         "scenario 仅 analyze：loan|rating|warn|audit。\n"
         "confidence：乱码/答非所问 <0.55。\n"

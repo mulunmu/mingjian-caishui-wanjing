@@ -5,7 +5,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.schemas.semantic_query import SemanticQuery
-from legacy.intent_engine import IntentResult
+from app.services.semantic_lexicon import IntentResult
 from app.services import semantic_query
 
 

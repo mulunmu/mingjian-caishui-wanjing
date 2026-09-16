@@ -353,7 +353,7 @@ SEMANTIC_CANARY_PERCENT restored to 0
 - [x] Make the active chat endpoint fail closed instead of silently falling back to legacy.
 - [x] Restore fixed and conversational report generation in the semantic-primary path.
 - [x] Re-run the retirement audit until `safe_to_retire=true`.
-- [x] Exclude the archived `backend/legacy` package from production images.
+- [x] Delete the archived `backend/legacy` package and remove all repository references.
 
 Verification gate:
 
@@ -366,16 +366,15 @@ Verification evidence:
 chapter compatibility aliases=0
 all chapter keys map to loan|rating|warn|audit
 invalid wizard scenario -> HTTP 422
-full backend suite=1259 passed, 7 skipped, 0 failed
+full backend suite=1236 passed, 7 skipped, 0 failed
 production semantic-primary matrix=32/32, fallback_count=0
 multi-topic memory=6 turns, N-2 reply resolved
 production report chat=answered, PDF magic=%PDF-
 active-app legacy imports=0
-production image legacy package=absent
+legacy package present=false
 safe_to_retire=true
 remaining blockers=none
 ```
 
-The active application no longer imports or calls the legacy package. Legacy source remains
-only as a repository archive for historical tests/offline scripts and is excluded from the
-production image; it is not part of the runtime response path.
+The legacy package has been physically deleted from the repository. Active code, tests,
+scripts, and production images no longer import or contain it.

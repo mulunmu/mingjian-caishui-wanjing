@@ -5,20 +5,6 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
-def test_chat_helpers_exist():
-    from legacy.chat_router import (
-        _radar_chart,
-        _bar_chart,
-        _missing_enterprise_message,
-        _unknown_enterprise_message,
-    )
-
-    assert callable(_radar_chart)
-    assert callable(_bar_chart)
-    assert callable(_missing_enterprise_message)
-    assert callable(_unknown_enterprise_message)
-
-
 def test_template_reply_all_intents():
     from app.services.llm_reply import _template_reply
 

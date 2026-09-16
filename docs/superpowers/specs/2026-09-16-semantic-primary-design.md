@@ -3,6 +3,9 @@
 Date: 2026-09-16
 Status: Approved in thread; pending written-spec review
 
+> Superseded 2026-09-17: Stage 9 completed production rollout and deleted the
+> legacy package. The active endpoint now fails closed instead of falling back.
+
 ## Goal
 
 Make the semantic dialogue path the primary response path for every supported

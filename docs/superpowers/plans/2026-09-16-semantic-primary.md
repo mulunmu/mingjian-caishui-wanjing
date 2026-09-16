@@ -3,7 +3,8 @@
 > Execution status 2026-09-17: Stage 10 is closed. Semantic primary, all route
 > policies, session and topic persistence, canary-free primary selection, the 32-case
 > staging matrix, and six-turn N-2 memory validation are implemented and verified.
-> Production rollout and legacy retirement remain governed by Stage 9.
+> Stage 9 is also closed: production semantic primary is live, legacy fallback is
+> removed, and `backend/legacy` has been deleted.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 

@@ -8,7 +8,7 @@ import pytest
 
 from app.schemas.custom_report import CustomReportSpec
 from app.services import custom_report as cr
-from legacy.intent_engine import recognize
+from app.services.semantic_lexicon import recognize
 from app.services.report_templates import (
     get_scenario_label,
     get_scenario_tone,
@@ -266,7 +266,7 @@ async def test_available_custom_chapters_flags_empty(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_judgment_dispatches_enterprises_to_builders(monkeypatch):
     from app.services import judgment_service as js
-    from legacy.intent_engine import IntentResult
+    from app.services.semantic_lexicon import IntentResult
 
     captured = {}
 
@@ -284,115 +284,3 @@ async def test_run_judgment_dispatches_enterprises_to_builders(monkeypatch):
     await js.run_judgment(None, intent, "sid")
 
     assert captured["enterprise_ids"] == ["企业1"]
-
-
-# ── 方案 A：拦截卡片确定性调整 + propose 阶段立即校验（数据驱动空引导） ──
-
-def test_apply_custom_adjustment_cards():
-    from legacy import chat_router
-
-    spec = CustomReportSpec(
-        chapters=["financial"], industry_l1="制造", province="浙江", enterprises=["企业一"]
-    )
-
-    new, mode = chat_router._apply_custom_adjustment(spec, "改用全部样本")
-    assert mode == "adjust"
-    assert new.industry_l1 is None and new.province is None and new.enterprises == []
-
-    new, mode = chat_router._apply_custom_adjustment(spec, "保留企业，去掉范围过滤")
-    assert mode == "adjust"
-    assert new.industry_l1 is None and new.province is None
-    assert new.enterprises == ["企业一"]
-
-    new, mode = chat_router._apply_custom_adjustment(spec, "换章节：税务合规")
-    assert mode == "adjust"
-    assert new.chapters == ["tax"]
-
-    new, mode = chat_router._apply_custom_adjustment(spec, "自定义修改范围")
-    assert mode == "reask"
-
-    # 非调整指令不误伤（确认生成等仍走原逻辑）
-    new, mode = chat_router._apply_custom_adjustment(spec, "确认生成")
-    assert mode == "none"
-
-
-@pytest.mark.asyncio
-async def test_custom_proposal_blocks_and_offers_cards(monkeypatch):
-    """全章节无数据 → 拦截（不开放「确认生成」），给根因 + 可点击调整卡片。"""
-    from app.services import assessment, slice_report
-    from legacy import chat_router
-
-    spec = CustomReportSpec(
-        chapters=["financial"], industry_l1="制造", province="浙江", enterprises=["企业一"]
-    )
-
-    async def fake_resolve(db, names):
-        return ["e1"]
-
-    async def fake_validate(db, *, chapters, industry_l1=None, province=None, enterprise_ids=None):
-        if enterprise_ids is None:
-            # 「改用全部样本」探测：财务健康在全样本下有数据
-            return {
-                "chapters": {fn: {"available": fn == "financial", "sample_count": 100} for fn in chapters},
-                "scope_sample_count": 193,
-                "enterprise_ids": [],
-            }
-        return {
-            "chapters": {fn: {"available": False, "sample_count": 0} for fn in chapters},
-            "scope_sample_count": 0,
-            "enterprise_ids": enterprise_ids or [],
-        }
-
-    async def fake_reason(db, *, industry_l1=None, province=None, enterprise_ids=None, scope_sample_count=0):
-        return "指定企业 企业一（建筑·山西）不在「制造·浙江」范围内，筛选条件冲突。"
-
-    monkeypatch.setattr(assessment, "resolve_enterprise_ids", fake_resolve)
-    monkeypatch.setattr(slice_report, "validate_custom_report", fake_validate)
-    monkeypatch.setattr(slice_report, "custom_report_block_reason", fake_reason)
-
-    out = await chat_router._custom_proposal_with_validation(None, spec)
-
-    assert out["blocked"] is True
-    assert "确认生成" not in out["followups"]  # 强拦截：不放确认按钮
-    assert "改用全部样本" in out["followups"]
-    assert "保留企业，去掉范围过滤" in out["followups"]
-    assert "自定义修改范围" in out["followups"]
-    assert "筛选条件冲突" in out["reply"]  # 根因说明出现在文案
-    # 结构化卡片（label + description）供前端渲染 ①②③ 卡片
-    assert out["cards"]
-    assert all(c["label"] and c["description"] for c in out["cards"])
-    assert [c["label"] for c in out["cards"]] == out["followups"]
-
-
-@pytest.mark.asyncio
-async def test_custom_asking_stage_returns_nonempty_reply(monkeypatch):
-    """asking 阶段必须推进 next_turn，禁止空气泡（只剩规则引擎徽章）。"""
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from legacy import chat_router
-
-    async def fake_next(state, answer):
-        return {
-            "reply": "请告诉我这份报告主要想解决什么风险？",
-            "followups": ["退出定制"],
-            "stage": "asking",
-            "spec": None,
-            "meta": {},
-            "llm": False,
-        }
-
-    monkeypatch.setattr(cr, "next_turn", fake_next)
-
-    async def fake_run_blocking(fn, *args, **kwargs):
-        return None
-
-    with patch("legacy.chat_router.run_blocking", side_effect=fake_run_blocking):
-        out = await chat_router._route_custom_report(
-            MagicMock(),
-            "我要生成一份定制化的报告",
-            "sess_ask",
-            user={"email": "t@example.com", "plan": "subscriber"},
-            session_context={},
-        )
-    assert (out.get("reply") or "").strip()
-    assert "风险" in out["reply"]

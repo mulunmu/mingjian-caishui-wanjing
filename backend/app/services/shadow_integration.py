@@ -76,6 +76,8 @@ def dialog_act_to_raw_route(act, query: str) -> dict[str, Any]:
         route = "product_faq"
     elif act.act == "custom_report":
         route = "report"
+    elif act.act == "report":
+        route = "report"
     elif act.act in {"analyze", "drill"}:
         route = "analysis"
     elif act.act == "bind_subject" or act.confidence < 0.55:

@@ -194,6 +194,29 @@ async def test_classify_without_llm_uses_soft(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fixed_report_command_is_deterministic(monkeypatch):
+    from app.services import llm_reply
+    from app.services.shadow_integration import dialog_act_to_raw_route
+
+    monkeypatch.setattr(llm_reply, "llm_available", lambda: True)
+    act = await da.classify("生成评级报告", ss.empty_dialogue_state())
+
+    assert act.act == "report"
+    assert act.confidence >= 0.9
+    assert dialog_act_to_raw_route(act, "生成评级报告")["route"] == "report"
+
+
+@pytest.mark.asyncio
+async def test_report_howto_is_not_treated_as_generation(monkeypatch):
+    from app.services import llm_reply
+
+    monkeypatch.setattr(llm_reply, "llm_available", lambda: False)
+    act = await da.classify("报告怎么生成", ss.empty_dialogue_state())
+
+    assert act.act == "product_faq"
+
+
+@pytest.mark.asyncio
 async def test_classify_fabricate_refuses_without_regex_primary(monkeypatch):
     """§9#1：编造请求 → refusal_kind=fabrication（软降级兜底，非主路径正则）。"""
     from app.services import llm_reply

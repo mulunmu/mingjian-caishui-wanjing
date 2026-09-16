@@ -65,6 +65,8 @@ def audit_legacy_retirement(
         for name, metadata in LEGACY_MARKERS.items()
     }
     legacy_imports: list[dict[str, str]] = []
+    legacy_package_path = root_path.parent / "legacy"
+    legacy_package_present = legacy_package_path.is_dir()
 
     for path in root_path.rglob("*.py"):
         if path.name == "legacy_retirement_audit.py":
@@ -97,6 +99,8 @@ def audit_legacy_retirement(
         blockers.append("shadow_gate_not_passed")
     if legacy_imports:
         blockers.append("active_app_imports_legacy")
+    if legacy_package_present:
+        blockers.append("legacy_package_still_present")
     if remaining:
         blockers.append("legacy_markers_remain")
     if any(entry["category"] == "legacy_entrypoint" for entry in remaining.values()):
@@ -109,6 +113,7 @@ def audit_legacy_retirement(
         "shadow_gate_passed": shadow_gate_passed,
         "markers": markers,
         "legacy_imports": legacy_imports,
+        "legacy_package_present": legacy_package_present,
         "remaining_markers": sorted(remaining),
         "blockers": blockers,
         "required_order": [

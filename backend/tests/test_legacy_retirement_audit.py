@@ -40,6 +40,20 @@ def test_audit_can_pass_when_gate_passed_and_modules_are_clean(tmp_path: Path):
     assert report["safe_to_retire"] is True
     assert report["blockers"] == []
     assert report["legacy_imports"] == []
+    assert report["legacy_package_present"] is False
+
+
+def test_audit_blocks_when_archived_legacy_package_still_exists(tmp_path: Path):
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "clean.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "legacy").mkdir()
+
+    report = audit_legacy_retirement(app, shadow_gate_passed=True)
+
+    assert report["safe_to_retire"] is False
+    assert report["legacy_package_present"] is True
+    assert report["blockers"] == ["legacy_package_still_present"]
 
 
 def test_audit_blocks_any_active_app_legacy_import_without_known_markers(tmp_path: Path):
@@ -78,6 +92,7 @@ def test_current_app_is_retired_from_legacy_imports_and_markers():
     for marker in report["markers"]:
         assert report["markers"][marker]["count"] == 0
     assert report["legacy_imports"] == []
+    assert report["legacy_package_present"] is False
     assert report["remaining_markers"] == []
     assert report["blockers"] == []
     assert report["safe_to_retire"] is True
