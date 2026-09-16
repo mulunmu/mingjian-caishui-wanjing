@@ -12,6 +12,7 @@ from app.services.non_analysis_replies import build_non_analysis_turn
 from app.services.rollout import is_selected, normalize_percent
 from app.services.route_normalize import normalize_route
 from app.services.semantic_answer_composer import compose_semantic_turn
+from app.services.semantic_frame import frame_from_route
 from app.services.semantic_turn_persistence import persist_primary_turn
 from app.services.shadow_integration import dialog_act_to_raw_route
 from app.services.sync_runner import run_blocking
@@ -63,6 +64,7 @@ async def compose_primary_turn(*, db, session_id: str, query: str, raw_route: di
         if route.route in {"analysis", "report"}:
             raise PrimaryContractError(f"no primary policy for route={route.route}")
         result = build_non_analysis_turn(route, query, policy=policy)
+    result.meta["semantic_frame"] = frame_from_route(route, query=query).model_dump()
     return result
 
 
@@ -74,6 +76,7 @@ def _primary_meta(turn, *, fallback: bool = False, fallback_reason: str | None =
         "fallback": fallback,
         "fallback_reason": fallback_reason,
         "referenced_topic_id": turn.meta.get("referenced_topic_id"),
+        "semantic_frame": turn.meta.get("semantic_frame"),
         "candidate_tool_ids": [item.tool_id for item in turn.candidates],
         "plan_tool_ids": [step.tool_id for step in (turn.plan.steps if turn.plan else [])],
     }
