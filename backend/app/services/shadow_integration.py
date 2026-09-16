@@ -16,6 +16,28 @@ from app.schemas.shadow_evaluation import LegacyDialogueSnapshot, ShadowComparis
 from app.services.shadow_dialogue import build_shadow_dialogue
 
 
+_ABUSE_MARKERS = (
+    "他妈的",
+    "妈的",
+    "傻逼",
+    "滚蛋",
+    "操你",
+    "废物系统",
+    "垃圾系统",
+)
+
+
+def _looks_abusive(query: str) -> bool:
+    return any(marker in (query or "") for marker in _ABUSE_MARKERS)
+
+
+def _looks_language_switch(query: str) -> bool:
+    text = query or ""
+    has_latin = bool(re.search(r"[A-Za-z]{3,}", text))
+    has_cjk = bool(re.search(r"[\u4e00-\u9fff]", text))
+    return has_latin and not has_cjk
+
+
 def _digest(query: str) -> str:
     return hashlib.sha256((query or "").encode("utf-8")).hexdigest()
 
@@ -62,12 +84,16 @@ def dialog_act_to_raw_route(act, query: str) -> dict[str, Any]:
         route = "capability"
     else:
         route = "capability"
+    if _looks_abusive(query):
+        route = "abuse"
+    elif _looks_language_switch(query) and route in {"capability", "product_faq", "clarify"}:
+        route = "language_switch"
     domain = act.scenario if route in {"analysis", "report"} else None
     return {
         "route": route,
         "domain": domain,
         "language": "zh",
-        "entities": [],
+        "entities": [act.subject_ref] if getattr(act, "subject_ref", None) else [],
         "needs_tools": route in {"analysis", "report"},
         "needs_clarification": route == "clarify",
         "confidence": float(act.confidence or 0.5),

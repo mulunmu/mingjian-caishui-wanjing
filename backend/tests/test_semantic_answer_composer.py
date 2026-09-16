@@ -147,6 +147,22 @@ async def test_resolve_enterprise_display_name(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_resolve_enterprise_internal_identifier():
+    from unittest.mock import AsyncMock, MagicMock
+
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = "0039fa8febbd8593f36ec19219685382"
+    db.execute.return_value = result
+    resolved = await resolve_enterprise_entities(
+        db, ["0039fa8febbd8593f36ec19219685382"]
+    )
+    assert resolved == ["0039fa8febbd8593f36ec19219685382"]
+    statement = db.execute.await_args.args[0]
+    assert "core_metrics.enterprise_id =" in str(statement.whereclause)
+
+
+@pytest.mark.asyncio
 async def test_semantic_composer_clarifies_unresolved_entity():
     from unittest.mock import AsyncMock, MagicMock
 
@@ -170,6 +186,7 @@ async def test_semantic_composer_clarifies_unresolved_entity():
         snapshot=_snapshot(),
     )
     assert out.status == "clarify"
+    assert out.route.route == "unknown_entity"
     assert out.plan is None
 
 @pytest.mark.asyncio

@@ -112,6 +112,7 @@ async def _maybe_run_primary(
     *,
     session_id: str,
     owner: str | None,
+    enterprise_id: str | None,
     db=None,
 ) -> dict | None:
     from app.services import semantic_primary
@@ -125,6 +126,7 @@ async def _maybe_run_primary(
         session_id=session_id,
         owner=owner,
         query=query,
+        enterprise_id=enterprise_id,
     )
 
 
@@ -222,6 +224,7 @@ async def chat(
             query,
             session_id=sid,
             owner=owner,
+            enterprise_id=body.enterprise_id,
             db=db,
         )
     except Exception as exc:

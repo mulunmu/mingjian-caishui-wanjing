@@ -38,6 +38,22 @@ def test_dialog_act_to_raw_route_maps_fabrication_refusal():
     assert raw["route"] == "refuse"
 
 
+def test_dialog_act_to_raw_route_maps_abuse():
+    raw = dialog_act_to_raw_route(
+        DialogAct(act="meta_session", confidence=0.9),
+        "他妈的这系统怎么用",
+    )
+    assert raw["route"] == "abuse"
+
+
+def test_dialog_act_to_raw_route_maps_language_switch():
+    raw = dialog_act_to_raw_route(
+        DialogAct(act="product_faq", confidence=0.9),
+        "Hello, how do I generate a report?",
+    )
+    assert raw["route"] == "language_switch"
+
+
 @pytest.mark.asyncio
 async def test_shadow_hook_uses_independent_route_when_enabled(monkeypatch):
     from app.api.v1 import chat as chat_api

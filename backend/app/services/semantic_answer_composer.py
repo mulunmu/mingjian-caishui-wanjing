@@ -42,7 +42,8 @@ async def resolve_enterprise_entities(db: AsyncSession, entities: list[str]) -> 
             continue
         row = await db.execute(
             select(CoreMetrics.enterprise_id).where(
-                (CoreMetrics.display_name == value)
+                (CoreMetrics.enterprise_id == value)
+                | (CoreMetrics.display_name == value)
                 | (CoreMetrics.display_label == value)
             )
         )
@@ -76,9 +77,16 @@ async def compose_semantic_turn(
     policy = ConversationPolicyRegistry.resolve(route)
     resolved_entities = await resolve_enterprise_entities(db, route.entities)
     if route.entities and not resolved_entities:
+        unknown_route = route.model_copy(
+            update={
+                "route": "unknown_entity",
+                "needs_tools": False,
+                "needs_clarification": True,
+            }
+        )
         return SemanticTurnResult(
             status="clarify",
-            route=route,
+            route=unknown_route,
             policy=policy,
             reply="未找到对应企业，请确认企业名称或编号。",
         )

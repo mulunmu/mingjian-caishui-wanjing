@@ -50,3 +50,109 @@ async def test_not_applicable_is_contract_error(monkeypatch):
             query="分析风险",
             raw_route={"route": "analysis"},
         )
+
+
+@pytest.mark.asyncio
+async def test_non_analysis_not_applicable_falls_back_to_policy_handler(monkeypatch):
+    from app.services import semantic_primary
+
+    route = ConversationRoute(route="capability", entities=["ENT1"])
+
+    async def composer(**kwargs):
+        return SemanticTurnResult(
+            status="not_applicable",
+            route=route,
+            policy=ConversationPolicyRegistry.resolve(route),
+        )
+
+    monkeypatch.setattr(semantic_primary, "compose_semantic_turn", composer)
+    out = await semantic_primary.compose_primary_turn(
+        db=object(),
+        session_id="s1",
+        query="你好",
+        raw_route={
+            "route": "capability",
+            "entities": ["ENT1"],
+            "needs_tools": False,
+        },
+    )
+    assert out.status == "answered"
+    assert out.route.route == "capability"
+
+
+@pytest.mark.asyncio
+async def test_primary_turn_injects_referenced_topic_context(monkeypatch):
+    from app.services import semantic_primary
+
+    captured = {}
+
+    monkeypatch.setattr(
+        semantic_primary,
+        "resolve_topic_reference_blocking",
+        lambda *args, **kwargs: {
+            "topic_id": "s1-topic-4",
+            "summary": "现金流净额偏弱",
+            "entities": ["ENT1"],
+            "filters": {},
+            "scenario": "loan",
+            "intent": "analysis",
+        },
+    )
+
+    async def composer(**kwargs):
+        captured.update(kwargs)
+        route = ConversationRoute(route="analysis", domain="loan", entities=["ENT1"])
+        return SemanticTurnResult(
+            status="answered",
+            route=route,
+            policy=ConversationPolicyRegistry.resolve(route),
+            reply="现金流净额偏弱",
+            reply_source="llm",
+        )
+
+    async def persist(**kwargs):
+        return None
+
+    monkeypatch.setattr(semantic_primary, "compose_semantic_turn", composer)
+    monkeypatch.setattr(semantic_primary, "persist_primary_turn", persist)
+    out = await semantic_primary.run_primary_turn(
+        db=object(),
+        session_id="s1",
+        owner=None,
+        query="回到上上个问题，继续分析",
+    )
+    assert captured["raw_route"]["route"] == "analysis"
+    assert captured["raw_route"]["entities"] == ["ENT1"]
+    assert "现金流净额偏弱" in captured["query"]
+    assert out["data"]["primary"]["referenced_topic_id"] == "s1-topic-4"
+
+
+@pytest.mark.asyncio
+async def test_primary_turn_injects_explicit_enterprise_id(monkeypatch):
+    from app.services import semantic_primary
+
+    captured = {}
+
+    async def composer(**kwargs):
+        captured.update(kwargs)
+        route = ConversationRoute(route="analysis", domain="warn", entities=["ENT9"])
+        return SemanticTurnResult(
+            status="answered",
+            route=route,
+            policy=ConversationPolicyRegistry.resolve(route),
+            reply="资产负债率偏高",
+        )
+
+    async def persist(**kwargs):
+        return None
+
+    monkeypatch.setattr(semantic_primary, "compose_semantic_turn", composer)
+    monkeypatch.setattr(semantic_primary, "persist_primary_turn", persist)
+    await semantic_primary.run_primary_turn(
+        db=object(),
+        session_id="s1",
+        owner=None,
+        query="资产负债率高不高",
+        enterprise_id="ENT9",
+    )
+    assert captured["raw_route"]["entities"] == ["ENT9"]

@@ -167,6 +167,27 @@ def resolve_topic_reference(
     return _ordinal_topic(topics, reference) or _semantic_topic(topics, reference)
 
 
+def resolve_topic_reference_blocking(
+    engine,
+    session_id: str,
+    reference: str,
+) -> dict | None:
+    with Session(engine) as session:
+        topic = resolve_topic_reference(session, session_id, reference)
+        if topic is None:
+            return None
+        return {
+            "topic_id": topic.topic_id,
+            "summary": topic.summary,
+            "entities": _loads(topic.entities_json, []),
+            "filters": _loads(topic.filters_json, {}),
+            "scenario": topic.scenario,
+            "intent": topic.intent,
+            "tool_plan": _loads(topic.tool_plan_json, []),
+            "claim_ids": _loads(topic.claim_ids_json, []),
+        }
+
+
 def rollback_topic(
     session: Session,
     session_id: str,
