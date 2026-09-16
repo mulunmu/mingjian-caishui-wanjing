@@ -1,6 +1,8 @@
 """Reusable composition patterns, not frozen module combinations."""
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -8,6 +10,10 @@ class PatternRole(BaseModel):
     role: str
     module_prefixes: list[str] = Field(default_factory=list)
     kinds: list[str] = Field(default_factory=list)
+    condition_source_role: str | None = None
+    condition_output: str | None = None
+    condition_operator: str | None = None
+    condition_value: Any = None
 
 
 class PatternEdge(BaseModel):
@@ -70,6 +76,27 @@ PATTERNS: dict[str, CompositionPattern] = {
                 to_role="compare",
                 to_input="value",
             ),
+        ],
+        output_roles=["compare"],
+    ),
+    "metric_threshold_compare_conditional": CompositionPattern(
+        name="metric_threshold_compare_conditional",
+        roles=[
+            PatternRole(role="metric", module_prefixes=["metric_"], kinds=["metric"]),
+            PatternRole(role="threshold", module_prefixes=["threshold_"], kinds=["threshold"]),
+            PatternRole(
+                role="compare",
+                module_prefixes=["operator_compare"],
+                kinds=["operator"],
+                condition_source_role="threshold",
+                condition_output="level",
+                condition_operator="eq",
+                condition_value="high",
+            ),
+        ],
+        edges=[
+            PatternEdge(from_role="metric", from_output="value", to_role="threshold", to_input="value"),
+            PatternEdge(from_role="metric", from_output="value", to_role="compare", to_input="value"),
         ],
         output_roles=["compare"],
     ),

@@ -82,6 +82,7 @@ def _blueprint():
                 section_id="tax",
                 chapter_key="tax",
                 objective="税务风险",
+                depends_on_sections=["financial"],
                 steps=[
                     ToolStep(
                         step_id="arrears",
@@ -123,6 +124,22 @@ def test_compile_rejects_unknown_chapter():
         ],
     )
     with pytest.raises(ReportBlueprintError, match="unknown chapter"):
+        compile_report_blueprint(blueprint, load_tool_snapshot_sync(engine))
+
+
+def test_compile_rejects_unknown_section_dependency():
+    engine = _engine_with_blueprints()
+    blueprint = ReportBlueprint(
+        objective="bad dependency",
+        sections=[
+            SectionPlan(
+                section_id="tax",
+                chapter_key="tax",
+                depends_on_sections=["missing"],
+            )
+        ],
+    )
+    with pytest.raises(ReportBlueprintError, match="unknown section dependency"):
         compile_report_blueprint(blueprint, load_tool_snapshot_sync(engine))
 
 

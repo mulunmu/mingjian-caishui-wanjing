@@ -25,6 +25,7 @@ class SectionPlan(BaseModel):
     section_id: str
     chapter_key: str
     objective: str = ""
+    depends_on_sections: list[str] = Field(default_factory=list)
     steps: list[ToolStep] = Field(default_factory=list)
     blocks: list[BlockPlan] = Field(default_factory=list)
 
@@ -40,6 +41,7 @@ class CompiledSection(BaseModel):
     section_id: str
     chapter_tool_id: str
     objective: str
+    depends_on_sections: list[str] = Field(default_factory=list)
     plan: ToolPlan
     blocks: list[BlockPlan] = Field(default_factory=list)
 

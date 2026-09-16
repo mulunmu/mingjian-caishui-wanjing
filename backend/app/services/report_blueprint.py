@@ -67,6 +67,15 @@ def compile_report_blueprint(
     chapter_keys = [section.chapter_key for section in blueprint.sections]
     if len(chapter_keys) != len(set(chapter_keys)):
         raise ReportBlueprintError("duplicate chapter_key")
+    known_sections = set(section_ids)
+    for section in blueprint.sections:
+        for dependency in section.depends_on_sections:
+            if dependency not in known_sections:
+                raise ReportBlueprintError(
+                    f"unknown section dependency: {section.section_id}->{dependency}"
+                )
+            if dependency == section.section_id:
+                raise ReportBlueprintError("section cannot depend on itself")
 
     available = _tool_ids(snapshot)
     compiled_sections: list[CompiledSection] = []
@@ -90,6 +99,7 @@ def compile_report_blueprint(
                 section_id=section.section_id,
                 chapter_tool_id=chapter_tool_id,
                 objective=section.objective,
+                depends_on_sections=list(section.depends_on_sections),
                 plan=plan,
                 blocks=list(section.blocks),
             )

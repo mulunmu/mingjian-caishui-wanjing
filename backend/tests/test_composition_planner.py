@@ -148,3 +148,17 @@ def test_plan_from_frame_selects_multi_metric_pattern():
     )
     assert plan is not None
     assert len(plan.nodes) == 2
+
+
+def test_planner_builds_conditional_comparison_pattern():
+    plan = build_composition_plan(
+        frame={},
+        candidates=["metric_debt_ratio", "threshold_debt_ratio", "operator_compare_industry"],
+        pattern="metric_threshold_compare_conditional",
+        modules=_modules(),
+    )
+    assert plan is not None
+    compare = next(node for node in plan.nodes if node.node_id == "compare")
+    assert compare.condition is not None
+    assert compare.condition.source_node == "threshold"
+    assert compare.condition.source_output == "level"

@@ -30,6 +30,7 @@ async def execute_report_blueprint_async(
         CompositionNode(
             node_id=section.section_id,
             module_id=section.chapter_tool_id,
+            depends_on=list(section.depends_on_sections),
         )
         for section in compiled.sections
     ]

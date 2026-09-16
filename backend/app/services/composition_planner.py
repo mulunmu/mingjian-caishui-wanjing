@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.schemas.composition import (
+    CompositionCondition,
     CompositionEdge,
     CompositionNode,
     CompositionPlan,
@@ -62,6 +63,16 @@ def build_composition_plan(
             module_id=selected[role.role],
             input_bindings=dict(common_bindings),
             cost_estimate=modules[selected[role.role]].cost,
+            condition=(
+                CompositionCondition(
+                    source_node=role.condition_source_role,
+                    source_output=role.condition_output,
+                    operator=role.condition_operator,
+                    value=role.condition_value,
+                )
+                if role.condition_source_role and role.condition_output and role.condition_operator
+                else None
+            ),
         )
         for role in spec.roles
     ]
