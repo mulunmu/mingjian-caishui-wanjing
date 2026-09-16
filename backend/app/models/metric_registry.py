@@ -42,6 +42,7 @@ class MetricDefinition(Base):
     status: Mapped[str] = mapped_column(String(20), default="planned", index=True)
     shape: Mapped[str] = mapped_column(String(64), default="")
     retrieval_enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    threshold_required: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     aliases_json: Mapped[str] = mapped_column(Text, default="[]")
     source_tables_json: Mapped[str] = mapped_column(Text, default="[]")
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -16,10 +16,10 @@ scenario constraints without arbitrary composition or unexplained composition ga
 
 ## Stage 14B: Scenario Compatibility And Adapters
 
-- [ ] Define scenario tags and typed ports for modules.
-- [ ] Define compatibility rules and adapter modules for common conversions.
-- [ ] Prove in-domain composition closure with pair/triple matrices.
-- [ ] Return controlled clarify/abstain only for genuine data or domain gaps.
+- [x] Define scenario tags and typed ports for modules.
+- [x] Define compatibility rules and adapter modules for common conversions.
+- [x] Prove in-domain composition closure with pair/triple matrices.
+- [x] Return controlled clarify/abstain only for genuine data or domain gaps.
 
 ## Stage 14C: Long-Term Conversation Memory
 

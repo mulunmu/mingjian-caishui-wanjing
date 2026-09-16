@@ -93,23 +93,9 @@ async def test_metric_executor_builds_semantic_query_and_returns_claims(monkeypa
     assert result.claims[0]["value"]["metric"] == "debt_ratio"
 
 
-@pytest.mark.asyncio
-async def test_unsupported_tool_is_not_registered():
-    executors = build_semantic_tool_executors(db=object(), session_id="session-1")
-    plan = ToolPlan(
-        mode="answer",
-        steps=[
-            ToolStep(
-                step_id="cash",
-                tool_id="metric_cash_flow_level",
-                params={"entity": "ENT017"},
-            )
-        ],
-    )
-    with pytest.raises(PlanValidationError, match="no executor registered"):
-        await execute_tool_plan_async(
-            plan,
-            _snapshot(),
-            executors,
-            policy=_policy(),
-        )
+def test_every_snapshot_metric_tool_has_an_executor():
+    snapshot = _snapshot()
+    registered = semantic_executor_tool_ids()
+    metric_tool_ids = {tool.tool_id for tool in snapshot.tools if tool.tool_id.startswith("metric_")}
+
+    assert metric_tool_ids <= registered

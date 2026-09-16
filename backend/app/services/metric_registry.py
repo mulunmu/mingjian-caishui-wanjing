@@ -15,7 +15,22 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.services.financial_benchmarks import FINANCIAL_RATIOS
+
 logger = logging.getLogger(__name__)
+
+THRESHOLD_REQUIRED_METRICS: set[str] = {
+    key
+    for key, config in FINANCIAL_RATIOS.items()
+    if config.get("warn_dir") in {"gt", "lt"} and config.get("warn_threshold") is not None
+} | {
+    "revenue_deviation",
+    "cross_avg_deviation",
+    "cross_max_deviation",
+    "tax_arrears_cnt",
+    "tax_violation_cnt",
+    "tax_on_time_rate",
+}
 
 # 目标源字段词汇表（供字典导出 + 四层字段映射引擎共用）。
 # field 必须与 core_metrics 列名一致，category 对应六维 + 身份。

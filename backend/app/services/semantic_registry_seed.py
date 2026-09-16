@@ -22,6 +22,7 @@ from app.services.metric_registry import (
     CROSS_AVG_DEVIATION_WARN,
     CROSS_MAX_DEVIATION_WARN,
     REVENUE_DEVIATION_WARN,
+    THRESHOLD_REQUIRED_METRICS,
 )
 from app.services.financial_benchmarks import FINANCIAL_RATIOS
 from app.services.report_templates import CHAPTER_REGISTRY
@@ -102,6 +103,12 @@ NON_TOOL_CORE_FIELDS = {
 }
 
 CORE_FIELD_ALIASES: dict[str, list[str]] = {
+    "overall_score": ["综合得分", "综合风险得分", "总体评分"],
+    "authenticity_score": ["真实性得分", "经营真实性得分"],
+    "finance_score": ["财务健康得分"],
+    "invoice_score": ["发票健康得分"],
+    "legal_score": ["法律合规得分"],
+    "tax_health_score": ["税务健康得分", "税务合规得分"],
     "industry_score": ["和同行比", "同业位置", "行业位置", "在同行中"],
     "fraud_composite_score": ["哪里值得优先核查", "优先核查", "值得优先核查", "该查哪里"],
     "credit_level": ["纳税信用等级", "信用等级"],
@@ -201,6 +208,7 @@ def _upsert_metric(
     rec.status = status
     rec.shape = shape
     rec.retrieval_enabled = status == "validated"
+    rec.threshold_required = metric_key in THRESHOLD_REQUIRED_METRICS
     rec.aliases_json = _json(aliases)
     rec.source_tables_json = _json(source_tables)
     rec.updated_at = _now()

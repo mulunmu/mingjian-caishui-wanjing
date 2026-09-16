@@ -121,4 +121,9 @@ def test_executable_only_retrieval_filters_unregistered_tools():
         top_k=10,
         executable_only=True,
     )[0].tool_id
-    assert "metric_cash_flow_level" not in ids
+    assert "metric_cash_flow_level" in ids
+    assert "metric_zero_declaration_months" not in retriever.retrieve(
+        "长期零申报",
+        top_k=10,
+        executable_only=True,
+    )

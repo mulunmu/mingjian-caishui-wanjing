@@ -55,6 +55,23 @@ SUPPORTED_METRIC_KEYS: set[str] = {
     "inventory_turnover",
     "asset_turnover",
     "social_months",
+    "cash_flow_level",
+    "credit_level",
+    "finance_score",
+    "invoice_score",
+    "is_dishonesty",
+    "is_execution",
+    "legal_score",
+    "social_trend",
+    "tax_health_score",
+    "suspicious_count",
+    "flagged_count",
+    "peer_industry_percentile",
+    "peer_province_percentile",
+    "signal_total",
+    "tax_violation",
+    "high_dev",
+    "low_credit",
 }
 
 

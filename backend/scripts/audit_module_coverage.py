@@ -13,6 +13,8 @@ from app.db.urls import get_sync_engine
 from app.models.metric_registry import MetricDefinition
 from app.models.semantic_registry import ThresholdRule, ToolAlias, ToolDefinition
 from app.services.semantic_tool_executors import semantic_executor_tool_ids
+from app.services.module_contracts import build_compatibility_report
+from app.services.tool_rag import load_tool_snapshot_sync
 
 
 def _loads(raw: str | None, default):
@@ -60,6 +62,7 @@ def build_coverage_report(engine) -> dict[str, Any]:
                 "metric_type": metric.metric_type,
                 "status": metric.status,
                 "retrieval_enabled": metric.retrieval_enabled,
+                "threshold_required": metric.threshold_required,
                 "aliases": sorted(metric_aliases),
                 "alias_count": len(metric_aliases),
                 "tool_id": tool_id,
@@ -80,10 +83,10 @@ def build_coverage_report(engine) -> dict[str, Any]:
         for item in items
         if item["executor_registered"] and item["alias_count"] == 0
     ]
-    executable_without_threshold = [
+    thresholds_missing_required = [
         item["metric_key"]
         for item in items
-        if item["executor_registered"] and item["threshold_count"] == 0
+        if item["threshold_required"] and item["threshold_count"] == 0
     ]
     chapter_gaps: list[dict[str, Any]] = []
     for chapter_id, dependencies in chapter_to_deps.items():
@@ -105,9 +108,11 @@ def build_coverage_report(engine) -> dict[str, Any]:
         "chapters_complete": len(chapter_to_deps) - len(chapter_gaps),
         "validated_without_executor": validated_without_executor,
         "executable_without_alias": executable_without_alias,
-        "executable_without_threshold": executable_without_threshold,
+        "thresholds_missing_required": thresholds_missing_required,
         "chapter_gaps": chapter_gaps,
     }
+    compatibility = build_compatibility_report(load_tool_snapshot_sync(engine))
+    summary["composition"] = compatibility
     return {"summary": summary, "metrics": items}
 
 

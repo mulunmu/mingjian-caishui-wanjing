@@ -1790,6 +1790,20 @@ async def _metric_dispatcher(
         return await build_score_claims(db, industry, dimension="industry", province=province)
     if metric == "revenue_yoy":
         return await build_trend_industry_claims(db, industry, province=province)
+    if metric in {"tax_health_score", "legal_score"}:
+        return await build_tax_claims(db, industry, dimension=_sq_dimension(sq), province=province)
+    if metric == "finance_score":
+        return await build_financial_claims(db, industry, dimension=_sq_dimension(sq), province=province)
+    if metric in {"invoice_score", "suspicious_count"}:
+        return await build_authenticity_claims(db, industry, province=province)
+    if metric == "flagged_count":
+        return await build_fraud_claims(db, industry, province=province)
+    if metric in {"peer_industry_percentile", "peer_province_percentile"}:
+        return await build_benchmark_claims(db, industry, province=province)
+    if metric in {"signal_total", "tax_violation", "high_dev", "low_credit"}:
+        return await build_signal_claims(db, industry_l1=industry, province=province)
+    if metric in {"cash_flow_level", "credit_level", "social_trend", "is_dishonesty", "is_execution"}:
+        return await _generic_category_summary(db, sq, metric)
     return await _generic_simple_avg(db, sq, metric)
 
 
@@ -1869,6 +1883,66 @@ async def _generic_simple_avg(
         evidence=[f"n={len(rows)}"],
     )
     return [claim], {}
+
+
+async def _generic_category_summary(
+    db: AsyncSession,
+    sq: SemanticQuery,
+    metric: str,
+) -> tuple[list[Claim], dict[str, Any]]:
+    """Return a grounded category distribution for categorical or boolean fields."""
+    field = {
+        "cash_flow_level": "cash_flow_level",
+        "credit_level": "credit_level",
+        "social_trend": "social_trend",
+        "is_dishonesty": "is_dishonesty",
+        "is_execution": "is_execution",
+    }.get(metric, metric)
+    rows = await _load_metrics_scoped(db, _sq_industry(sq), province=_sq_province(sq))
+    counts: dict[str, int] = {}
+    for row in rows:
+        raw = getattr(row, field, None)
+        if raw is None:
+            continue
+        if metric in {"is_dishonesty", "is_execution"}:
+            label = "是" if bool(raw) else "否"
+        else:
+            label = str(raw).strip() or "未标注"
+        counts[label] = counts.get(label, 0) + 1
+    if not counts:
+        return (
+            [
+                _claim(
+                    f"样本暂无可用的{_metric_label(metric)}数据。",
+                    metric=metric,
+                    number=None,
+                    unit="",
+                    table="core_metrics",
+                    field=field,
+                    query_id=f"Q_{metric}_empty",
+                    confidence="inferred",
+                )
+            ],
+            {"sample_count": len(rows)},
+        )
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    top = ordered[:5]
+    distribution = "、".join(f"{label} {count} 家" for label, count in top)
+    return (
+        [
+            _claim(
+                f"样本 {len(rows)} 家中，{_metric_label(metric)}分布为 {distribution}。",
+                metric=metric,
+                number=None,
+                unit="",
+                table="core_metrics",
+                field=field,
+                query_id=f"Q_{metric}_distribution",
+                evidence=[f"{label}={count}" for label, count in top],
+            )
+        ],
+        {"sample_count": len(rows), "distribution": counts},
+    )
 
 
 async def build_lookup_claims(
