@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from datetime import datetime, timezone
 
@@ -29,6 +30,17 @@ def _now() -> datetime:
 def _bigrams(text: str) -> set[str]:
     normalized = re.sub(r"\s+", "", (text or "").lower())
     return {normalized[i : i + 2] for i in range(max(0, len(normalized) - 1))}
+
+
+def _topic_id(session_id: str, turn_index: int) -> str:
+    """Keep the durable primary key within the VARCHAR(64) column limit."""
+    suffix = f"-topic-{turn_index}"
+    raw = f"{session_id}{suffix}"
+    if len(raw) <= 64:
+        return raw
+    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:10]
+    keep = 64 - len(suffix) - len(digest) - 1
+    return f"{session_id[:keep]}-{digest}{suffix}"
 
 
 def append_topic(
@@ -62,7 +74,7 @@ def append_topic(
         )
     )
     topic = ConversationTopic(
-        topic_id=f"{session_id}-topic-{int(max_turn or 0) + 1}",
+        topic_id=_topic_id(session_id, int(max_turn or 0) + 1),
         session_id=session_id,
         turn_index=int(max_turn or 0) + 1,
         parent_topic_id=parent_topic_id,

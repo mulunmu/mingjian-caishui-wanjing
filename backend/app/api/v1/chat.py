@@ -20,7 +20,7 @@ SESSION_NOTE = "会话历史按账号归档保留约 7 天；活跃上下文约 
 
 class ChatRequest(BaseModel):
     query: str = Field(default="", max_length=2000)
-    session_id: str | None = None
+    session_id: str | None = Field(default=None, max_length=64)
     enterprise_id: str | None = None
     # 刀 1：结构化追问（drilldown / action / navigate）；与 query 二选一或并用
     followup: dict | None = None

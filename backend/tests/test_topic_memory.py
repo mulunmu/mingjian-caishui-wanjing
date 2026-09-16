@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from app.services.topic_memory import (
+    _topic_id,
     append_topic,
     compose_topic_context,
     list_topics,
@@ -99,3 +100,12 @@ def test_cross_topic_followup_merges_old_context_without_rollback():
         assert context["filters"] == {"industry_l1": "制造业"}
         assert context["intent"] == "cash_flow"
         assert before == after
+
+
+def test_long_session_topic_id_fits_database_column():
+    session_id = "email-report-audit-custom-" + "a" * 32
+    topic_id = _topic_id(session_id, 1)
+
+    assert len(topic_id) <= 64
+    assert topic_id.endswith("-topic-1")
+    assert _topic_id(session_id, 1) == topic_id
