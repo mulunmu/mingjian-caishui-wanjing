@@ -1,35 +1,22 @@
 """Deterministic small-percentage canary routing and response replacement."""
 from __future__ import annotations
 
-import hashlib
-import math
 import os
 
 from app.schemas.claim import claims_to_dict
+from app.services.rollout import is_selected, normalize_percent, stable_bucket
 
 
 def canary_bucket(key: str) -> int:
-    digest = hashlib.sha256((key or "").encode("utf-8")).hexdigest()
-    return int(digest[:8], 16) % 100
+    return stable_bucket(key)
 
 
 def _normalize_percent(percent: int | float | str | None) -> float:
-    try:
-        value = float(percent or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
-    if not math.isfinite(value):
-        return 0.0
-    return max(0.0, min(value, 100.0))
+    return normalize_percent(percent)
 
 
 def is_canary_selected(key: str, percent: int | float) -> bool:
-    value = _normalize_percent(percent)
-    if value <= 0:
-        return False
-    if value >= 100:
-        return True
-    return canary_bucket(key) < value
+    return is_selected(key, percent)
 
 
 def canary_percent() -> float:
