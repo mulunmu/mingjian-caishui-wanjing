@@ -1,14 +1,11 @@
 # Composition Kernel Implementation Plan
 
-> Execution status 2026-09-16: Tasks 1-5 are implemented. Multi-metric composition
-> executes through per-node async sessions and the DAG runtime. Dynamic pattern
-> selection, node caching, cache idempotency keys, partial-result execution, report
-> chapter concurrency, conditional node execution, turn budgets, and the 30-case
-> staging matrix are implemented and verified. Persistent composition Blueprint storage,
-> registry-version validation, replay validation, durable execution checkpoints, and
-> compatible plan migration are implemented. Migration approval records and the
-> composition readiness gate are implemented. The final production retirement audit
-> remains pending. Task 6 is not complete.
+> Execution status 2026-09-17: Stage 11 is closed. Typed composition, async DAG runtime,
+> dynamic and conditional planning, partial failure, caching, turn budgets, report
+> chapter concurrency and dependencies, Blueprint persistence, migration approval,
+> durable checkpoints, versioned replay, and the 30-case staging matrix are implemented
+> and verified. Production traffic rollout and legacy retirement remain under the
+> separate Stage 9 release process.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
