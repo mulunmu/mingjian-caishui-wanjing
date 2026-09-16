@@ -159,6 +159,87 @@ def _builtin_blocks() -> dict[str, ModuleSpec]:
     return modules
 
 
+def _builtin_dialogue_modules() -> dict[str, ModuleSpec]:
+    modules: dict[str, ModuleSpec] = {}
+    intent_routes = {
+        "intent_analysis": "analysis",
+        "intent_memory": "analysis",
+        "intent_report": "report",
+        "intent_knowledge": "knowledge",
+        "intent_social": "social",
+        "intent_clarify": "clarify",
+        "intent_refusal": "refusal",
+    }
+    for module_id, scenario in intent_routes.items():
+        modules[module_id] = ModuleSpec(
+            module_id=module_id,
+            kind="intent",
+            version="1",
+            status="validated",
+            inputs=[
+                PortSpec(name="query", data_type="query"),
+                PortSpec(name="scope", data_type="scope", required=False),
+            ],
+            outputs=[PortSpec(name="intent", data_type="intent")],
+            metadata={"scenarios": [scenario]},
+        )
+    policy_routes = {
+        "policy_analysis": "analysis",
+        "policy_report": "report",
+        "policy_knowledge": "knowledge",
+        "policy_social": "social",
+        "policy_clarify": "clarify",
+        "policy_refusal": "refusal",
+    }
+    for module_id, scenario in policy_routes.items():
+        modules[module_id] = ModuleSpec(
+            module_id=module_id,
+            kind="policy",
+            version="1",
+            status="validated",
+            inputs=[PortSpec(name="intent", data_type="intent")],
+            outputs=[PortSpec(name="policy", data_type="policy")],
+            metadata={"scenarios": [scenario]},
+        )
+    content_routes = {
+        "content_metric_claim": "analysis",
+        "content_comparison": "analysis",
+        "content_trend": "analysis",
+        "content_memory": "analysis",
+        "content_report": "report",
+        "content_knowledge": "knowledge",
+        "content_social": "social",
+        "content_clarify": "clarify",
+        "content_refusal": "refusal",
+    }
+    for module_id, scenario in content_routes.items():
+        modules[module_id] = ModuleSpec(
+            module_id=module_id,
+            kind="content",
+            version="1",
+            status="validated",
+            inputs=[PortSpec(name="policy", data_type="policy")],
+            outputs=[
+                PortSpec(name="fragment", data_type="reply_fragment"),
+                PortSpec(name="claims", data_type="claims", required=False),
+            ],
+            metadata={"scenarios": [scenario]},
+        )
+    modules["content_synthesis"] = ModuleSpec(
+        module_id="content_synthesis",
+        kind="content",
+        version="1",
+        status="validated",
+        inputs=[PortSpec(name="fragment", data_type="reply_fragment")],
+        outputs=[
+            PortSpec(name="reply", data_type="reply_fragment"),
+            PortSpec(name="claims", data_type="claims", required=False),
+        ],
+        metadata={"scenarios": []},
+    )
+    return modules
+
+
 def _catalog_from_snapshot(snapshot) -> dict[str, ModuleSpec] | None:
     if snapshot is None or not snapshot.tools:
         return None
@@ -190,6 +271,7 @@ def build_composition_catalog(snapshot=None) -> dict[str, ModuleSpec]:
     modules.update(_builtin_operators())
     modules.update(_builtin_knowledge_and_verifiers())
     modules.update(_builtin_blocks())
+    modules.update(_builtin_dialogue_modules())
 
     snapshot_modules = _catalog_from_snapshot(snapshot)
     if snapshot_modules:

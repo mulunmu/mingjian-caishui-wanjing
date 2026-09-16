@@ -10,7 +10,7 @@ def test_catalog_exposes_at_least_sixty_modules():
 
 def test_catalog_contains_metric_operator_threshold_and_chapter_modules():
     kinds = {module.kind for module in build_composition_catalog().values()}
-    assert {"metric", "operator", "threshold", "chapter"} <= kinds
+    assert {"metric", "operator", "threshold", "chapter", "intent", "policy", "content"} <= kinds
 
 
 def test_catalog_only_exposes_validated_modules():

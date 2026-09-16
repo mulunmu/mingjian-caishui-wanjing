@@ -267,6 +267,82 @@ async def test_primary_turn_keeps_topic_resolution_fail_closed(monkeypatch):
         )
 
 
+@pytest.mark.asyncio
+async def test_multi_intent_turn_merges_claims_and_persists_once(monkeypatch):
+    from app.schemas.claim import Claim, ClaimTrace, ClaimValue
+    from app.services import semantic_primary
+    from app.services.dialog_act import DialogAct
+
+    persisted = []
+    composed_queries = []
+
+    async def classify(query, context):
+        del query, context
+        return DialogAct(
+            act="analyze",
+            scenario="warn",
+            scope_target="individual",
+            confidence=0.95,
+        )
+
+    async def composer(**kwargs):
+        query = kwargs["query"]
+        composed_queries.append(query)
+        if "资产负债率" in query:
+            metric, number, query_id = "debt_ratio", 0.8, "Q-debt"
+        else:
+            metric, number, query_id = "cash_flow_net", -10.0, "Q-cash"
+        route = ConversationRoute(
+            route="analysis",
+            domain="warn",
+            entities=["ENT1"],
+        )
+        return SemanticTurnResult(
+            status="answered",
+            route=route,
+            policy=ConversationPolicyRegistry.resolve(route),
+            claims=[
+                Claim(
+                    claim=f"{metric} claim",
+                    value=ClaimValue(metric=metric, number=number, unit=""),
+                    trace=ClaimTrace(
+                        table="core_metrics",
+                        field=metric,
+                        query_id=query_id,
+                    ),
+                    confidence="computed",
+                )
+            ],
+            reply=f"{metric} reply",
+        )
+
+    async def persist(**kwargs):
+        persisted.append(kwargs)
+
+    monkeypatch.setattr(semantic_primary.session_store, "get_session", lambda _: {})
+    monkeypatch.setattr(semantic_primary, "classify_dialog_act", classify)
+    monkeypatch.setattr(semantic_primary, "compose_semantic_turn", composer)
+    monkeypatch.setattr(semantic_primary, "persist_primary_turn", persist)
+    out = await semantic_primary.run_primary_turn(
+        db=object(),
+        session_id="multi-intent",
+        owner=None,
+        query="分析ENT1的资产负债率；分析ENT1的现金流",
+        enterprise_id="ENT1",
+    )
+    primary = out["data"]["primary"]
+    assert len(composed_queries) == 2
+    assert len(persisted) == 1
+    assert len(persisted[0]["turn"].claims) == 2
+    assert primary["multi_intent"] is True
+    assert primary["multi_intent_segments"] == [
+        "分析ENT1的资产负债率",
+        "分析ENT1的现金流",
+    ]
+    assert primary["dialogue_composition_plan_id"].startswith("dialogue-2-")
+    assert len(out["data"]["claims"]) == 2
+
+
 def test_structured_multi_metric_frame_promotes_weak_route():
     from app.services import semantic_primary
 

@@ -7,9 +7,17 @@ import re
 
 from app.db.urls import get_sync_engine
 from app.db.session import get_async_session_factory
-from app.schemas.claim import claims_to_dict
-from app.schemas.conversation_route import ConversationPolicyRegistry
-from app.services.dialog_act import classify as classify_dialog_act
+from app.schemas.claim import Claim, claims_to_dict
+from app.schemas.conversation_route import (
+    ConversationPolicyRegistry,
+    ConversationRoute,
+)
+from app.schemas.semantic_turn import SemanticTurnResult
+from app.services.dialog_act import (
+    classify as classify_dialog_act,
+    split_multi_intent,
+)
+from app.services.dialogue_composition import build_dialogue_composition_plan
 from app.services.non_analysis_replies import build_non_analysis_turn
 from app.services.rollout import is_selected, normalize_percent
 from app.services.route_normalize import normalize_route
@@ -129,6 +137,14 @@ def _primary_meta(turn, *, fallback: bool = False, fallback_reason: str | None =
         "composition_execution_id": turn.meta.get("composition_execution_id"),
         "candidate_tool_ids": [item.tool_id for item in turn.candidates],
         "plan_tool_ids": [step.tool_id for step in (turn.plan.steps if turn.plan else [])],
+        "dialogue_composition_plan_id": turn.meta.get(
+            "dialogue_composition_plan_id"
+        ),
+        "dialogue_intent_modules": turn.meta.get("dialogue_intent_modules") or [],
+        "dialogue_policy_modules": turn.meta.get("dialogue_policy_modules") or [],
+        "dialogue_content_modules": turn.meta.get("dialogue_content_modules") or [],
+        "multi_intent": bool(turn.meta.get("multi_intent")),
+        "multi_intent_segments": turn.meta.get("multi_intent_segments") or [],
     }
 
 
@@ -175,6 +191,152 @@ def build_primary_chat_response(*, session_id: str, turn) -> dict:
     }
 
 
+_ROUTE_PRIORITY = {
+    "report": 100,
+    "analysis": 90,
+    "language_switch": 80,
+    "capability": 70,
+    "product_faq": 65,
+    "clarify": 60,
+    "unknown_entity": 55,
+    "refuse": 50,
+    "out_of_domain": 45,
+    "feedback": 40,
+    "abuse": 30,
+    "greeting": 20,
+}
+
+
+def _response_route(response: dict) -> ConversationRoute:
+    route_kind = str(response.get("intent") or "clarify")
+    if route_kind not in _ROUTE_PRIORITY:
+        route_kind = "clarify"
+    domain = response.get("dimension")
+    if domain not in {"loan", "rating", "warn", "audit", "report", "general"}:
+        domain = None
+    return ConversationRoute(route=route_kind, domain=domain)
+
+
+def _claim_from_response(response: dict) -> list[Claim]:
+    claims: list[Claim] = []
+    for item in (response.get("data") or {}).get("claims") or []:
+        try:
+            claims.append(Claim.model_validate(item))
+        except Exception:
+            continue
+    return claims
+
+
+async def _run_multi_intent_turn(
+    *,
+    db,
+    session_id: str,
+    owner: str | None,
+    query: str,
+    enterprise_id: str | None,
+    user: dict | None,
+    segments: list[str],
+) -> dict:
+    responses: list[dict] = []
+    for segment in segments:
+        responses.append(
+            await run_primary_turn(
+                db=db,
+                session_id=session_id,
+                owner=owner,
+                query=segment,
+                enterprise_id=enterprise_id,
+                user=user,
+                persist=False,
+            )
+        )
+
+    selected = max(
+        responses,
+        key=lambda item: _ROUTE_PRIORITY.get(str(item.get("intent")), 0),
+    )
+    route = _response_route(selected)
+    policy = ConversationPolicyRegistry.resolve(route)
+    claims: list[Claim] = []
+    seen_claims: set[str] = set()
+    followups: list[str] = []
+    actions: list[dict] = []
+    cards: list[dict] = []
+    report_ids: list[str] = []
+    result_rows: list[dict] = []
+    for segment, response in zip(segments, responses, strict=True):
+        for claim in _claim_from_response(response):
+            key = claim.model_dump_json()
+            if key not in seen_claims:
+                seen_claims.add(key)
+                claims.append(claim)
+        for item in response.get("followups") or []:
+            if isinstance(item, str) and item not in followups:
+                followups.append(item)
+        data = response.get("data") or {}
+        for item in data.get("actions") or []:
+            if isinstance(item, dict) and item not in actions:
+                actions.append(item)
+        for item in data.get("cards") or []:
+            if isinstance(item, dict) and item not in cards:
+                cards.append(item)
+        report_id = data.get("report_id")
+        if report_id and report_id not in report_ids:
+            report_ids.append(str(report_id))
+        result_rows.append(
+            {
+                "segment": segment,
+                "intent": response.get("intent"),
+                "reply": response.get("reply"),
+                "claim_count": len(_claim_from_response(response)),
+                "report_id": report_id,
+            }
+        )
+
+    plan = build_dialogue_composition_plan(
+        query=query,
+        segments=segments,
+        intent_hints=[str(item.get("intent") or "") for item in responses],
+    )
+    if plan is None:
+        raise PrimaryContractError("multi-intent dialogue composition validation failed")
+    reply = "\n\n".join(
+        f"【{segment}】\n{str(response.get('reply') or '').strip()}"
+        for segment, response in zip(segments, responses, strict=True)
+    ).strip()
+    turn = SemanticTurnResult(
+        status="answered",
+        route=route,
+        policy=policy,
+        claims=claims,
+        reply=reply,
+        followups=followups[:8],
+        reply_source="multi_intent",
+        meta={
+            "dialogue_composition_plan": plan.model_dump(),
+            "dialogue_composition_plan_id": plan.plan_id,
+            "dialogue_intent_modules": plan.metadata.get("intent_module_ids"),
+            "dialogue_policy_modules": plan.metadata.get("policy_module_ids"),
+            "dialogue_content_modules": plan.metadata.get("content_module_ids"),
+            "multi_intent": True,
+            "multi_intent_segments": segments,
+            "multi_intent_results": result_rows,
+            "report_ids": report_ids,
+            "actions": actions,
+            "cards": cards,
+        },
+    )
+    turn.meta["semantic_frame"] = frame_from_route(route, query=query).model_dump()
+    await persist_primary_turn(
+        db=db,
+        session_id=session_id,
+        owner=owner,
+        query=query,
+        turn=turn,
+    )
+    return build_primary_chat_response(session_id=session_id, turn=turn)
+
+
 async def run_primary_turn(
     *,
     db,
@@ -184,7 +346,19 @@ async def run_primary_turn(
     raw_route: dict | None = None,
     enterprise_id: str | None = None,
     user: dict | None = None,
+    persist: bool = True,
 ) -> dict:
+    segments = split_multi_intent(query)
+    if persist and len(segments) >= 2:
+        return await _run_multi_intent_turn(
+            db=db,
+            session_id=session_id,
+            owner=owner,
+            query=query,
+            enterprise_id=enterprise_id,
+            user=user,
+            segments=segments,
+        )
     effective_query = query
     referenced = None
     has_topic_reference = bool(_TOPIC_REFERENCE_RE.search(query))
@@ -256,6 +430,12 @@ async def run_primary_turn(
     route = normalize_route(raw_route, effective_query)
     policy = ConversationPolicyRegistry.resolve(route)
     frame = frame_from_route(route, query=effective_query)
+    dialogue_plan = build_dialogue_composition_plan(
+        query=query,
+        frame=frame,
+    )
+    if dialogue_plan is None:
+        raise PrimaryContractError("dialogue composition validation failed")
     promoted_route = promote_route_with_frame(route, frame)
     if promoted_route.route != route.route:
         route = promoted_route
@@ -324,13 +504,25 @@ async def run_primary_turn(
             raw_route=raw_route,
         )
     turn.meta["semantic_frame"] = frame.model_dump()
+    turn.meta["dialogue_composition_plan"] = dialogue_plan.model_dump()
+    turn.meta["dialogue_composition_plan_id"] = dialogue_plan.plan_id
+    turn.meta["dialogue_intent_modules"] = dialogue_plan.metadata.get(
+        "intent_module_ids"
+    )
+    turn.meta["dialogue_policy_modules"] = dialogue_plan.metadata.get(
+        "policy_module_ids"
+    )
+    turn.meta["dialogue_content_modules"] = dialogue_plan.metadata.get(
+        "content_module_ids"
+    )
     if referenced is not None:
         turn.meta["referenced_topic_id"] = referenced["topic_id"]
-    await persist_primary_turn(
-        db=db,
-        session_id=session_id,
-        owner=owner,
-        query=query,
-        turn=turn,
-    )
+    if persist:
+        await persist_primary_turn(
+            db=db,
+            session_id=session_id,
+            owner=owner,
+            query=query,
+            turn=turn,
+        )
     return build_primary_chat_response(session_id=session_id, turn=turn)

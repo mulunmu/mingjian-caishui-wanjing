@@ -15,6 +15,9 @@ ModuleKind = Literal[
     "block",
     "action",
     "verifier",
+    "intent",
+    "policy",
+    "content",
 ]
 ModuleStatus = Literal["planned", "draft", "validated", "deprecated", "disabled"]
 ConditionOperator = Literal["eq", "ne", "gt", "gte", "lt", "lte", "truthy", "falsy"]

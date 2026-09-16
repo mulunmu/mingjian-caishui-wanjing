@@ -39,10 +39,10 @@ scenario constraints without arbitrary composition or unexplained composition ga
 
 ## Stage 14E: Dialogue Intent And Content Assembly
 
-- [ ] Represent intent, policy and content as typed modules.
-- [ ] Compose modules only through validated graphs.
-- [ ] Support multi-intent requests and cross-topic follow-ups.
-- [ ] Preserve Claim-only numeric truth boundaries.
+- [x] Represent intent, policy and content as typed modules.
+- [x] Compose modules only through validated graphs.
+- [x] Support multi-intent requests and cross-topic follow-ups.
+- [x] Preserve Claim-only numeric truth boundaries.
 
 ## Stage 14F: Report Block Composition
 
