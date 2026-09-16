@@ -6,8 +6,9 @@
 > chapter concurrency, conditional node execution, turn budgets, and the 30-case
 > staging matrix are implemented and verified. Persistent composition Blueprint storage,
 > registry-version validation, replay validation, durable execution checkpoints, and
-> compatible plan migration are implemented. The final retirement audit remains pending.
-> Task 6 is not complete.
+> compatible plan migration are implemented. Migration approval records and the
+> composition readiness gate are implemented. The final production retirement audit
+> remains pending. Task 6 is not complete.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
