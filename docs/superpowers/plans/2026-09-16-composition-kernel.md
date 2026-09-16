@@ -1,8 +1,9 @@
 # Composition Kernel Implementation Plan
 
-> Execution status 2026-09-16: Tasks 1-4 and the semantic-frame portion of Task 5 are
-> implemented and verified. End-to-end composition execution, per-node session isolation,
-> staging matrix, and report integration remain pending. Task 6 is not complete.
+> Execution status 2026-09-16: Tasks 1-5 are implemented. Multi-metric composition now
+> executes through per-node async sessions and the DAG runtime. Arbitrary pattern
+> planning, caching, report chapter concurrency, the 30-case staging matrix, and final
+> retirement audit remain pending. Task 6 is not complete.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
