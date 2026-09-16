@@ -2,8 +2,8 @@
 
 ## Verified Candidate
 
-- Git tag: `rag-v2-stage14g-e2e-verified-20260917`
-- Commit: `a19d45a`
+- Git tag: `rag-v2-stage14-accepted-20260917`
+- Commit: `f76f76b`
 - Core dependencies: pinned in `backend/requirements.txt`
 - LangGraph dependencies: pinned in `backend/requirements-orchestration.txt`
 
