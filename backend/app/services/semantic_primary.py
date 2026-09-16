@@ -103,6 +103,8 @@ def _primary_meta(turn, *, fallback: bool = False, fallback_reason: str | None =
         "composition_completed_order": turn.meta.get("composition_completed_order"),
         "composition_cache_hits": turn.meta.get("composition_cache_hits") or [],
         "composition_failed_nodes": turn.meta.get("composition_failed_nodes") or [],
+        "composition_skipped_nodes": turn.meta.get("composition_skipped_nodes") or [],
+        "composition_total_cost": turn.meta.get("composition_total_cost"),
         "candidate_tool_ids": [item.tool_id for item in turn.candidates],
         "plan_tool_ids": [step.tool_id for step in (turn.plan.steps if turn.plan else [])],
     }

@@ -77,6 +77,29 @@ def validate_composition_plan(
                         node.node_id,
                     )
                 )
+        if node.condition is not None:
+            condition_source = nodes.get(node.condition.source_node)
+            if condition_source is None:
+                errors.append(
+                    _issue(
+                        "condition_source_not_found",
+                        f"condition source not found: {node.condition.source_node}",
+                        node.node_id,
+                    )
+                )
+            else:
+                source_module = modules.get(condition_source.module_id)
+                if source_module is not None and not any(
+                    port.name == node.condition.source_output
+                    for port in source_module.outputs
+                ):
+                    errors.append(
+                        _issue(
+                            "condition_output_not_found",
+                            f"condition output not found: {node.condition.source_output}",
+                            node.node_id,
+                        )
+                    )
 
     incoming = defaultdict(list)
     for edge in plan.edges:

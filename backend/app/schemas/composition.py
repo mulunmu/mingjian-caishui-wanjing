@@ -17,6 +17,7 @@ ModuleKind = Literal[
     "verifier",
 ]
 ModuleStatus = Literal["planned", "draft", "validated", "deprecated", "disabled"]
+ConditionOperator = Literal["eq", "ne", "gt", "gte", "lt", "lte", "truthy", "falsy"]
 
 
 class PortSpec(BaseModel):
@@ -47,6 +48,15 @@ class CompositionNode(BaseModel):
     timeout_ms: int = Field(default=10000, ge=1)
     retry_count: int = Field(default=0, ge=0, le=5)
     fallback_module_id: str | None = None
+    cost_estimate: float = Field(default=0.0, ge=0.0)
+    condition: "CompositionCondition | None" = None
+
+
+class CompositionCondition(BaseModel):
+    source_node: str
+    source_output: str
+    operator: ConditionOperator
+    value: Any = None
 
 
 class CompositionEdge(BaseModel):

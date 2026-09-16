@@ -71,6 +71,7 @@ async def test_execute_metric_composition_merges_parallel_claims(monkeypatch):
     assert out.status == "answered"
     assert len(out.claims) == 2
     assert out.meta["composition_plan_id"].startswith("plan-multi-metric")
+    assert out.meta["composition_total_cost"] == 2.0
     assert out.reply == "已合并两项指标"
 
 

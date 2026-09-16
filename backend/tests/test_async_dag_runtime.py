@@ -4,8 +4,17 @@ import asyncio
 
 import pytest
 
-from app.schemas.composition import CompositionEdge, CompositionNode, CompositionPlan
-from app.services.async_dag_runtime import AsyncDagRuntime, NodeTimeoutError
+from app.schemas.composition import (
+    CompositionCondition,
+    CompositionEdge,
+    CompositionNode,
+    CompositionPlan,
+)
+from app.services.async_dag_runtime import (
+    AsyncDagRuntime,
+    BudgetExceededError,
+    NodeTimeoutError,
+)
 
 
 def _plan(nodes, edges=None):
@@ -166,3 +175,59 @@ async def test_partial_failure_keeps_independent_results():
     )
     assert result.node_results["a"]["value"] == 1
     assert result.failed_nodes == ["b"]
+
+
+@pytest.mark.asyncio
+async def test_condition_false_skips_node_and_dependents():
+    async def source(_inputs):
+        return {"level": "low"}
+
+    async def skipped(_inputs):
+        raise AssertionError("conditional node should not execute")
+
+    result = await AsyncDagRuntime().execute(
+        _plan(
+            [
+                CompositionNode(node_id="source", module_id="source"),
+                CompositionNode(
+                    node_id="conditional",
+                    module_id="conditional",
+                    condition=CompositionCondition(
+                        source_node="source",
+                        source_output="level",
+                        operator="eq",
+                        value="high",
+                    ),
+                ),
+                CompositionNode(node_id="dependent", module_id="dependent"),
+            ],
+            [
+                CompositionEdge(
+                    from_node="conditional",
+                    from_output="value",
+                    to_node="dependent",
+                    to_input="value",
+                )
+            ],
+        ),
+        handlers={"source": source, "conditional": skipped, "dependent": skipped},
+    )
+    assert result.node_results["source"]["level"] == "low"
+    assert result.skipped_nodes == ["conditional", "dependent"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_enforces_cost_budget():
+    async def handler(_inputs):
+        return {"value": 1}
+
+    with pytest.raises(BudgetExceededError):
+        await AsyncDagRuntime(max_cost=1.0).execute(
+            _plan(
+                [
+                    CompositionNode(node_id="a", module_id="a", cost_estimate=0.8),
+                    CompositionNode(node_id="b", module_id="b", cost_estimate=0.8),
+                ]
+            ),
+            handlers={"a": handler, "b": handler},
+        )

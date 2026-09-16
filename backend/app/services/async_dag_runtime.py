@@ -29,11 +29,17 @@ class NodeExecutionError(DagRuntimeError):
     pass
 
 
+class BudgetExceededError(DagRuntimeError):
+    pass
+
+
 class AsyncDagExecutionResult(BaseModel):
     node_results: dict[str, dict[str, Any]] = Field(default_factory=dict)
     completed_order: list[str] = Field(default_factory=list)
     cache_hits: list[str] = Field(default_factory=list)
     failed_nodes: list[str] = Field(default_factory=list)
+    skipped_nodes: list[str] = Field(default_factory=list)
+    total_cost: float = 0.0
     elapsed_ms: float = 0.0
 
 
@@ -45,11 +51,29 @@ class AsyncDagRuntime:
         cache_get: Callable[[str], Awaitable[Any | None]] | None = None,
         cache_set: Callable[..., Awaitable[None]] | None = None,
         cache_ttl_seconds: int = 300,
+        max_cost: float | None = None,
+        max_nodes: int | None = None,
     ):
         self.max_concurrency = max(1, int(max_concurrency or 1))
         self.cache_get = cache_get
         self.cache_set = cache_set
         self.cache_ttl_seconds = cache_ttl_seconds
+        self.max_cost = max_cost
+        self.max_nodes = max_nodes
+
+    @staticmethod
+    def _condition_matches(condition, value: Any) -> bool:
+        expected = condition.value
+        return {
+            "eq": value == expected,
+            "ne": value != expected,
+            "gt": value > expected,
+            "gte": value >= expected,
+            "lt": value < expected,
+            "lte": value <= expected,
+            "truthy": bool(value),
+            "falsy": not bool(value),
+        }[condition.operator]
 
     def _cache_key(
         self,
@@ -155,9 +179,15 @@ class AsyncDagRuntime:
     ) -> AsyncDagExecutionResult:
         started = time.perf_counter()
         node_ids = [node.node_id for node in plan.nodes]
+        if self.max_nodes is not None and len(node_ids) > self.max_nodes:
+            raise BudgetExceededError(
+                f"node budget exceeded: {len(node_ids)} > {self.max_nodes}"
+            )
         dependencies: dict[str, set[str]] = defaultdict(set)
         for node in plan.nodes:
             dependencies[node.node_id].update(node.depends_on)
+            if node.condition is not None:
+                dependencies[node.node_id].add(node.condition.source_node)
         for edge in plan.edges:
             dependencies[edge.to_node].add(edge.from_node)
 
@@ -167,9 +197,21 @@ class AsyncDagRuntime:
         cache_hits: list[str] = []
         failed: set[str] = set()
         failed_nodes: list[str] = []
+        skipped: set[str] = set()
+        skipped_nodes: list[str] = []
+        total_cost = 0.0
         semaphore = asyncio.Semaphore(self.max_concurrency)
 
         while pending:
+            dependency_skipped = [
+                node_id
+                for node_id in node_ids
+                if node_id in pending and dependencies[node_id] & skipped
+            ]
+            for node_id in dependency_skipped:
+                pending.remove(node_id)
+                skipped.add(node_id)
+                skipped_nodes.append(node_id)
             dependency_failed = [
                 node_id
                 for node_id in node_ids
@@ -183,6 +225,8 @@ class AsyncDagRuntime:
                 pending.remove(node_id)
                 failed.add(node_id)
                 failed_nodes.append(node_id)
+            if not pending:
+                break
             ready = [
                 node_id
                 for node_id in node_ids
@@ -190,6 +234,23 @@ class AsyncDagRuntime:
             ]
             if not ready:
                 raise DagRuntimeError("composition plan contains a cycle")
+            runnable: list[str] = []
+            for node_id in ready:
+                node = next(item for item in plan.nodes if item.node_id == node_id)
+                if node.condition is None:
+                    runnable.append(node_id)
+                    continue
+                source = results[node.condition.source_node]
+                actual = source.get(node.condition.source_output)
+                if self._condition_matches(node.condition, actual):
+                    runnable.append(node_id)
+                else:
+                    pending.remove(node_id)
+                    skipped.add(node_id)
+                    skipped_nodes.append(node_id)
+            ready = runnable
+            if not ready:
+                continue
             outcomes = await asyncio.gather(
                 *(
                     self._run_node(plan, node_id, handlers, results, semaphore)
@@ -210,6 +271,13 @@ class AsyncDagRuntime:
                 completed.append(node_id)
                 if cache_hit:
                     cache_hits.append(node_id)
+                else:
+                    node = next(item for item in plan.nodes if item.node_id == node_id)
+                    total_cost += float(node.cost_estimate or 0.0)
+                    if self.max_cost is not None and total_cost > self.max_cost:
+                        raise BudgetExceededError(
+                            f"cost budget exceeded: {total_cost} > {self.max_cost}"
+                        )
                 pending.remove(node_id)
 
         return AsyncDagExecutionResult(
@@ -217,5 +285,7 @@ class AsyncDagRuntime:
             completed_order=completed,
             cache_hits=cache_hits,
             failed_nodes=failed_nodes,
+            skipped_nodes=skipped_nodes,
+            total_cost=round(total_cost, 6),
             elapsed_ms=round((time.perf_counter() - started) * 1000, 3),
         )

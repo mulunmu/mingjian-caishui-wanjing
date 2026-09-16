@@ -18,6 +18,7 @@ def _metric_module(metric_key: str, title: str = "") -> ModuleSpec:
             PortSpec(name="value", data_type="number"),
             PortSpec(name="claims", data_type="claims"),
         ],
+        cost=1.0,
         metadata={"title": title or metric_key},
     )
 
@@ -33,6 +34,7 @@ def _threshold_module(metric_key: str, title: str = "") -> ModuleSpec:
             PortSpec(name="level", data_type="text"),
             PortSpec(name="claims", data_type="claims"),
         ],
+        cost=0.2,
         metadata={"title": title or metric_key},
     )
 
@@ -45,6 +47,7 @@ def _operator(module_id: str, inputs=None, outputs=None) -> ModuleSpec:
         status="validated",
         inputs=[PortSpec(**item) for item in (inputs or [])],
         outputs=[PortSpec(**item) for item in (outputs or [])],
+        cost=0.1,
     )
 
 

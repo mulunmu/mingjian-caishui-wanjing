@@ -35,6 +35,7 @@ async def execute_metric_composition(
     session_factory,
     executor_factory: Callable[..., dict[str, Callable[..., Any]]] | None = None,
     max_concurrency: int = 4,
+    max_cost: float | None = 5.0,
 ) -> SemanticTurnResult | None:
     if len(frame.metrics) < 2 or session_factory is None:
         return None
@@ -62,6 +63,7 @@ async def execute_metric_composition(
         max_concurrency=max_concurrency,
         cache_get=cache_service.get,
         cache_set=cache_service.set,
+        max_cost=max_cost,
     ).execute(
         plan,
         handlers=handlers,
@@ -117,6 +119,8 @@ async def execute_metric_composition(
             "composition_elapsed_ms": execution.elapsed_ms,
             "composition_cache_hits": execution.cache_hits,
             "composition_failed_nodes": execution.failed_nodes,
+            "composition_skipped_nodes": execution.skipped_nodes,
+            "composition_total_cost": execution.total_cost,
             "composition_claims": claims_to_dict(claims),
         },
     )

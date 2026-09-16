@@ -61,6 +61,7 @@ def build_composition_plan(
             node_id=role.role,
             module_id=selected[role.role],
             input_bindings=dict(common_bindings),
+            cost_estimate=modules[selected[role.role]].cost,
         )
         for role in spec.roles
     ]
@@ -121,6 +122,7 @@ def build_multi_metric_plan(
             node_id=f"metric_{index}",
             module_id=module_id,
             input_bindings=dict(common_bindings),
+            cost_estimate=modules[module_id].cost,
         )
         for index, module_id in enumerate(module_ids, 1)
     ]

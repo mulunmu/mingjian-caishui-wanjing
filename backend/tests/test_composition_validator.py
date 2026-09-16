@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.schemas.composition import (
+    CompositionCondition,
     CompositionEdge,
     CompositionNode,
     CompositionPlan,
@@ -117,3 +118,26 @@ def test_validator_rejects_missing_required_input():
     report = validate_composition_plan(plan, _modules())
     assert report.valid is False
     assert any(error.code == "missing_required_input" for error in report.errors)
+
+
+def test_validator_rejects_condition_with_unknown_source():
+    plan = CompositionPlan(
+        plan_id="p1",
+        nodes=[
+            CompositionNode(
+                node_id="c",
+                module_id="compare",
+                input_bindings={"value": 1},
+                condition=CompositionCondition(
+                    source_node="missing",
+                    source_output="value",
+                    operator="eq",
+                    value=1,
+                ),
+            )
+        ],
+        output_node_ids=["c"],
+    )
+    report = validate_composition_plan(plan, _modules())
+    assert report.valid is False
+    assert any(error.code == "condition_source_not_found" for error in report.errors)
