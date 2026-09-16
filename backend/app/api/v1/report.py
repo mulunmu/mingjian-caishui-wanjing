@@ -235,6 +235,8 @@ async def validate_wizard(
             province=body.province,
             enterprise_id=body.enterprise_id,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         logger.warning("validate-wizard failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"预校验失败: {exc}") from exc

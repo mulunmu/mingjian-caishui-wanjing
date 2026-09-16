@@ -345,11 +345,31 @@ SEMANTIC_CANARY_PERCENT restored to 0
 
 ### Stage 9: Retirement And Cleanup
 
-- [ ] Remove replaced hard-coded routing and chapter mappings.
-- [ ] Keep compatibility aliases only where required.
-- [ ] Update redline v2 and operational documentation.
+- [x] Remove unreferenced chapter compatibility aliases.
+- [x] Keep only compatibility paths that remain active on the legacy chain.
+- [x] Add an executable retirement-audit CLI.
+- [x] Update redline v2 and operational documentation.
+- [ ] Retire `route_chat` and soft-fallback regexes after semantic becomes the production primary.
+- [ ] Re-run the retirement audit until `safe_to_retire=true`.
 
 Verification gate:
 
-- Full backend suite passes or every remaining failure is explicitly accepted.
-- End-to-end chat and report path verified on anonymized data.
+- [x] Full backend suite passes or every remaining failure is explicitly accepted.
+- [x] End-to-end chat and report path verified on anonymized data.
+
+Verification evidence:
+
+```text
+chapter compatibility aliases=0
+all chapter keys map to loan|rating|warn|audit
+invalid wizard scenario -> HTTP 422
+full backend suite=1181 passed, 13 skipped, 0 failed
+staging chat: reply_present=true, claims=6
+staging report: rating PDF, magic=%PDF-, bytes=354597
+safe_to_retire=false
+remaining blockers=legacy_markers_remain, legacy_entrypoint_still_active
+```
+
+The remaining blockers are intentional while `SEMANTIC_CANARY_PERCENT` is dormant and the
+semantic path is not yet the production primary. Removing `route_chat` or the soft-fallback
+regexes now would create an unverified single point of failure.

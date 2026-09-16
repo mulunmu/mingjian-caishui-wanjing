@@ -36,6 +36,14 @@ def test_resolve_scenario_general():
     assert resolve_scenario(scenario="fundamental") == "warn"
     assert resolve_scenario(scenario="portrait") == "rating"
     assert resolve_scenario(scenario="alert") == "warn"
+    assert resolve_scenario(scenario="authenticity") == "audit"
+
+
+def test_all_chapter_keys_resolve_to_portfolio_scenarios():
+    from app.services.report_templates import CHAPTER_REGISTRY, PORTFOLIO_SCENARIO_KEYS
+
+    for chapter_key in CHAPTER_REGISTRY:
+        assert resolve_scenario(scenario=chapter_key) in PORTFOLIO_SCENARIO_KEYS
 
 
 def test_resolve_scenario_rejects_unknown_explicit():

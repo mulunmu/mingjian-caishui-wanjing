@@ -36,7 +36,6 @@ from app.services.metric_registry import revenue_deviation_warn_label
 from app.services.report_html import build_report_html, try_generate_weasyprint_pdf
 from app.services.report_templates import (
     CHAPTER_REGISTRY,
-    CUSTOM_CHAPTER_DIMENSIONS,
     PremiumReportLocked,
     compose_purpose_from_claims,
     compose_story_from_chapters,

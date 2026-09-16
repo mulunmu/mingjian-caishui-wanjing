@@ -26,7 +26,6 @@ from app.services.intent_engine import IntentResult, industry_l1_options
 from app.services.judgment_service import without_synthesis_claims
 from app.services.report_templates import (
     CHAPTER_REGISTRY,
-    CUSTOM_CHAPTERS,
     PremiumReportLocked,
     has_scenario_keyword,
     resolve_scenario,

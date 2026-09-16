@@ -557,7 +557,7 @@ def make_action_title(ch: dict[str, Any], memo: str) -> str:
     if fn == "signal" and n_m:
         return f"{n_m.group(1)} 家预警信号待盯防"
     if fn == "trend":
-        return "行业趋势分化，结构权重需复核"
+        return "行业趋势分化，结构变化需复核"
     if fn == "financial":
         return "财务承压处需先核对报表口径"
 
@@ -578,7 +578,7 @@ def make_action_title(ch: dict[str, Any], memo: str) -> str:
         "signal": "多重预警叠加，优先盯高命中群体",
         "score": "经营表现分化，结构决定授信边界",
         "benchmark": "同业对照提示额度与评级上限",
-        "trend": "规模与趋势决定样本结构权重",
+        "trend": "规模与趋势决定样本结构分布",
         "financial": "财务承压处需先核对报表口径",
     }.get(fn)
     if fallback:

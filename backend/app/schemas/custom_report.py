@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 class CustomReportSpec(BaseModel):
     """一份定制报告的完整方案：8 个可组合功能的有序子集 + 范围 + 标题。"""
 
-    chapters: list[str] = Field(default_factory=list)  # CUSTOM_CHAPTERS 的有序子集
+    chapters: list[str] = Field(default_factory=list)  # CHAPTER_REGISTRY 的有序子集
     industry_l1: str | None = None
     province: str | None = None
     enterprises: list[str] = Field(default_factory=list)  # 指定企业（「企业N」可读名或企业 id）

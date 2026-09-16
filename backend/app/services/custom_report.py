@@ -22,8 +22,6 @@ from app.services.intent_engine import (
 )
 from app.services.report_templates import (
     CHAPTER_REGISTRY,
-    CUSTOM_CHAPTERS,
-    CUSTOM_CHAPTER_DIMENSIONS,
     CUSTOM_CHAPTER_KEYWORDS,
     has_scenario_keyword,
     sanitize_surface_industry_terms,
@@ -124,7 +122,7 @@ def detect_scope_mode(text: str, state: dict | None = None) -> str:
 
 
 def clamp_chapters_for_scope(chapters: list[str], scope_mode: str = "") -> list[str]:
-    """定制本意：章节只按 CUSTOM_CHAPTERS 白名单规范化；范围只滤数据，不砍场景积木。
+    """定制本意：章节只按 CHAPTER_REGISTRY 白名单规范化；范围只滤数据，不砍场景积木。
 
     scope_mode 保留参数以兼容调用方，不再把全库/行业夹成「画像+预警」两积木。
     """

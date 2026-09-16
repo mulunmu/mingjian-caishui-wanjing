@@ -89,6 +89,27 @@ def test_enrich_decision_pages_sets_action_title():
     assert len(chapters[0]["action_title"]) <= 40
 
 
+def test_all_chapter_action_titles_are_lexicon_clean():
+    from app.services.report_templates import CHAPTER_REGISTRY, scan_forbidden_in_text
+
+    for function in CHAPTER_REGISTRY:
+        chapters = [
+            {
+                "title": function,
+                "function": function,
+                "claims": [
+                    {
+                        "claim": "样本结构存在差异，需要复核。",
+                        "confidence": "computed",
+                    }
+                ],
+                "meta": {},
+            }
+        ]
+        enrich_decision_pages(chapters, scenario_key="rating")
+        assert scan_forbidden_in_text(chapters[0]["action_title"]) == []
+
+
 def test_apply_memo_overwrites_homogenized_summary():
     ctx = {
         "summary_conclusion": "群体风险判断「中高风险」。为什么：营收偏差（85%）",

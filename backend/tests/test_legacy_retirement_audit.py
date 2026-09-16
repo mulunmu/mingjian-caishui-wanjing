@@ -49,3 +49,17 @@ def test_audit_excludes_its_own_scanner_source(tmp_path: Path):
     report = audit_legacy_retirement(tmp_path, shadow_gate_passed=True)
     assert report["safe_to_retire"] is True
     assert all(entry["count"] == 0 for entry in report["markers"].values())
+
+
+def test_current_app_contains_no_chapter_compatibility_aliases():
+    app_root = Path(__file__).resolve().parents[1] / "app"
+    report = audit_legacy_retirement(app_root, shadow_gate_passed=True)
+
+    for marker in (
+        "CUSTOM_CHAPTERS",
+        "CUSTOM_CHAPTER_DIMENSIONS",
+        "FUNCTION_RADAR_DIMENSIONS",
+    ):
+        assert report["markers"][marker]["count"] == 0
+    assert "chapter_compatibility_still_imported" not in report["blockers"]
+    assert "legacy_entrypoint_still_active" in report["blockers"]

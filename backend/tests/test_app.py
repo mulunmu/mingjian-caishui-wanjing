@@ -121,6 +121,21 @@ def test_report_preview_requires_auth():
     assert resp.status_code == 401
 
 
+def test_report_validate_wizard_invalid_scenario_returns_422():
+    from app.main import app
+    from app.services.auth_service import create_access_token
+
+    client = TestClient(app)
+    token = create_access_token("wizard@example.com", "admin", "subscriber")
+    resp = client.post(
+        "/api/v1/report/validate-wizard",
+        json={"scenario": "typo_scenario"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
+    assert "未知报告场景" in resp.json()["detail"]
+
+
 def test_chat_returns_chart_payload():
     """对话层 charts 字段结构正确（line/bar/radar/heatmap/funnel 之一或 null）"""
     from app.main import app

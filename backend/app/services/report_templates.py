@@ -435,13 +435,10 @@ def actionable_advice(lines: list[str] | None, *, scenario: str | None = None) -
     return [defaults.get(sc or "rating", defaults["rating"])]
 
 # ── 定制报告：可自由组合的章节词汇（L3 结构层）──
-# M3：旧常量改为 CHAPTER_REGISTRY 兼容别名，所有调用点自动兼容。
-# CUSTOM_CHAPTERS / CUSTOM_CHAPTER_DIMENSIONS / FUNCTION_RADAR_DIMENSIONS 定义在 CHAPTER_REGISTRY 之后。
 
 
 # ── M0 冻结：章节工具表（Chapter Tools）──
-# 收敛 CUSTOM_CHAPTERS + CUSTOM_CHAPTER_DIMENSIONS + FUNCTION_RADAR_DIMENSIONS 为一张注册表。
-# 加新章节 = 写一个新引擎函数 + 在此注册表加一条记录，不再改散落的四处配置。
+# 加新章节 = 写一个新引擎函数 + 在此注册表加一条记录，不再改散落的配置。
 CHAPTER_REGISTRY: dict[str, dict[str, Any]] = {
     "financial": {
         "title": "财务健康",
@@ -556,10 +553,6 @@ CHAPTER_REGISTRY: dict[str, dict[str, Any]] = {
     },
 }
 
-# M3：旧常量改为 CHAPTER_REGISTRY 兼容别名
-CUSTOM_CHAPTERS: dict[str, tuple[str, str]] = {k: (v["title"], v["desc"]) for k, v in CHAPTER_REGISTRY.items()}
-CUSTOM_CHAPTER_DIMENSIONS: dict[str, str] = {k: v["default_dimension"] for k, v in CHAPTER_REGISTRY.items()}
-FUNCTION_RADAR_DIMENSIONS: dict[str, tuple[str, ...]] = {k: v["radar_dims"] for k, v in CHAPTER_REGISTRY.items()}
 CUSTOM_CHAPTER_KEYWORDS: list[tuple[str, str]] = [
     (kw, k) for k, v in CHAPTER_REGISTRY.items() for kw in v.get("keywords", [])
 ]
@@ -710,6 +703,11 @@ _LEGACY_SCENARIO_MAP = {
     "financial": "warn",
     "tax": "warn",
     "fraud": "audit",
+    "authenticity": "audit",
+    "signal": "warn",
+    "score": "rating",
+    "benchmark": "rating",
+    "trend": "rating",
     "due_diligence": "warn",
     "profile": "rating",
     "overview": "rating",

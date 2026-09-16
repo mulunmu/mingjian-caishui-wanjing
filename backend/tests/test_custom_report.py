@@ -10,7 +10,6 @@ from app.schemas.custom_report import CustomReportSpec
 from app.services import custom_report as cr
 from app.services.intent_engine import recognize
 from app.services.report_templates import (
-    CUSTOM_CHAPTERS,
     get_scenario_label,
     get_scenario_tone,
 )

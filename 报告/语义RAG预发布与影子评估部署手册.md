@@ -180,3 +180,15 @@ SEMANTIC_CANARY_PERCENT=0
 重新启动后端，并确认响应中不再出现 `data.canary`。生产灰度应从
 `SEMANTIC_CANARY_PERCENT=1` 或 `5` 开始，以 `session_id` 稳定分流，先观察错误率、
 回答延迟、历史一致性和回退日志，再逐级增加。
+
+## 十、旧路径退役审计
+
+在 canary 稳定并完成 semantic primary 观察前，旧 `route_chat` 和正则软降级必须保留。
+运行退役审计：
+
+```bash
+python -m scripts.audit_legacy_retirement --shadow-gate-passed
+```
+
+只有输出 `safe_to_retire=true` 时才能删除旧入口。当前已删除无引用的章节兼容别名，
+章节唯一真源为 `CHAPTER_REGISTRY`；不得为了兼容旧代码重新引入第二套章节常量。

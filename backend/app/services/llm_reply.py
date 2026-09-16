@@ -727,7 +727,7 @@ async def llm_custom_report_turn(state: dict) -> "object | None":
         return None
     from app.schemas.custom_report import CustomReportTurn
     from app.services.intent_engine import industry_l1_options, province_options
-    from app.services.report_templates import CHAPTER_REGISTRY, CUSTOM_CHAPTERS
+    from app.services.report_templates import CHAPTER_REGISTRY
 
     chapters_vocab = "；".join(f"{k}:{entry['desc']}" for k, entry in CHAPTER_REGISTRY.items())
     industries = "、".join(industry_l1_options())
