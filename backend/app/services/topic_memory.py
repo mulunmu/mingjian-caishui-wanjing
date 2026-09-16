@@ -82,6 +82,33 @@ def append_topic(
     return topic
 
 
+def append_topic_blocking(
+    engine,
+    *,
+    session_id: str,
+    summary: str,
+    entities: list[str] | None = None,
+    filters: dict | None = None,
+    scenario: str | None = None,
+    intent: str | None = None,
+    tool_plan: list | None = None,
+    claim_ids: list[str] | None = None,
+) -> None:
+    with Session(engine) as session:
+        append_topic(
+            session,
+            session_id=session_id,
+            summary=summary,
+            entities=entities or [],
+            filters=filters or {},
+            scenario=scenario,
+            intent=intent,
+            tool_plan=tool_plan or [],
+            claim_ids=claim_ids or [],
+        )
+        session.commit()
+
+
 def list_topics(session: Session, session_id: str) -> list[ConversationTopic]:
     return list(
         session.scalars(

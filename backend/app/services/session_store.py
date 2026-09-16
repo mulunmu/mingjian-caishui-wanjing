@@ -91,7 +91,7 @@ def _entry_to_messages(history: list[Any]) -> list[dict[str, Any]]:
     return messages
 
 
-def _persist(entry: dict[str, Any]) -> None:
+def _persist(entry: dict[str, Any]) -> bool:
     try:
         from sqlalchemy.orm import Session
 
@@ -125,8 +125,10 @@ def _persist(entry: dict[str, Any]) -> None:
             rec.updated_at = ts
             session.merge(rec)
             session.commit()
+            return True
     except Exception as exc:
         logger.warning("session PG persist failed (cross-worker context may be lost): %s", exc)
+        return False
 
 
 def _row_to_entry(rec: Any) -> dict[str, Any] | None:
@@ -285,7 +287,7 @@ def store_session(
     followups: list[str] | None = None,
     active_conclusion: dict | None = None,
     dialogue_state: dict | None = None,
-) -> None:
+) -> bool:
     _cleanup_expired()
     entry = store.get(session_id)
     if not entry or _is_history_expired(entry.get("updated_at")):
@@ -367,7 +369,7 @@ def store_session(
     if len(entry["history"]) > 40:
         entry["history"] = entry["history"][-40:]
     entry["updated_at"] = _now()
-    _persist(entry)
+    return _persist(entry)
 
 
 def replace_last_reply(
@@ -387,8 +389,7 @@ def replace_last_reply(
                 item["followups"] = list(followups)[:8]
             entry["updated_at"] = _now()
             store[session_id] = entry
-            _persist(entry)
-            return True
+            return _persist(entry)
     return False
 
 def list_sessions(owner: str, limit: int = 20) -> list[dict[str, Any]]:
