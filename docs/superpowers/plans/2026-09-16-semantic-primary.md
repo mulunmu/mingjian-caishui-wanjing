@@ -1,6 +1,11 @@
 # Semantic Primary Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Execution status 2026-09-17: Stage 10 is closed. Semantic primary, all route
+> policies, session and topic persistence, canary-free primary selection, the 32-case
+> staging matrix, and six-turn N-2 memory validation are implemented and verified.
+> Production rollout and legacy retirement remain governed by Stage 9.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make semantic dialogue the primary path for all 12 supported route kinds while retaining legacy only for internal failures.
 
@@ -30,7 +35,7 @@
 - Modify: `backend/app/services/canary_router.py`
 - Test: `backend/tests/test_rollout.py`
 
-- [ ] **Step 1: Write failing rollout tests**
+- [x] **Step 1: Write failing rollout tests**
 
 ```python
 from app.services.rollout import is_selected, normalize_percent, stable_bucket
@@ -50,12 +55,12 @@ def test_percent_is_fail_safe():
     assert is_selected("s1", 100) is True
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m pytest -q tests/test_rollout.py`
 Expected: FAIL because `app.services.rollout` does not exist.
 
-- [ ] **Step 3: Implement rollout.py**
+- [x] **Step 3: Implement rollout.py**
 
 ```python
 import hashlib
@@ -86,11 +91,11 @@ def is_selected(key: str, percent) -> bool:
     return stable_bucket(key) < value
 ```
 
-- [ ] **Step 4: Refactor canary to use the shared utility**
+- [x] **Step 4: Refactor canary to use the shared utility**
 
 In `canary_router.py`, import `is_selected`, `normalize_percent`, and call the shared functions from `canary_bucket`, `is_canary_selected`, and `canary_percent`.
 
-- [ ] **Step 5: Verify GREEN and commit**
+- [x] **Step 5: Verify GREEN and commit**
 
 Run: `python -m pytest -q tests/test_rollout.py tests/test_canary_routing.py`
 Expected: PASS.
@@ -106,7 +111,7 @@ git commit -m "feat: add stable semantic rollout selection"
 - Create: `backend/app/services/non_analysis_replies.py`
 - Test: `backend/tests/test_non_analysis_replies.py`
 
-- [ ] **Step 1: Write the failing route matrix test**
+- [x] **Step 1: Write the failing route matrix test**
 
 ```python
 from app.schemas.conversation_route import ConversationPolicyRegistry, ConversationRoute
@@ -126,12 +131,12 @@ def test_all_non_analysis_routes_have_formal_reply():
         assert out.route.route == route_name
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m pytest -q tests/test_non_analysis_replies.py`
 Expected: FAIL because the module does not exist.
 
-- [ ] **Step 3: Implement deterministic handlers**
+- [x] **Step 3: Implement deterministic handlers**
 
 ```python
 def build_non_analysis_turn(route, query, *, policy):
@@ -163,12 +168,12 @@ def build_non_analysis_turn(route, query, *, policy):
     return SemanticTurnResult(status=status, route=route, policy=policy, reply=reply, reply_source="template")
 ```
 
-- [ ] **Step 4: Run and verify GREEN**
+- [x] **Step 4: Run and verify GREEN**
 
 Run: `python -m pytest -q tests/test_non_analysis_replies.py`
 Expected: PASS for all 10 non-analysis routes.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/services/non_analysis_replies.py backend/tests/test_non_analysis_replies.py
@@ -182,7 +187,7 @@ git commit -m "feat: add deterministic non-analysis replies"
 - Modify: `backend/app/services/semantic_answer_composer.py`
 - Test: `backend/tests/test_semantic_primary.py`
 
-- [ ] **Step 1: Write failing orchestration tests**
+- [x] **Step 1: Write failing orchestration tests**
 
 ```python
 @pytest.mark.asyncio
@@ -221,12 +226,12 @@ async def test_not_applicable_is_contract_error(monkeypatch):
         )
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m pytest -q tests/test_semantic_primary.py`
 Expected: FAIL because the orchestrator does not exist.
 
-- [ ] **Step 3: Implement compose_primary_turn**
+- [x] **Step 3: Implement compose_primary_turn**
 
 ```python
 class PrimaryContractError(RuntimeError):
@@ -247,11 +252,11 @@ async def compose_primary_turn(*, db, session_id, query, raw_route):
     return result
 ```
 
-- [ ] **Step 4: Ensure analysis outcomes are formal**
+- [x] **Step 4: Ensure analysis outcomes are formal**
 
 Adjust `semantic_answer_composer.py` so analysis/report routes never return `not_applicable`; use `clarify` for missing scope and `abstain` for no executable tools.
 
-- [ ] **Step 5: Verify GREEN and commit**
+- [x] **Step 5: Verify GREEN and commit**
 
 Run: `python -m pytest -q tests/test_semantic_primary.py tests/test_semantic_answer_composer.py`
 Expected: PASS.
@@ -269,7 +274,7 @@ git commit -m "feat: add semantic primary orchestration"
 - Create: `backend/app/services/semantic_turn_persistence.py`
 - Test: `backend/tests/test_semantic_turn_persistence.py`
 
-- [ ] **Step 1: Write failing persistence tests**
+- [x] **Step 1: Write failing persistence tests**
 
 ```python
 @pytest.mark.asyncio
@@ -299,16 +304,16 @@ async def test_history_failure_prevents_topic_write(monkeypatch):
         await stp.persist_primary_turn(db=object(), session_id="s1", owner=None, query="你好", turn=object())
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m pytest -q tests/test_semantic_turn_persistence.py`
 Expected: FAIL because persistence service does not exist.
 
-- [ ] **Step 3: Make store_session report success**
+- [x] **Step 3: Make store_session report success**
 
 Change `_persist` to return `True` after commit and `False` on exception. Change `store_session` to return the boolean from `_persist`.
 
-- [ ] **Step 4: Add synchronous topic append helper**
+- [x] **Step 4: Add synchronous topic append helper**
 
 In `topic_memory.py`, add:
 
@@ -319,11 +324,11 @@ def append_topic_blocking(engine, *, session_id, summary, entities=None, filters
         session.commit()
 ```
 
-- [ ] **Step 5: Implement one primary writer**
+- [x] **Step 5: Implement one primary writer**
 
 `persist_primary_turn` must call `session_store.store_session` through `run_blocking`, verify its boolean result, then append a topic through `run_blocking`. It must derive function, dimension, summary, entities, filters, tool plan, and claim IDs from `SemanticTurnResult`.
 
-- [ ] **Step 6: Verify GREEN and commit**
+- [x] **Step 6: Verify GREEN and commit**
 
 Run: `python -m pytest -q tests/test_semantic_turn_persistence.py tests/test_session_store.py tests/test_topic_memory.py`
 Expected: PASS.
@@ -341,7 +346,7 @@ git commit -m "feat: persist every semantic primary turn"
 - Modify: `docker-compose.yml`, `.env.example`, `backend/.env.example`
 - Test: `backend/tests/test_chat_primary_hook.py`
 
-- [ ] **Step 1: Write failing API tests**
+- [x] **Step 1: Write failing API tests**
 
 ```python
 @pytest.mark.asyncio
@@ -370,27 +375,27 @@ async def test_primary_internal_failure_falls_back(monkeypatch):
     assert out["reply"] == "legacy"
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m pytest -q tests/test_chat_primary_hook.py`
 Expected: FAIL because primary integration does not exist.
 
-- [ ] **Step 3: Add primary run interface**
+- [x] **Step 3: Add primary run interface**
 
 Implement `primary_enabled`, `primary_percent`, `primary_selected`, and `run_primary_turn` in `semantic_primary.py`. `run_primary_turn` ensures a session ID, composes the turn, persists it, and returns the canonical chat response.
 
-- [ ] **Step 4: Integrate before route_chat**
+- [x] **Step 4: Integrate before route_chat**
 
 In `chat.py`, resolve the session ID and owner first. If primary is selected, try `run_primary_turn`; return it on success. On a system exception, record a privacy-minimized fallback marker and continue to `route_chat`. Do not fall back for formal clarify, abstain, refuse, abuse, or out-of-domain results.
 
-- [ ] **Step 5: Add configuration and verify GREEN**
+- [x] **Step 5: Add configuration and verify GREEN**
 
 Pass the two primary variables through Compose and both env examples. Run:
 
 `python -m pytest -q tests/test_chat_primary_hook.py tests/test_chat_shadow_hook.py tests/test_canary_routing.py`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/app/api/v1/chat.py backend/app/services/semantic_primary.py docker-compose.yml .env.example backend/.env.example backend/tests/test_chat_primary_hook.py
@@ -404,7 +409,7 @@ git commit -m "feat: route chat through semantic primary"
 - Test: `backend/tests/test_staging_primary_matrix.py`
 - Report: `报告/阶段10-语义主路径staging验收.md`
 
-- [ ] **Step 1: Write failing query-plan tests**
+- [x] **Step 1: Write failing query-plan tests**
 
 ```python
 def test_primary_query_plan_covers_required_routes():
@@ -416,20 +421,20 @@ def test_primary_query_plan_covers_required_routes():
     assert len(plan) >= 30
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m pytest -q tests/test_staging_primary_matrix.py`
 Expected: FAIL because the matrix script does not exist.
 
-- [ ] **Step 3: Implement the matrix runner**
+- [x] **Step 3: Implement the matrix runner**
 
 The script must require `STAGING_CONFIRM=true`, require primary enabled at 100%, call the real `/api/v1/chat` endpoint, validate `data.primary.fallback=false`, verify persisted session history, and produce a JSON summary. It must generate at least 30 distinct queries across all required categories.
 
-- [ ] **Step 4: Add the six-turn memory case**
+- [x] **Step 4: Add the six-turn memory case**
 
 Run one session with analysis, weather, greeting, analysis, abuse, then an N-2 reference. Verify the final response references the intended earlier topic and that all six turns are present in session history and topic storage.
 
-- [ ] **Step 5: Run staging and commit**
+- [x] **Step 5: Run staging and commit**
 
 Run the matrix in the isolated `mingjian-staging` project. If any case fails, fix the category root cause and rerun a fresh 30-case set.
 
@@ -446,30 +451,30 @@ git commit -m "test: validate semantic primary on staging"
 - Modify: `红线要求.md`
 - Report: `报告/阶段10-语义主路径最终审计.md`
 
-- [ ] **Step 1: Update operational documentation**
+- [x] **Step 1: Update operational documentation**
 
 Document primary enablement, rollback, fallback-only-on-error, the 30-case gate, and the fact that legacy deletion remains blocked until `safe_to_retire=true`.
 
-- [ ] **Step 2: Run targeted primary tests**
+- [x] **Step 2: Run targeted primary tests**
 
 Run: `python -m pytest -q tests/test_rollout.py tests/test_non_analysis_replies.py tests/test_semantic_primary.py tests/test_semantic_turn_persistence.py tests/test_chat_primary_hook.py tests/test_staging_primary_matrix.py`
 Expected: all pass.
 
-- [ ] **Step 3: Run full backend regression**
+- [x] **Step 3: Run full backend regression**
 
 Run: `python -m pytest -q --tb=short`
 Expected: 0 failures.
 
-- [ ] **Step 4: Run staging HTTP matrix and real PDF report**
+- [x] **Step 4: Run staging HTTP matrix and real PDF report**
 
 Expected: 30/30 semantic primary cases pass, no unexpected fallback, memory case passes, and downloaded report begins with `%PDF-`.
 
-- [ ] **Step 5: Run retirement audit**
+- [x] **Step 5: Run retirement audit**
 
 Run: `python -m scripts.audit_legacy_retirement --shadow-gate-passed --json`
 Expected before production primary stabilization: `safe_to_retire=false`. Do not delete legacy until this becomes true after the separately gated rollout.
 
-- [ ] **Step 6: Commit final evidence**
+- [x] **Step 6: Commit final evidence**
 
 ```bash
 git add docs/superpowers/plans/2026-09-16-mingjian-semantic-rag-v2.md 报告/语义RAG预发布与影子评估部署手册.md 报告/阶段10-语义主路径最终审计.md 红线要求.md
@@ -478,11 +483,12 @@ git commit -m "docs: record semantic primary verification"
 
 ## Self-Review Checklist
 
-- [ ] Every route kind in the design has a concrete handler or orchestration path.
-- [ ] `not_applicable` is a contract error, not a normal response.
-- [ ] Legacy fallback never handles formal clarify, abstain, refusal, abuse, or out-of-domain outcomes.
-- [ ] Every primary turn has one writer for session history and topic memory.
-- [ ] The primary selector is fail-safe and default-off.
-- [ ] Staging testing uses real HTTP and real anonymized data.
-- [ ] Full regression and real report PDF verification are explicit gates.
-- [ ] Legacy deletion remains blocked until retirement audit passes.
+- [x] Every route kind in the design has a concrete handler or orchestration path.
+- [x] `not_applicable` is a contract error, not a normal response.
+- [x] Legacy fallback never handles formal clarify, abstain, refusal, abuse, or out-of-domain outcomes.
+- [x] Every primary turn has one writer for session history and topic memory.
+- [x] The primary selector is fail-safe and default-off.
+- [x] Staging testing uses real HTTP and real anonymized data.
+- [x] Full regression and real report PDF verification are explicit gates.
+- [x] Legacy deletion remains blocked until retirement audit passes.
+
