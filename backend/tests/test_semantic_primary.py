@@ -159,6 +159,108 @@ async def test_primary_turn_injects_explicit_enterprise_id(monkeypatch):
     assert captured["raw_route"]["entities"] == ["ENT9"]
 
 
+@pytest.mark.asyncio
+async def test_primary_turn_skips_memory_context_without_topic_reference(monkeypatch):
+    from app.services import semantic_primary
+
+    memory_called = False
+
+    def memory_context(*args, **kwargs):
+        nonlocal memory_called
+        memory_called = True
+        return {}
+
+    async def composer(**kwargs):
+        route = ConversationRoute(route="analysis", domain="warn", entities=["ENT9"])
+        return SemanticTurnResult(
+            status="answered",
+            route=route,
+            policy=ConversationPolicyRegistry.resolve(route),
+            reply="资产负债率偏高",
+        )
+
+    async def persist(**kwargs):
+        return None
+
+    monkeypatch.setattr(semantic_primary, "compose_memory_context_blocking", memory_context)
+    monkeypatch.setattr(semantic_primary, "compose_semantic_turn", composer)
+    monkeypatch.setattr(semantic_primary, "persist_primary_turn", persist)
+    await semantic_primary.run_primary_turn(
+        db=object(),
+        session_id="s1",
+        owner=None,
+        query="资产负债率高不高",
+        enterprise_id="ENT9",
+    )
+    assert memory_called is False
+
+
+@pytest.mark.asyncio
+async def test_primary_turn_degrades_when_memory_context_is_unavailable(monkeypatch):
+    from app.services import semantic_primary
+
+    captured = {}
+
+    def memory_context(*args, **kwargs):
+        raise RuntimeError("memory database unavailable")
+
+    def resolve(*args, **kwargs):
+        return None
+
+    async def composer(**kwargs):
+        captured.update(kwargs)
+        route = ConversationRoute(route="analysis", domain="warn")
+        return SemanticTurnResult(
+            status="answered",
+            route=route,
+            policy=ConversationPolicyRegistry.resolve(route),
+            reply="继续分析",
+        )
+
+    async def persist(**kwargs):
+        return None
+
+    monkeypatch.setattr(semantic_primary, "compose_memory_context_blocking", memory_context)
+    monkeypatch.setattr(semantic_primary, "resolve_topic_reference_blocking", resolve)
+    monkeypatch.setattr(semantic_primary, "compose_semantic_turn", composer)
+    monkeypatch.setattr(semantic_primary, "persist_primary_turn", persist)
+    out = await semantic_primary.run_primary_turn(
+        db=object(),
+        session_id="s1",
+        owner=None,
+        query="回到上一个问题继续分析",
+        raw_route={"route": "analysis", "domain": "warn"},
+    )
+    assert out["data"]["primary"]["status"] == "answered"
+    assert captured["query"] == "回到上一个问题继续分析"
+
+
+@pytest.mark.asyncio
+async def test_primary_turn_keeps_topic_resolution_fail_closed(monkeypatch):
+    from app.services import semantic_primary
+
+    def memory_context(*args, **kwargs):
+        return {}
+
+    def resolve(*args, **kwargs):
+        raise RuntimeError("topic database unavailable")
+
+    async def persist(**kwargs):
+        return None
+
+    monkeypatch.setattr(semantic_primary, "compose_memory_context_blocking", memory_context)
+    monkeypatch.setattr(semantic_primary, "resolve_topic_reference_blocking", resolve)
+    monkeypatch.setattr(semantic_primary, "persist_primary_turn", persist)
+    with pytest.raises(RuntimeError, match="topic database unavailable"):
+        await semantic_primary.run_primary_turn(
+            db=object(),
+            session_id="s1",
+            owner=None,
+            query="回到上一个问题继续分析",
+            raw_route={"route": "analysis", "domain": "warn"},
+        )
+
+
 def test_structured_multi_metric_frame_promotes_weak_route():
     from app.services import semantic_primary
 

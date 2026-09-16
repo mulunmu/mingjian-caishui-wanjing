@@ -99,6 +99,7 @@ class ConversationTopic(Base):
     intent: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tool_plan_json: Mapped[str] = mapped_column(Text, default="[]")
     claim_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    report_ids_json: Mapped[str] = mapped_column(Text, default="[]")
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

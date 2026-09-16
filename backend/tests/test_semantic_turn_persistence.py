@@ -29,6 +29,7 @@ async def test_primary_turn_persists_history_and_topic(monkeypatch):
         route=route,
         policy=ConversationPolicyRegistry.resolve(route),
         reply="你好",
+        meta={"report_id": "report-1", "report": {"report_id": "report-1"}},
     )
     await stp.persist_primary_turn(
         db=object(),
@@ -40,6 +41,7 @@ async def test_primary_turn_persists_history_and_topic(monkeypatch):
     assert [item[0] for item in calls] == ["history", "topic"]
     assert calls[0][1]["reply"] == "你好"
     assert calls[1][1]["intent"] == "greeting"
+    assert calls[1][1]["report_ids"] == ["report-1"]
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.session import Base
@@ -45,6 +46,20 @@ def test_semantic_readiness_rejects_enabled_planned_tool():
     report = build_semantic_readiness_report(engine)
     assert report["ok"] is False
     assert any(item.startswith("planned_tools_enabled") for item in report["failures"])
+
+
+def test_semantic_readiness_rejects_missing_topic_memory_columns():
+    engine = _deployment_engine()
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE conversation_topic"))
+        conn.execute(text("CREATE TABLE conversation_topic (topic_id VARCHAR(64))"))
+    report = build_semantic_readiness_report(engine)
+    assert report["ok"] is False
+    assert report["missing_conversation_topic_columns"] == [
+        "claim_ids_json",
+        "report_ids_json",
+        "tool_plan_json",
+    ]
 
 
 def test_shadow_report_requires_samples():

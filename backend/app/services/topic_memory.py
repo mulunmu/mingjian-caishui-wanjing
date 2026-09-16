@@ -54,6 +54,7 @@ def append_topic(
     intent: str | None = None,
     tool_plan: list | None = None,
     claim_ids: list[str] | None = None,
+    report_ids: list[str] | None = None,
     parent_topic_id: str | None = None,
 ) -> ConversationTopic:
     active_topics = list(
@@ -85,6 +86,7 @@ def append_topic(
         intent=intent,
         tool_plan_json=_dump(tool_plan or []),
         claim_ids_json=_dump(claim_ids or []),
+        report_ids_json=_dump(report_ids or []),
         status="active",
         created_at=_now(),
         updated_at=_now(),
@@ -105,6 +107,7 @@ def append_topic_blocking(
     intent: str | None = None,
     tool_plan: list | None = None,
     claim_ids: list[str] | None = None,
+    report_ids: list[str] | None = None,
 ) -> None:
     with Session(engine) as session:
         append_topic(
@@ -117,6 +120,7 @@ def append_topic_blocking(
             intent=intent,
             tool_plan=tool_plan or [],
             claim_ids=claim_ids or [],
+            report_ids=report_ids or [],
         )
         session.commit()
 
@@ -131,6 +135,30 @@ def list_topics(session: Session, session_id: str) -> list[ConversationTopic]:
     )
 
 
+def _ordinal_number(token: str) -> int:
+    if token.isdigit():
+        return int(token)
+    digits = {
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+    }
+    if token == "十":
+        return 10
+    if token.startswith("十"):
+        return 10 + digits.get(token[1:], 0)
+    if token.endswith("十"):
+        return digits.get(token[:-1], 0) * 10
+    return digits.get(token, 0)
+
+
 def _ordinal_topic(topics: list[ConversationTopic], reference: str):
     if "上上上" in reference:
         index = -3
@@ -139,7 +167,27 @@ def _ordinal_topic(topics: list[ConversationTopic], reference: str):
     elif "上一个" in reference:
         index = -1
     else:
-        return None
+        number = r"([0-9]+|[一二三四五六七八九十两]+)"
+        absolute = re.search(
+            rf"第\s*{number}\s*(?:个)?(?:问题|轮|话题)",
+            reference,
+        )
+        if absolute:
+            turn_index = _ordinal_number(absolute.group(1))
+            return next(
+                (topic for topic in topics if topic.turn_index == turn_index),
+                None,
+            )
+        relative = re.search(
+            rf"(?:往前(?:数|回)?\s*{number}|{number}\s*(?:轮|个问题).*?(?:之前|以前))",
+            reference,
+        )
+        if not relative:
+            return None
+        distance = _ordinal_number(next(group for group in relative.groups() if group))
+        if distance <= 0:
+            return None
+        index = -distance
     return topics[index] if len(topics) >= abs(index) else None
 
 
@@ -197,7 +245,64 @@ def resolve_topic_reference_blocking(
             "intent": topic.intent,
             "tool_plan": _loads(topic.tool_plan_json, []),
             "claim_ids": _loads(topic.claim_ids_json, []),
+            "report_ids": _loads(topic.report_ids_json, []),
         }
+
+
+def compose_memory_context(session: Session, session_id: str, *, limit: int = 12) -> dict:
+    """Compact durable view: summaries plus entity/filter indexes, not raw messages."""
+    topics = list_topics(session, session_id)
+    selected = topics[-max(1, limit) :]
+    entities: list[str] = []
+    filters: dict[str, list[str]] = {}
+    claim_ids: list[str] = []
+    report_ids: list[str] = []
+    tool_plan: list = []
+    recent_topics: list[dict] = []
+    for topic in selected:
+        for entity in _loads(topic.entities_json, []):
+            if entity and entity not in entities:
+                entities.append(str(entity))
+        for key, value in _loads(topic.filters_json, {}).items():
+            values = value if isinstance(value, list) else [value]
+            bucket = filters.setdefault(str(key), [])
+            for item in values:
+                if item not in bucket:
+                    bucket.append(item)
+        for claim_id in _loads(topic.claim_ids_json, []):
+            if claim_id and claim_id not in claim_ids:
+                claim_ids.append(str(claim_id))
+        for report_id in _loads(topic.report_ids_json, []):
+            if report_id and report_id not in report_ids:
+                report_ids.append(str(report_id))
+        tool_plan.extend(_loads(topic.tool_plan_json, []))
+        recent_topics.append(
+            {
+                "topic_id": topic.topic_id,
+                "turn_index": topic.turn_index,
+                "summary": topic.summary,
+                "scenario": topic.scenario,
+                "intent": topic.intent,
+            }
+        )
+    summary = "；".join((topic.summary or "").strip() for topic in selected if topic.summary)
+    return {
+        "topic_count": len(topics),
+        "summarized_topic_count": len(selected),
+        "session_summary": summary[:1200],
+        "entities": entities,
+        "filters": filters,
+        "claim_ids": claim_ids,
+        "report_ids": report_ids,
+        "tool_plan": tool_plan,
+        "recent_topics": recent_topics,
+        "recent_topic_ids": [topic.topic_id for topic in selected],
+    }
+
+
+def compose_memory_context_blocking(engine, session_id: str, *, limit: int = 12) -> dict:
+    with Session(engine) as session:
+        return compose_memory_context(session, session_id, limit=limit)
 
 
 def rollback_topic(

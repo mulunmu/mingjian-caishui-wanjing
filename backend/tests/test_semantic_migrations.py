@@ -7,7 +7,10 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
 from app.db.session import Base
-from app.db.semantic_migrations import ensure_metric_definition_v2_columns
+from app.db.semantic_migrations import (
+    ensure_conversation_topic_memory_columns,
+    ensure_metric_definition_v2_columns,
+)
 from app.models.metric_registry import MetricDefinition
 from app.models.semantic_registry import (
     ConversationTopic,
@@ -70,6 +73,44 @@ def test_metric_definition_v2_migration_is_idempotent():
         "aliases_json",
         "source_tables_json",
     } <= columns
+
+
+@pytest.mark.skipif(
+    not os.getenv("SEMANTIC_TEST_DATABASE_URL"),
+    reason="SEMANTIC_TEST_DATABASE_URL not configured",
+)
+def test_conversation_topic_memory_migration_is_idempotent():
+    engine = create_engine(os.environ["SEMANTIC_TEST_DATABASE_URL"])
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS conversation_topic"))
+        conn.execute(
+            text(
+                "CREATE TABLE conversation_topic ("
+                "topic_id VARCHAR(64) PRIMARY KEY, "
+                "session_id VARCHAR(64) NOT NULL, "
+                "turn_index INTEGER NOT NULL, "
+                "parent_topic_id VARCHAR(64), "
+                "summary TEXT NOT NULL, "
+                "entities_json TEXT NOT NULL DEFAULT '[]', "
+                "filters_json TEXT NOT NULL DEFAULT '{}', "
+                "scenario VARCHAR(32), "
+                "intent VARCHAR(64), "
+                "tool_plan_json TEXT NOT NULL DEFAULT '[]', "
+                "claim_ids_json TEXT NOT NULL DEFAULT '[]', "
+                "status VARCHAR(20) NOT NULL DEFAULT 'active', "
+                "created_at TIMESTAMP, "
+                "updated_at TIMESTAMP"
+                ")"
+            )
+        )
+
+    ensure_conversation_topic_memory_columns(engine)
+    ensure_conversation_topic_memory_columns(engine)
+
+    columns = {
+        column["name"] for column in inspect(engine).get_columns("conversation_topic")
+    }
+    assert {"tool_plan_json", "claim_ids_json", "report_ids_json"} <= columns
 
 
 @pytest.mark.skipif(
@@ -292,6 +333,11 @@ def test_shadow_evaluation_persists_on_postgresql():
     engine = create_engine(os.environ["SEMANTIC_TEST_DATABASE_URL"])
     Base.metadata.create_all(engine, tables=[ShadowEvaluationRecord.__table__])
     seed_semantic_registry(engine)
+    with Session(engine) as session:
+        session.query(ShadowEvaluationRecord).filter(
+            ShadowEvaluationRecord.session_id == "postgres-shadow"
+        ).delete()
+        session.commit()
     comparison = run_shadow_evaluation_sync(
         engine,
         "企业17增值税税负高不高",

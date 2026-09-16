@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.services.topic_memory import (
     _topic_id,
     append_topic,
+    compose_memory_context,
     compose_topic_context,
     list_topics,
     resolve_topic_reference,
@@ -109,3 +110,47 @@ def test_long_session_topic_id_fits_database_column():
     assert len(topic_id) <= 64
     assert topic_id.endswith("-topic-1")
     assert _topic_id(session_id, 1) == topic_id
+
+
+def test_ten_turn_reference_and_compressed_memory_context():
+    engine = _engine()
+    with Session(engine) as session:
+        for index in range(1, 13):
+            append_topic(
+                session,
+                session_id="long-memory",
+                summary=f"第{index}轮话题：指标{index}",
+                entities=[f"ENT{index:03d}"],
+                filters={"industry_l1": ["制造"]},
+                scenario="warn",
+                intent="analysis",
+                tool_plan=[{"step_id": f"step-{index}", "tool_id": "metric_debt_ratio"}],
+                claim_ids=[f"claim-{index}"],
+                report_ids=[f"report-{index}"] if index == 3 else [],
+            )
+        session.commit()
+        target = resolve_topic_reference(
+            session,
+            "long-memory",
+            "回到第10个问题之前继续",
+        )
+        relative = resolve_topic_reference(
+            session,
+            "long-memory",
+            "回到往前10轮的内容",
+        )
+        memory = compose_memory_context(session, "long-memory", limit=12)
+
+    assert target is not None
+    assert target.summary == "第10轮话题：指标10"
+    assert relative is not None
+    assert relative.summary == "第3轮话题：指标3"
+    assert memory["topic_count"] == 12
+    assert memory["summarized_topic_count"] == 12
+    assert "第12轮话题" in memory["session_summary"]
+    assert "ENT001" in memory["entities"]
+    assert memory["filters"]["industry_l1"] == ["制造"]
+    assert "claim-3" in memory["claim_ids"]
+    assert "report-3" in memory["report_ids"]
+    assert memory["tool_plan"][-1]["step_id"] == "step-12"
+    assert memory["recent_topics"][-1]["turn_index"] == 12

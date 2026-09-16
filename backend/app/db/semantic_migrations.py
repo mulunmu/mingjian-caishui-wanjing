@@ -21,3 +21,14 @@ def ensure_metric_definition_v2_columns(engine: Engine) -> None:
     with engine.begin() as conn:
         for statement in statements:
             conn.execute(text(statement))
+
+
+def ensure_conversation_topic_memory_columns(engine: Engine) -> None:
+    statements = [
+        "ALTER TABLE conversation_topic ADD COLUMN IF NOT EXISTS tool_plan_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE conversation_topic ADD COLUMN IF NOT EXISTS claim_ids_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE conversation_topic ADD COLUMN IF NOT EXISTS report_ids_json TEXT NOT NULL DEFAULT '[]'",
+    ]
+    with engine.begin() as conn:
+        for statement in statements:
+            conn.execute(text(statement))

@@ -173,11 +173,15 @@ async def lifespan(app: FastAPI):
             logger.debug("app_users pwd_ver column ensure: %s", col_exc)
 
         try:
-            from app.db.semantic_migrations import ensure_metric_definition_v2_columns
+            from app.db.semantic_migrations import (
+                ensure_conversation_topic_memory_columns,
+                ensure_metric_definition_v2_columns,
+            )
 
             await asyncio.to_thread(ensure_metric_definition_v2_columns, eng)
+            await asyncio.to_thread(ensure_conversation_topic_memory_columns, eng)
         except Exception as col_exc:
-            logger.debug("metric_definition v2 columns ensure: %s", col_exc)
+            logger.debug("semantic registry columns ensure: %s", col_exc)
 
         from app.services.auth_service import ensure_demo_user, validate_production_config
 

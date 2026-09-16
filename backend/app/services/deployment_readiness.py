@@ -24,6 +24,12 @@ REQUIRED_TABLES = {
     "shadow_answer_observation",
 }
 
+REQUIRED_CONVERSATION_TOPIC_COLUMNS = {
+    "tool_plan_json",
+    "claim_ids_json",
+    "report_ids_json",
+}
+
 
 def _status_counts(session: Session, model) -> dict[str, int]:
     rows = session.execute(
@@ -42,6 +48,14 @@ def build_semantic_readiness_report(
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
     missing_tables = sorted(REQUIRED_TABLES - tables)
+    topic_columns = (
+        {column["name"] for column in inspector.get_columns("conversation_topic")}
+        if "conversation_topic" in tables
+        else set()
+    )
+    missing_topic_columns = sorted(
+        REQUIRED_CONVERSATION_TOPIC_COLUMNS - topic_columns
+    )
 
     metric_status: dict[str, int] = {}
     tool_status: dict[str, int] = {}
@@ -64,6 +78,10 @@ def build_semantic_readiness_report(
     failures: list[str] = []
     if missing_tables:
         failures.append(f"missing_tables:{missing_tables}")
+    if missing_topic_columns:
+        failures.append(
+            f"missing_conversation_topic_columns:{missing_topic_columns}"
+        )
     if metric_status.get("validated", 0) < min_validated_metrics:
         failures.append(
             f"validated_metrics_below_min:{metric_status.get('validated', 0)}"
@@ -82,6 +100,7 @@ def build_semantic_readiness_report(
     return {
         "ok": not failures,
         "missing_tables": missing_tables,
+        "missing_conversation_topic_columns": missing_topic_columns,
         "metric_status": metric_status,
         "tool_status": tool_status,
         "threshold_status": threshold_status,

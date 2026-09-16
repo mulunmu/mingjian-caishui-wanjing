@@ -40,6 +40,19 @@ def _entities(turn: SemanticTurnResult) -> list[str]:
     return [str(entity)] if entity else []
 
 
+def _report_ids(turn: SemanticTurnResult) -> list[str]:
+    report = turn.meta.get("report")
+    candidates = [turn.meta.get("report_id")]
+    if isinstance(report, dict):
+        candidates.append(report.get("report_id"))
+    result: list[str] = []
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if value and value not in result:
+            result.append(value)
+    return result
+
+
 def _summary(turn: SemanticTurnResult, query: str) -> str:
     if turn.claims:
         return str(turn.claims[0].claim or "")[:160]
@@ -88,6 +101,7 @@ async def persist_primary_turn(
         str((claim.trace.query_id if claim.trace else "") or f"claim-{index}")
         for index, claim in enumerate(turn.claims, 1)
     ]
+    report_ids = _report_ids(turn)
 
     stored = await run_blocking(
         session_store.store_session,
@@ -118,6 +132,7 @@ async def persist_primary_turn(
             intent=turn.route.route,
             tool_plan=tool_plan,
             claim_ids=claim_ids,
+            report_ids=report_ids,
         )
     except Exception as exc:
         raise PrimaryPersistenceError("topic persistence failed") from exc

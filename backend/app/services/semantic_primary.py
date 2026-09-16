@@ -1,6 +1,7 @@
 """Primary semantic dialogue orchestration for all supported route kinds."""
 from __future__ import annotations
 
+import logging
 import os
 import re
 
@@ -23,8 +24,14 @@ from app.services.semantic_turn_persistence import persist_primary_turn
 from app.services import session_store
 from app.services.shadow_integration import dialog_act_to_raw_route
 from app.services.sync_runner import run_blocking
-from app.services.topic_memory import resolve_topic_reference_blocking
+from app.services.topic_memory import (
+    compose_memory_context_blocking,
+    resolve_topic_reference_blocking,
+)
 from app.services.tool_rag import load_tool_snapshot
+
+
+logger = logging.getLogger(__name__)
 
 
 class PrimaryContractError(RuntimeError):
@@ -49,7 +56,12 @@ def promote_route_with_frame(route, frame):
     return route
 
 
-_TOPIC_REFERENCE_RE = re.compile(r"上一个|上上个|上上上|回到.*问题|刚才|之前的")
+_TOPIC_REFERENCE_RE = re.compile(
+    r"上一个|上上个|上上上|回到.*问题|刚才|之前的|"
+    r"第\s*[0-9一二三四五六七八九十两]+\s*(?:个)?(?:问题|轮|话题)|"
+    r"往前(?:数|回)?\s*[0-9一二三四五六七八九十两]+|"
+    r"[0-9一二三四五六七八九十两]+\s*(?:轮|个问题).*?(?:之前|以前)"
+)
 
 
 def primary_enabled() -> bool:
@@ -175,14 +187,29 @@ async def run_primary_turn(
 ) -> dict:
     effective_query = query
     referenced = None
+    has_topic_reference = bool(_TOPIC_REFERENCE_RE.search(query))
     session_context = await run_blocking(session_store.get_session, session_id)
+    memory_context: dict = {}
+    if has_topic_reference:
+        try:
+            memory_context = await run_blocking(
+                compose_memory_context_blocking,
+                get_sync_engine(),
+                session_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "semantic memory context unavailable for session %s: %s",
+                session_id,
+                exc,
+            )
     custom_state = (
         (session_context or {}).get("custom_report")
         if isinstance(session_context, dict)
         else None
     )
     custom_act = False
-    if _TOPIC_REFERENCE_RE.search(query):
+    if has_topic_reference:
         referenced = await run_blocking(
             resolve_topic_reference_blocking,
             get_sync_engine(),
@@ -203,8 +230,10 @@ async def run_primary_turn(
             "confidence": 0.95,
         }
         effective_query = f"{query} {referenced.get('summary') or ''}".strip()
+    elif has_topic_reference and memory_context.get("session_summary"):
+        effective_query = f"{query} 历史摘要：{memory_context['session_summary']}"
     elif raw_route is None:
-        act = await classify_dialog_act(query)
+        act = await classify_dialog_act(query, session_context or {})
         custom_act = getattr(act, "act", None) == "custom_report"
         raw_route = dialog_act_to_raw_route(act, query)
         if (

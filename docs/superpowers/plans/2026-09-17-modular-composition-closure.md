@@ -23,11 +23,11 @@ scenario constraints without arbitrary composition or unexplained composition ga
 
 ## Stage 14C: Long-Term Conversation Memory
 
-- [ ] Add layered memory: recent turns, topic summaries, session summary,
+- [x] Add layered memory: recent turns, topic summaries, session summary,
       entity/filter index and artifact references.
-- [ ] Support references across 10+ intervening turns.
-- [ ] Persist durable state in PostgreSQL; keep Redis as hot cache only.
-- [ ] Add compression and retrieval regression tests.
+- [x] Support references across 10+ intervening turns.
+- [x] Persist durable state in PostgreSQL; keep Redis as hot cache only.
+- [x] Add compression and retrieval regression tests.
 
 ## Stage 14D: LangGraph Outer Orchestration
 

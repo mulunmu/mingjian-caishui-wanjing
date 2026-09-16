@@ -5,7 +5,10 @@ import argparse
 import json
 
 from app.db.session import Base
-from app.db.semantic_migrations import ensure_metric_definition_v2_columns
+from app.db.semantic_migrations import (
+    ensure_conversation_topic_memory_columns,
+    ensure_metric_definition_v2_columns,
+)
 from app.db.urls import get_sync_engine
 from app.services.deployment_readiness import build_semantic_readiness_report
 from app.services.semantic_registry_seed import seed_semantic_registry
@@ -16,6 +19,7 @@ def apply_semantic_setup(engine) -> dict[str, int]:
 
     Base.metadata.create_all(engine)
     ensure_metric_definition_v2_columns(engine)
+    ensure_conversation_topic_memory_columns(engine)
     return seed_semantic_registry(engine)
 
 
