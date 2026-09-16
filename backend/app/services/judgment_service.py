@@ -1786,6 +1786,8 @@ async def _metric_dispatcher(
         return await build_authenticity_claims(db, industry, province=province)
     if metric == "fraud_composite_score":
         return await build_fraud_claims(db, industry, province=province)
+    if metric == "industry_score":
+        return await build_score_claims(db, industry, dimension="industry", province=province)
     if metric == "revenue_yoy":
         return await build_trend_industry_claims(db, industry, province=province)
     return await _generic_simple_avg(db, sq, metric)

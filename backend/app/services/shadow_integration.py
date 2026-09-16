@@ -24,11 +24,48 @@ _ABUSE_MARKERS = (
     "操你",
     "废物系统",
     "垃圾系统",
+    "垃圾",
+    "废物",
+    "真蠢",
+    "答非所问",
+)
+
+_ABUSE_PATTERNS = (
+    re.compile(r"滚(?:吧|蛋|开|远点|[，,!！。]|$)"),
+    re.compile(r"破系统|烂系统"),
+)
+
+_UNKNOWN_ENTITY_RE = re.compile(
+    r"不存在(?:的)?公司|无此企业|虚构企业|测试公司|火星银行|银河集团",
+    re.I,
+)
+
+_SUPPORTED_ENGLISH_RE = re.compile(
+    r"financial|finance|risk|cash\s*flow|metric|report|tax|invoice|loan|credit|analysis|score|email",
+    re.I,
+)
+
+_UNDERSPECIFIED_RE = re.compile(
+    r"^(?:嗯[，, ]*)?(?:继续|分析一下|帮我看看那个|这个怎么样|那个东西有问题吗)"
+    r"[。！？!?，, ]*$|"
+    r"^[^A-Za-z0-9\u4e00-\u9fff]+(?:哈哈哈|xyz|asdf|乱)?.*$",
+    re.I,
 )
 
 
 def _looks_abusive(query: str) -> bool:
-    return any(marker in (query or "") for marker in _ABUSE_MARKERS)
+    text = query or ""
+    return any(marker in text for marker in _ABUSE_MARKERS) or any(
+        pattern.search(text) for pattern in _ABUSE_PATTERNS
+    )
+
+
+def _looks_unknown_entity(query: str) -> bool:
+    return bool(_UNKNOWN_ENTITY_RE.search(query or ""))
+
+
+def _looks_underspecified(query: str) -> bool:
+    return bool(_UNDERSPECIFIED_RE.match((query or "").strip()))
 
 
 def _looks_language_switch(query: str) -> bool:
@@ -88,8 +125,12 @@ def dialog_act_to_raw_route(act, query: str) -> dict[str, Any]:
         route = "capability"
     if _looks_abusive(query):
         route = "abuse"
-    elif _looks_language_switch(query) and route in {"capability", "product_faq", "clarify"}:
+    elif _looks_unknown_entity(query) and route in {"out_of_domain", "refuse", "capability", "clarify"}:
+        route = "unknown_entity"
+    elif _looks_language_switch(query) and _SUPPORTED_ENGLISH_RE.search(query or ""):
         route = "language_switch"
+    elif _looks_underspecified(query) and route in {"out_of_domain", "refuse", "capability", "clarify"}:
+        route = "clarify"
     domain = act.scenario if route in {"analysis", "report"} else None
     return {
         "route": route,

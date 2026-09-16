@@ -102,6 +102,8 @@ NON_TOOL_CORE_FIELDS = {
 }
 
 CORE_FIELD_ALIASES: dict[str, list[str]] = {
+    "industry_score": ["和同行比", "同业位置", "行业位置", "在同行中"],
+    "fraud_composite_score": ["哪里值得优先核查", "优先核查", "值得优先核查", "该查哪里"],
     "credit_level": ["纳税信用等级", "信用等级"],
     "credit_score": ["纳税信用分", "信用评分"],
     "tax_on_time_rate": [
@@ -128,7 +130,7 @@ CORE_FIELD_ALIASES: dict[str, list[str]] = {
     "social_trend": ["社保趋势", "员工人数趋势"],
     "social_months": ["社保缴了几个月", "社保连续月数"],
     "profit_margin": ["利润率", "盈利水平"],
-    "revenue_yoy": ["营收同比", "收入增长"],
+    "revenue_yoy": ["营收同比", "收入增长", "行业趋势", "各行业趋势", "趋势走向"],
     "profit_yoy": ["利润同比", "利润增长"],
     "debt_ratio": ["资产负债率", "负债率", "债务压力", "杠杆"],
     "cash_flow_net": ["经营现金流净额", "净现金流"],
@@ -232,7 +234,7 @@ def _upsert_tool(
         }
     )
     tool.output_schema_json = _json({"type": "object"})
-    tool.required_params_json = _json(["entity"])
+    tool.required_params_json = _json(["entity"] if kind == "scenario_tool" else [])
     tool.dependencies_json = _json(dependencies)
     tool.chapter_links_json = _json(chapter_links)
     tool.scenarios_json = _json(scenarios)

@@ -385,6 +385,23 @@ CANONICAL_METRICS: list[dict] = [
         "edge_cases": "",
         "shape": "single_value",
     },
+    {
+        "metric_key": "fraud_composite_score",
+        "name": "舞弊综合得分",
+        "description": "发票、进销、集中度和异常行为综合形成的舞弊风险画像得分。",
+        "metric_type": "computed",
+        "formula": "judgment_service.build_fraud_claims 的舞弊综合评分",
+        "unit": "分",
+        "grain": "enterprise",
+        "source_fields": [
+            "red_invoice_cnt", "void_invoice_cnt", "customer_concentration",
+            "supplier_concentration", "unit_price_ratio",
+        ],
+        "dimensions": ["industry_l1", "province", "time"],
+        "default_filters": {},
+        "edge_cases": "无发票/进销数据时按可用证据降级，不虚构异常。",
+        "shape": "multi_dim_vector",
+    },
 ]
 
 _tables_ready = False

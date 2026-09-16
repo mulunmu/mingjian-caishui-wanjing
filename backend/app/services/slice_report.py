@@ -162,7 +162,50 @@ def _slice_chapter(idx: int, ch: dict[str, Any]) -> dict[str, Any]:
         "conclusion": conclusion,
         "evidence_chain": evidence,
         "narration": ch.get("narration") or "",
+        "blocks": list(ch.get("blocks") or []),
     }
+
+
+def _attach_chapter_blocks(chapters: list[dict[str, Any]]) -> None:
+    """Build paragraph-level report blocks from Claims, not from one whole-report LLM call."""
+    from app.services.metric_registry import RUNTIME_METRIC_LABELS
+
+    for chapter in chapters or []:
+        blocks: list[dict[str, Any]] = []
+        for claim in chapter.get("claims") or []:
+            paragraph = str(claim.get("claim") or "").strip()
+            if not paragraph:
+                continue
+            value = claim.get("value") or {}
+            metric = str(value.get("metric") or "")
+            trace = claim.get("trace") or {}
+            blocks.append(
+                {
+                    "type": "metric_paragraph",
+                    "title": RUNTIME_METRIC_LABELS.get(metric, metric or "指标结论"),
+                    "paragraph": paragraph,
+                    "metric": metric,
+                    "number": value.get("number"),
+                    "unit": value.get("unit") or "",
+                    "trace": (
+                        f"{trace.get('table')}.{trace.get('field')}"
+                        if trace.get("table") and trace.get("field")
+                        else ""
+                    ),
+                }
+            )
+        narration = str(chapter.get("narration") or "").strip()
+        if narration:
+            blocks.append(
+                {
+                    "type": "synthesis_paragraph",
+                    "title": "综合研判",
+                    "paragraph": narration,
+                    "metric": "",
+                    "trace": "",
+                }
+            )
+        chapter["blocks"] = blocks
 
 
 def _enterprise_chapters(snap: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1900,6 +1943,7 @@ async def _build_context_from_spec(
     _apply_temporal_gate(context)
     for ch in context.get("chapters") or []:
         ch["numeric_rows"] = _numeric_table_rows(ch.get("claims") or [])
+    _attach_chapter_blocks(context.get("chapters") or [])
     _sanitize_slice_context_surfaces(context)
     lexicon = hallucination_guard.validate_surface_lexicon(context, report_kind="slice")
     validation["lexicon"] = lexicon

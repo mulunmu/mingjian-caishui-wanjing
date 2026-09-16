@@ -15,6 +15,7 @@ SUPPORTED_METRIC_KEYS: set[str] = {
     "credit_score",
     "authenticity_score",
     "fraud_composite_score",
+    "industry_score",
     "revenue_yoy",
     "revenue_deviation",
     "profit_margin",
@@ -82,6 +83,7 @@ def _build_semantic_query(metric_key: str, params: dict[str, Any]) -> SemanticQu
     return SemanticQuery(
         query_type=QueryType.lookup,
         metrics=[metric_key],
+        dimensions=[str(params["dimension"])] if params.get("dimension") else [],
         filters=filters,
         entities=entities,
         raw_query=str(params.get("query") or ""),

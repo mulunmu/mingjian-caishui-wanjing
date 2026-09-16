@@ -9,6 +9,9 @@ def pytest_configure(config):
     # 测试会跨多个 TestClient/事件循环复用全局 async engine；NullPool 避免
     # 连接绑定到已关闭循环。生产环境仍使用默认 QueuePool。
     os.environ.setdefault("DB_POOL_DISABLED", "true")
+    # Stage 9 后活动入口为 fail-closed；契约测试默认启用 semantic primary。
+    os.environ.setdefault("SEMANTIC_PRIMARY_ENABLED", "true")
+    os.environ.setdefault("SEMANTIC_PRIMARY_PERCENT", "100")
     config.addinivalue_line("markers", "llm: optional LLM integration (requires LLM_API_KEY)")
 
 

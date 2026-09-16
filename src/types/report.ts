@@ -1,4 +1,14 @@
 /** 报告章节 */
+export interface ReportBlock {
+  type: 'metric_paragraph' | 'synthesis_paragraph' | string;
+  title: string;
+  paragraph: string;
+  metric?: string;
+  number?: number | null;
+  unit?: string;
+  trace?: string;
+}
+
 export interface ReportChapter {
   id: string;
   title: string;
@@ -6,6 +16,7 @@ export interface ReportChapter {
   conclusion: string;
   evidence_chain: string[];
   narration?: string;
+  blocks?: ReportBlock[];
   // 企业报告合成章节的附加字段（可选）
   points?: string[];
   advantages?: string[];

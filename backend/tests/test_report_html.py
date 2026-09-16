@@ -9,6 +9,7 @@ from app.services.report_html import (
     prepare_html_context,
     weasyprint_available,
 )
+from app.services.slice_report import _attach_chapter_blocks
 
 
 def _sample_context():
@@ -66,6 +67,22 @@ def test_prepare_html_context_validation():
     ctx = prepare_html_context(_sample_context(), "rid")
     assert ctx["report_id"] == "rid"
     assert ctx["renderer"] == "weasyprint"
+
+
+def test_chapter_blocks_are_built_from_claims_and_rendered():
+    context = _sample_context()
+    context["chapters"][0]["narration"] = "综合来看，该维度需要继续关注。"
+    _attach_chapter_blocks(context["chapters"])
+
+    blocks = context["chapters"][0]["blocks"]
+    assert blocks[0]["type"] == "metric_paragraph"
+    assert blocks[0]["paragraph"] == "制造行业同比 5%。"
+    assert blocks[-1]["type"] == "synthesis_paragraph"
+
+    html = build_report_html(context, "slice_block_test")
+    assert "制造行业同比 5%。" in html
+    assert "综合研判" in html
+    assert "core_metrics" not in html
 
 
 def test_weasyprint_smoke(tmp_path):

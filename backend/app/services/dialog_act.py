@@ -69,6 +69,17 @@ _FIXED_REPORT_COMMAND_RE = re.compile(
     r"(?:生成|出具|做|导出|创建|来).{0,20}报告|报告.{0,8}(?:生成|导出|下载)",
     re.I,
 )
+_CAPABILITY_METRIC_RE = re.compile(
+    r"(?:能|可以|支持).{0,8}(?:问|查|分析).{0,8}(?:哪些|什么).{0,6}指标|"
+    r"(?:能|可以).{0,8}(?:同时|多个).{0,6}指标|多指标",
+    re.I,
+)
+_UNDERSPECIFIED_QUERY_RE = re.compile(
+    r"^(?:嗯[，, ]*)?(?:继续|分析一下|帮我看看那个|这个怎么样|那个东西有问题吗)"
+    r"[。！？!?，, ]*$|"
+    r"^[^A-Za-z0-9\u4e00-\u9fff]+(?:哈哈哈|xyz|asdf|乱)?.*$",
+    re.I,
+)
 
 
 def looks_aggregate_analyze(query: str) -> bool:
@@ -282,6 +293,12 @@ async def classify(query: str | None, state: dict[str, Any] | None = None) -> Di
         r"怎么|如何|为什么|哪里|能否|可以.*吗", q
     ):
         return DialogAct(act="report", confidence=0.95)
+
+    if _CAPABILITY_METRIC_RE.search(q):
+        return DialogAct(act="negotiate_scope", ask_kind="overview", confidence=0.92)
+
+    if _UNDERSPECIFIED_QUERY_RE.match(q):
+        return DialogAct(act="bind_subject", confidence=0.4)
 
     if llm_reply.llm_available():
         act = await _llm_classify(q, state)

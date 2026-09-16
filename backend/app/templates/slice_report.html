@@ -150,7 +150,7 @@
     .lvl-tag.warn { color: var(--warn); border-color: var(--warn); background: #fff7ed; }
     .lvl-tag.bad { color: var(--bad); border-color: var(--bad); background: #fef2f2; }
 
-    .narration {
+  .narration {
       background: var(--brand-tint);
       border: 1px solid var(--brand-tint-line);
       border-radius: var(--radius-sm);
@@ -159,7 +159,28 @@
       color: var(--ink-soft);
       font-size: 11pt;
       line-height: 1.55;
-    }
+  }
+
+  .block-list {
+    margin-top: 8px;
+  }
+  .report-block {
+    border-left: 2px solid var(--brand);
+    padding: 4px 0 4px 9px;
+    margin: 8px 0;
+    page-break-inside: avoid;
+  }
+  .block-title {
+    color: var(--brand);
+    font-size: 9.5pt;
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+  .block-text {
+    font-size: 10pt;
+    line-height: 1.65;
+    margin: 0;
+  }
     .verdict {
       margin: 0 0 12px;
       color: var(--ink);
@@ -488,6 +509,17 @@
 
     {% if ch.chart_data_uri %}
     <img class="chart-img" src="{{ ch.chart_data_uri }}" alt="{{ ch.action_title or ch.title }}">
+    {% endif %}
+
+    {% if ch.blocks %}
+    <div class="block-list">
+      {% for block in ch.blocks %}
+      <div class="report-block">
+        <div class="block-title">{{ block.title }}</div>
+        <p class="block-text">{{ block.paragraph }}</p>
+      </div>
+      {% endfor %}
+    </div>
     {% endif %}
 
     {% if ch.numeric_rows %}

@@ -142,13 +142,16 @@ async def compose_semantic_turn(
             reply="当前没有匹配到可执行的金融风控指标，请换一种问法或指定企业/指标。",
         )
     selected = candidates[0]
+    params = _tool_params(query, raw_route, resolved_entities)
+    if selected.tool_id == "metric_industry_score":
+        params["dimension"] = "industry"
     plan = ToolPlan(
         mode="answer",
         steps=[
             ToolStep(
                 step_id="step_1",
                 tool_id=selected.tool_id,
-                params=_tool_params(query, raw_route, resolved_entities),
+                params=params,
             )
         ],
     )

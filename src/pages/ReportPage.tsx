@@ -195,8 +195,29 @@ export default function ReportPage() {
               )}
             </div>
 
-            {chapter.narration && (
-              <p className="text-sm text-warm-500 italic">{chapter.narration}</p>
+            {chapter.blocks && chapter.blocks.length > 0 ? (
+              <div className="space-y-2.5">
+                {chapter.blocks.map((block, blockIndex) => (
+                  <div
+                    key={`${block.type}-${blockIndex}`}
+                    className="border-l-2 border-amber/50 pl-3"
+                  >
+                    <h4 className="text-xs font-semibold text-warm-700">{block.title}</h4>
+                    <p className="text-sm text-warm-700 leading-relaxed mt-0.5">
+                      {block.paragraph}
+                    </p>
+                    {block.trace && (
+                      <p className="text-[10px] text-warm-400 font-mono mt-0.5">
+                        {translateTrace(block.trace)}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              chapter.narration && (
+                <p className="text-sm text-warm-500 italic">{chapter.narration}</p>
+              )
             )}
 
             {chapter.metrics && chapter.metrics.length > 0 && (

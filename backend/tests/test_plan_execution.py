@@ -10,7 +10,7 @@ from app.services.plan_execution import (
     validate_tool_plan,
 )
 from app.services.semantic_registry_seed import seed_semantic_registry
-from app.services.tool_rag import load_tool_snapshot_sync
+from app.services.tool_rag import RagTool, ToolSnapshot, load_tool_snapshot_sync
 from tests.test_semantic_registry_seed import _engine
 
 
@@ -76,12 +76,29 @@ def test_unknown_tool_is_rejected():
 
 
 def test_missing_required_param_is_rejected():
+    snapshot = ToolSnapshot(
+        tools=(
+            RagTool(
+                tool_id="metric_required",
+                kind="atomic_metric",
+                title="必填参数指标",
+                description="",
+                aliases=(),
+                examples=(),
+                required_params=("entity",),
+                dependencies=(),
+                chapter_links=(),
+                scenarios=(),
+                shape="single_value",
+            ),
+        )
+    )
     plan = ToolPlan(
         mode="answer",
-        steps=[ToolStep(step_id="x", tool_id="metric_debt_ratio", params={})],
+        steps=[ToolStep(step_id="x", tool_id="metric_required", params={})],
     )
     with pytest.raises(PlanValidationError, match="missing params"):
-        validate_tool_plan(plan, _snapshot(), policy=_allow_policy())
+        validate_tool_plan(plan, snapshot, policy=_allow_policy())
 
 
 def test_missing_explicit_dependency_is_rejected():
