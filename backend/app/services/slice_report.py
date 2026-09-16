@@ -133,6 +133,8 @@ def write_report_snapshot(report_id: str, context: dict[str, Any]) -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     path = REPORTS_DIR / f"{report_id}.context.json"
     payload = _strip_chart_paths(context)
+    if payload.get("chapters"):
+        payload.setdefault("block_tree_version", "1")
     path.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
 
 
@@ -168,42 +170,17 @@ def _slice_chapter(idx: int, ch: dict[str, Any]) -> dict[str, Any]:
 
 def _attach_chapter_blocks(chapters: list[dict[str, Any]]) -> None:
     """Build paragraph-level report blocks from Claims, not from one whole-report LLM call."""
-    from app.services.metric_registry import RUNTIME_METRIC_LABELS
+    from app.services.report_blocks import build_chapter_blocks, validate_report_block_kinds
 
     for chapter in chapters or []:
-        blocks: list[dict[str, Any]] = []
-        for claim in chapter.get("claims") or []:
-            paragraph = str(claim.get("claim") or "").strip()
-            if not paragraph:
-                continue
-            value = claim.get("value") or {}
-            metric = str(value.get("metric") or "")
-            trace = claim.get("trace") or {}
-            blocks.append(
-                {
-                    "type": "metric_paragraph",
-                    "title": RUNTIME_METRIC_LABELS.get(metric, metric or "指标结论"),
-                    "paragraph": paragraph,
-                    "metric": metric,
-                    "number": value.get("number"),
-                    "unit": value.get("unit") or "",
-                    "trace": (
-                        f"{trace.get('table')}.{trace.get('field')}"
-                        if trace.get("table") and trace.get("field")
-                        else ""
-                    ),
-                }
-            )
-        narration = str(chapter.get("narration") or "").strip()
-        if narration:
-            blocks.append(
-                {
-                    "type": "synthesis_paragraph",
-                    "title": "综合研判",
-                    "paragraph": narration,
-                    "metric": "",
-                    "trace": "",
-                }
+        blocks = build_chapter_blocks(chapter)
+        invalid = validate_report_block_kinds(
+            chapter.get("function"),
+            [str(block.get("type") or "") for block in blocks],
+        )
+        if invalid:
+            raise ValueError(
+                f"incompatible report blocks: {chapter.get('function')}:{invalid}"
             )
         chapter["blocks"] = blocks
 
@@ -312,6 +289,7 @@ def build_report_detail(report_id: str, snap: dict[str, Any]) -> dict[str, Any]:
         # A.2：详情回读暴露与 PDF 同源的 validation（无则空 dict，禁止伪造 ok）
         "validation": dict(snap.get("validation") or {}),
         "story": snap.get("story") or "",
+        "block_tree_version": snap.get("block_tree_version") or "",
     }
 
 

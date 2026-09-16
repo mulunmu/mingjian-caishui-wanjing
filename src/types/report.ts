@@ -1,6 +1,11 @@
 /** 报告章节 */
 export interface ReportBlock {
-  type: 'metric_paragraph' | 'synthesis_paragraph' | string;
+  type:
+    | 'metric_paragraph'
+    | 'comparison_paragraph'
+    | 'trend_paragraph'
+    | 'synthesis_paragraph'
+    | string;
   title: string;
   paragraph: string;
   metric?: string;
@@ -52,6 +57,7 @@ export interface Report {
   kpis: ReportKpi[];
   chapters: ReportChapter[];
   story?: string;
+  block_tree_version?: string;
   validation?: ReportValidation;
 }
 

@@ -46,10 +46,10 @@ scenario constraints without arbitrary composition or unexplained composition ga
 
 ## Stage 14F: Report Block Composition
 
-- [ ] Define chapter, metric block, comparison block, trend block and synthesis block.
-- [ ] Validate all 30+ combinations for chapter and block compatibility.
-- [ ] Persist block-level report snapshots and render them consistently.
-- [ ] Verify PDF, API detail and frontend use the same block tree.
+- [x] Define chapter, metric block, comparison block, trend block and synthesis block.
+- [x] Validate all 30+ combinations for chapter and block compatibility.
+- [x] Persist block-level report snapshots and render them consistently.
+- [x] Verify PDF, API detail and frontend use the same block tree.
 
 ## Stage 14G: End-To-End Verification
 

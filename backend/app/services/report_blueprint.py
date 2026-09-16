@@ -20,6 +20,7 @@ from app.schemas.report_blueprint import (
 )
 from app.schemas.tool_plan import ToolPlan
 from app.services.plan_execution import execute_tool_plan, validate_tool_plan
+from app.services.report_blocks import supports_block_kind
 from app.services.tool_rag import ToolSnapshot
 
 
@@ -86,6 +87,11 @@ def compile_report_blueprint(
 
         step_tool_ids = {step.tool_id for step in section.steps}
         for block in section.blocks:
+            if not supports_block_kind(section.chapter_key, block.kind):
+                raise ReportBlueprintError(
+                    f"block {block.block_id} kind {block.kind} is not compatible "
+                    f"with chapter {section.chapter_key}"
+                )
             if block.source_tool_id and block.source_tool_id not in step_tool_ids:
                 raise ReportBlueprintError(
                     f"block {block.block_id} references tool not in section: "

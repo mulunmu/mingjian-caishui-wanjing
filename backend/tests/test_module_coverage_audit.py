@@ -22,5 +22,7 @@ def test_module_coverage_audit_builds_metric_tool_and_chapter_summary():
     assert summary["composition"]["missing_metric_to_chapter"] == []
     assert summary["composition"]["metric_pair_to_chapter_triples"] > 0
     assert summary["composition"]["missing_metric_pair_to_chapter"] == []
+    assert summary["report_blocks"]["compatible_pair_count"] >= 30
+    assert summary["report_blocks"]["missing"] == []
     assert len(report["metrics"]) == summary["metrics_total"]
     assert any(item["metric_key"] == "debt_ratio" for item in report["metrics"])

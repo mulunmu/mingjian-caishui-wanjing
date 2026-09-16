@@ -172,6 +172,35 @@ def test_compile_rejects_block_referencing_tool_outside_section():
         compile_report_blueprint(blueprint, load_tool_snapshot_sync(engine))
 
 
+def test_compile_rejects_incompatible_chapter_block_kind():
+    engine = _engine_with_blueprints()
+    blueprint = ReportBlueprint(
+        objective="bad block kind",
+        sections=[
+            SectionPlan(
+                section_id="tax",
+                chapter_key="tax",
+                steps=[
+                    ToolStep(
+                        step_id="arrears",
+                        tool_id="metric_tax_arrears_cnt",
+                        params={"entity": "ENT017"},
+                    )
+                ],
+                blocks=[
+                    BlockPlan(
+                        block_id="bad-trend",
+                        kind="trend_paragraph",
+                        source_tool_id="metric_tax_arrears_cnt",
+                    )
+                ],
+            )
+        ],
+    )
+    with pytest.raises(ReportBlueprintError, match="not compatible with chapter tax"):
+        compile_report_blueprint(blueprint, load_tool_snapshot_sync(engine))
+
+
 def test_execute_blueprint_is_deterministic_and_chapter_isolated():
     engine = _engine_with_blueprints()
     snapshot = load_tool_snapshot_sync(engine)

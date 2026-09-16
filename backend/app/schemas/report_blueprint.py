@@ -16,7 +16,16 @@ class ReportScope(BaseModel):
 
 class BlockPlan(BaseModel):
     block_id: str
-    kind: Literal["kpi", "chart", "table", "narrative"]
+    kind: Literal[
+        "metric_paragraph",
+        "comparison_paragraph",
+        "trend_paragraph",
+        "synthesis_paragraph",
+        "kpi",
+        "chart",
+        "table",
+        "narrative",
+    ]
     title: str = ""
     source_tool_id: str | None = None
 

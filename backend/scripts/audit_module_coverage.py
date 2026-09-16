@@ -14,6 +14,7 @@ from app.models.metric_registry import MetricDefinition
 from app.models.semantic_registry import ThresholdRule, ToolAlias, ToolDefinition
 from app.services.semantic_tool_executors import semantic_executor_tool_ids
 from app.services.module_contracts import build_compatibility_report
+from app.services.report_blocks import build_report_block_compatibility_report
 from app.services.tool_rag import load_tool_snapshot_sync
 
 
@@ -113,6 +114,7 @@ def build_coverage_report(engine) -> dict[str, Any]:
     }
     compatibility = build_compatibility_report(load_tool_snapshot_sync(engine))
     summary["composition"] = compatibility
+    summary["report_blocks"] = build_report_block_compatibility_report()
     return {"summary": summary, "metrics": items}
 
 
@@ -137,9 +139,18 @@ def main() -> None:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
         _print_human(report)
+    summary = report["summary"]
+    composition = summary["composition"]
+    report_blocks = summary["report_blocks"]
     critical = bool(
-        report["summary"]["validated_without_executor"]
-        or report["summary"]["chapter_gaps"]
+        summary["validated_without_executor"]
+        or summary["chapter_gaps"]
+        or summary["executable_without_alias"]
+        or summary["thresholds_missing_required"]
+        or composition["missing_metric_to_chapter"]
+        or composition["missing_metric_pair_to_chapter"]
+        or report_blocks["missing"]
+        or int(report_blocks["compatible_pair_count"]) < 30
     )
     raise SystemExit(1 if args.strict and critical else 0)
 
