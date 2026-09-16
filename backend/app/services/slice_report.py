@@ -20,7 +20,7 @@ from app.models.financials import EnterpriseFinancials
 from app.schemas.claim import Claim, ClaimTrace, ClaimValue, filter_claims
 from app.services import conclusion_store, hallucination_guard, judgment_service, llm_reply
 from app.services import assessment, financial_benchmarks, insight_engine, outlook
-from app.services.intent_engine import IntentResult
+from app.services.semantic_lexicon import IntentResult
 from app.services.report_charts import (
     render_bar_chart_png,
     render_dimension_attribution_png,

@@ -13,7 +13,7 @@ function 与期望 function。全部样例命中才算通过。与 intent_engine
 """
 from __future__ import annotations
 
-from app.services.intent_engine import parse_intent
+from app.services.semantic_lexicon import parse_intent
 
 # (query, expected_function)
 REGRESSION_CASES: list[tuple[str, str]] = [

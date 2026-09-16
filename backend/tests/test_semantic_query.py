@@ -5,7 +5,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.schemas.semantic_query import SemanticQuery
-from app.services.intent_engine import IntentResult
+from legacy.intent_engine import IntentResult
 from app.services import semantic_query
 
 
@@ -206,7 +206,7 @@ def test_prefer_trend_over_spurious_region_comparison():
     )
     intent = SimpleNamespace(function="trend", dimension="industry", industry_l1=None, province=None)
     # monkey: intent_to_semantic_query needs a real IntentResult-like; use engine
-    from app.services import intent_engine
+    from app.services import semantic_lexicon as intent_engine
 
     ir = intent_engine.recognize("行业趋势对比")
     fixed = semantic_query.prefer_trend_over_spurious_comparison(fake, "行业趋势对比", intent=ir)

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.core_metrics import CoreMetrics
 from app.schemas.claim import Claim, ClaimTrace, ClaimValue
 from app.services import followup_items as fu
-from app.services.intent_engine import industry_l1_options
+from app.services.semantic_lexicon import industry_l1_options
 
 
 def _claim(text: str, *, metric: str, number: float | int | None, unit: str, field: str) -> Claim:
@@ -362,7 +362,7 @@ async def resolve_subject_ref(
         if row:
             return {"enterprise_id": row[0], "display_name": row[1] or row[2] or want}
 
-    from app.services.intent_engine import _match_industry
+    from app.services.semantic_lexicon import _match_industry
 
     # 「建筑那家」→ 该行业第一家；纯行业词且带「那家/这家」才 bind
     if re.search(r"那家|这家|看看", ref):

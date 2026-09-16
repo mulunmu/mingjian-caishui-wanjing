@@ -153,13 +153,13 @@ def test_benford_small_slice_abstains_not_snapshot():
 @pytest.mark.asyncio
 async def test_chat_premium_locked_surfaces_message():
     """R1：PremiumReportLocked 在对话路径可见（须已订阅）。"""
-    from app.services.chat_router import route_chat
+    from legacy.chat_router import legacy_pipeline as route_chat
 
     db = AsyncMock()
     subscriber = {"sub": "sub@example.com", "role": "user", "plan": "subscriber"}
     with _analysis_act_patch():
         with patch(
-            "app.services.intent_engine.recognize",
+            "legacy.intent_engine.recognize",
             return_value=MagicMock(
                 function="report",
                 dimension="overall",
@@ -198,13 +198,13 @@ async def test_chat_premium_locked_surfaces_message():
 @pytest.mark.asyncio
 async def test_chat_custom_report_guides_not_generates():
     """定制化请求走引导分支：提示范围+场景，不直接产出报告（不再吞意图）。"""
-    from app.services.chat_router import route_chat
+    from legacy.chat_router import legacy_pipeline as route_chat
 
     db = AsyncMock()
     subscriber = {"sub": "sub@example.com", "role": "user", "plan": "subscriber"}
     with _analysis_act_patch():
         with patch(
-            "app.services.intent_engine.recognize",
+            "legacy.intent_engine.recognize",
             return_value=MagicMock(
                 function="report",
                 dimension="overall",
@@ -243,7 +243,7 @@ async def test_chat_custom_report_guides_not_generates():
 @pytest.mark.asyncio
 async def test_chat_email_report_attempts_send():
     """R2：email_report 读取 recipient 并尝试发信（收件人须为登录邮箱或受信邮箱）。"""
-    from app.services.chat_router import route_chat
+    from legacy.chat_router import legacy_pipeline as route_chat
 
     db = AsyncMock()
     subscriber = {"sub": "user@example.com", "role": "user", "plan": "subscriber"}
@@ -267,7 +267,7 @@ async def test_chat_email_report_attempts_send():
             ):
                 with patch("app.services.email_service.is_configured", return_value=True):
                     with patch("app.services.email_service.send_report_to", new_callable=AsyncMock) as send:
-                        with patch("app.services.chat_router.run_blocking", side_effect=_run_blocking):
+                        with patch("legacy.chat_router.run_blocking", side_effect=_run_blocking):
                             with patch("app.services.conclusion_store.save_conclusion", return_value="c1"):
                                 with patch("app.services.conclusion_store.covered_functions", return_value=set()):
                                     with patch("app.services.session_store.ensure_session_id", return_value="s1"):
@@ -278,7 +278,7 @@ async def test_chat_email_report_attempts_send():
                                                 return_value=("ok", MagicMock(followups=[]), "template"),
                                             ):
                                                 with patch(
-                                                    "app.services.intent_engine.recognize",
+                                                    "legacy.intent_engine.recognize",
                                                     return_value=MagicMock(
                                                         function="email_report",
                                                         dimension="overall",
@@ -302,12 +302,12 @@ async def test_chat_email_report_attempts_send():
 @pytest.mark.asyncio
 async def test_chat_report_denied_without_subscription():
     """聊天生成报告须订阅；未登录不得绕过 /report 门槛。"""
-    from app.services.chat_router import route_chat
+    from legacy.chat_router import legacy_pipeline as route_chat
 
     db = AsyncMock()
     with _analysis_act_patch():
         with patch(
-            "app.services.intent_engine.recognize",
+            "legacy.intent_engine.recognize",
             return_value=MagicMock(
                 function="report",
                 dimension="overall",

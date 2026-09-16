@@ -62,7 +62,7 @@ for _stream in (sys.stdout, sys.stderr):
             pass
 
 # 规则侧依赖：纯标准库（intent_engine 只 import re / dataclasses）
-from app.services.intent_engine import FUNCTIONS, TEST_CASES, parse_intent  # noqa: E402
+from legacy.intent_engine import FUNCTIONS, TEST_CASES, parse_intent  # noqa: E402
 
 
 # --------------------------------------------------------------------------- #

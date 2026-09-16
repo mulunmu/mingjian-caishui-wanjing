@@ -21,7 +21,7 @@ def _patch_common(monkeypatch):
     monkeypatch.setattr("app.services.session_store.store_session", lambda *a, **k: None)
     monkeypatch.setattr("app.services.conclusion_store.save_conclusion", lambda **k: "c1")
     monkeypatch.setattr("app.services.conclusion_store.covered_functions", lambda sid, dimension=None: set())
-    from app.services import chat_router
+    from legacy import chat_router
     from app.services import dialog_act
 
     monkeypatch.setattr(chat_router, "run_blocking", _run_blocking)
@@ -35,12 +35,12 @@ def _patch_common(monkeypatch):
 @pytest.mark.asyncio
 async def test_route_chat_llm_path_returns_query_type(monkeypatch):
     from app.schemas.semantic_query import SemanticQuery
-    from app.services.intent_engine import IntentResult
-    from app.services import chat_router
+    from legacy.intent_engine import IntentResult
+    from legacy import chat_router
 
     _patch_common(monkeypatch)
     monkeypatch.setattr(
-        "app.services.intent_engine.recognize",
+        "legacy.intent_engine.recognize",
         lambda q, session_context=None: IntentResult(function="general", dimension="overall", intent="general"),
     )
     monkeypatch.setattr("app.services.llm_reply.llm_available", lambda: True)
@@ -67,7 +67,7 @@ async def test_route_chat_llm_path_returns_query_type(monkeypatch):
     monkeypatch.setattr("app.services.llm_reply.generate_claim_reply", fake_reply)
 
     db = AsyncMock()
-    out = await chat_router.route_chat(db, "信用分前10的行业", session_id="s1")
+    out = await chat_router.legacy_pipeline(db, "信用分前10的行业", session_id="s1")
     assert out["query_type"] == "ranking"
     assert out["data"]["query_type"] == "ranking"
     assert out["function"] == "score"
@@ -76,7 +76,7 @@ async def test_route_chat_llm_path_returns_query_type(monkeypatch):
 @pytest.mark.asyncio
 async def test_route_chat_no_llm_trend_not_hint(monkeypatch):
     from app.schemas.claim import Claim, ClaimTrace, ClaimValue
-    from app.services import chat_router
+    from legacy import chat_router
 
     _patch_common(monkeypatch)
     monkeypatch.setattr("app.services.llm_reply.llm_available", lambda: False)
@@ -106,7 +106,7 @@ async def test_route_chat_no_llm_trend_not_hint(monkeypatch):
     monkeypatch.setattr("app.services.llm_reply.generate_claim_reply", fake_reply)
 
     db = AsyncMock()
-    out = await chat_router.route_chat(db, "分析各行业的趋势走向", session_id="s1")
+    out = await chat_router.legacy_pipeline(db, "分析各行业的趋势走向", session_id="s1")
     assert out["query_type"] == "trend"
     metrics = [c.get("value", {}).get("metric") for c in out["data"]["claims"]]
     assert "hint" not in metrics
@@ -116,7 +116,7 @@ async def test_route_chat_no_llm_trend_not_hint(monkeypatch):
 @pytest.mark.asyncio
 async def test_route_chat_no_llm_comparison(monkeypatch):
     from app.schemas.semantic_query import QueryType
-    from app.services import chat_router
+    from legacy import chat_router
 
     _patch_common(monkeypatch)
     monkeypatch.setattr("app.services.llm_reply.llm_available", lambda: False)
@@ -142,7 +142,7 @@ async def test_route_chat_no_llm_comparison(monkeypatch):
     monkeypatch.setattr("app.services.llm_reply.generate_claim_reply", fake_reply)
 
     db = AsyncMock()
-    out = await chat_router.route_chat(db, "江西和湖南制造业信用分对比", session_id="s1")
+    out = await chat_router.legacy_pipeline(db, "江西和湖南制造业信用分对比", session_id="s1")
     # 无 LLM 时「A 和 B 对比」不再退回 aggregation，而是规则层产出 comparison
     assert captured["sq"].query_type == QueryType.comparison
     assert captured["sq"].compare[0].values == ["江西", "湖南"]
@@ -153,8 +153,8 @@ async def test_route_chat_no_llm_comparison(monkeypatch):
 @pytest.mark.asyncio
 async def test_route_chat_report_question_routes_to_faq_not_report(monkeypatch):
     from app.schemas.semantic_query import QueryType
-    from app.services.intent_engine import IntentResult
-    from app.services import chat_router
+    from legacy.intent_engine import IntentResult
+    from legacy import chat_router
 
     _patch_common(monkeypatch)
     from app.services import dialog_act
@@ -166,7 +166,7 @@ async def test_route_chat_report_question_routes_to_faq_not_report(monkeypatch):
     )
     # 规则层会把「报告怎么生成」判成 report —— 正是要防的劫持
     monkeypatch.setattr(
-        "app.services.intent_engine.recognize",
+        "legacy.intent_engine.recognize",
         lambda q, session_context=None: IntentResult(function="report", dimension="overall", intent="report_overall"),
     )
     monkeypatch.setattr("app.services.llm_reply.llm_available", lambda: False)
@@ -192,7 +192,7 @@ async def test_route_chat_report_question_routes_to_faq_not_report(monkeypatch):
     monkeypatch.setattr("app.services.llm_reply.generate_claim_reply", fake_reply)
 
     db = AsyncMock()
-    out = await chat_router.route_chat(db, "报告怎么生成", session_id="s1")
+    out = await chat_router.legacy_pipeline(db, "报告怎么生成", session_id="s1")
     # 走产品 FAQ 分支，而非报告意图（report 意图会生成切片报告）
     assert out["function"] == "faq"
     assert out["parse_source"] == "product_faq"
@@ -200,7 +200,7 @@ async def test_route_chat_report_question_routes_to_faq_not_report(monkeypatch):
 
 def test_no_llm_fallback_semantic_layer_not_hint():
     from app.services import semantic_query
-    from app.services.intent_engine import recognize
+    from legacy.intent_engine import recognize
 
     sq = semantic_query.intent_to_semantic_query(recognize("分析各行业的趋势走向"))
     assert sq.query_type == "trend"

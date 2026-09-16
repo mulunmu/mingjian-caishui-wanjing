@@ -120,7 +120,7 @@ def _clamp_dimension(value: str) -> str | None:
 
 
 def _clamp_industry(value: str) -> str | None:
-    from app.services.intent_engine import _match_industry
+    from app.services.semantic_lexicon import _match_industry
 
     v = (value or "").strip()
     if not v:
@@ -129,7 +129,7 @@ def _clamp_industry(value: str) -> str | None:
 
 
 def _clamp_province(value: str) -> str | None:
-    from app.services.intent_engine import _match_province
+    from app.services.semantic_lexicon import _match_province
 
     v = (value or "").strip()
     if not v:
@@ -387,7 +387,7 @@ def detect_rule_comparison(query: str) -> SemanticQuery | None:
     if not q or not _COMPARISON_MARK_RE.search(q):
         return None
 
-    from app.services.intent_engine import _INDUSTRY_KW, _PROVINCE_KW, _match_industry
+    from app.services.semantic_lexicon import _INDUSTRY_KW, _PROVINCE_KW, _match_industry
 
     # 双省：取至少两个不同省份（深圳→广东 已合并去重）
     provs = _values_in_query_order(q, _PROVINCE_KW)

@@ -8,7 +8,8 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.db.session import get_async_session_factory
-from app.services import chat_router, dialog_act as da, llm_reply, scope_state as ss
+from legacy import chat_router
+from app.services import dialog_act as da, llm_reply, scope_state as ss
 from app.services.inventory_scope import inventory_answer
 
 
@@ -30,7 +31,7 @@ async def main() -> None:
         assert n > 0, f"expected inventory sample_count>0, got {n}"
         assert str(n) in (inv.get("reply") or ""), inv.get("reply")
 
-        out = await chat_router.route_chat(db, "我可以分析哪些企业？", session_id=None)
+        out = await chat_router.legacy_pipeline(db, "我可以分析哪些企业？", session_id=None)
         reply = out.get("reply") or ""
         parse = out.get("parse_source") or ""
         print("--- NEGATIVE CASE ---")
@@ -43,7 +44,7 @@ async def main() -> None:
             assert m not in reply, f"abstain leaked: {m}"
 
         # 行业切片不得复读整库范文
-        slice_out = await chat_router.route_chat(
+        slice_out = await chat_router.legacy_pipeline(
             db, "服务业的企业是那些", session_id=out.get("session_id")
         )
         sreply = slice_out.get("reply") or ""
@@ -52,7 +53,7 @@ async def main() -> None:
         assert "冒充" not in sreply
 
         # chip ≡ NL
-        chip = await chat_router.route_chat(
+        chip = await chat_router.legacy_pipeline(
             db,
             "我能分析哪些企业？",
             session_id=None,
@@ -66,19 +67,19 @@ async def main() -> None:
         assert str(n) in (chip.get("reply") or "")
 
         # bind NL
-        bind = await chat_router.route_chat(db, "随便来一家看看", session_id=None)
+        bind = await chat_router.legacy_pipeline(db, "随便来一家看看", session_id=None)
         assert bind.get("parse_source") in ("bind_subject", "switch_scope")
         ds = bind.get("dialogue_state") or {}
         assert ds.get("scope") == "individual", ds
 
         # gibberish → clarify
-        clar = await chat_router.route_chat(db, "！！！哈哈哈xyz", session_id=None)
+        clar = await chat_router.legacy_pipeline(db, "！！！哈哈哈xyz", session_id=None)
         assert clar.get("parse_source") == "clarify"
         assert "没太确定" in (clar.get("reply") or "")
 
         # cohort analyze after negotiate
         sid = out.get("session_id")
-        cohort = await chat_router.route_chat(
+        cohort = await chat_router.legacy_pipeline(
             db,
             "全库哪里信号最多",
             session_id=sid,

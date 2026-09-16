@@ -349,8 +349,11 @@ SEMANTIC_CANARY_PERCENT restored to 0
 - [x] Keep only compatibility paths that remain active on the legacy chain.
 - [x] Add an executable retirement-audit CLI.
 - [x] Update redline v2 and operational documentation.
-- [ ] Retire `route_chat` and soft-fallback regexes after semantic becomes the production primary.
-- [ ] Re-run the retirement audit until `safe_to_retire=true`.
+- [x] Retire `route_chat` and soft-fallback regexes from the active application.
+- [x] Make the active chat endpoint fail closed instead of silently falling back to legacy.
+- [x] Restore fixed and conversational report generation in the semantic-primary path.
+- [x] Re-run the retirement audit until `safe_to_retire=true`.
+- [x] Exclude the archived `backend/legacy` package from production images.
 
 Verification gate:
 
@@ -363,13 +366,16 @@ Verification evidence:
 chapter compatibility aliases=0
 all chapter keys map to loan|rating|warn|audit
 invalid wizard scenario -> HTTP 422
-full backend suite=1181 passed, 13 skipped, 0 failed
-staging chat: reply_present=true, claims=6
-staging report: rating PDF, magic=%PDF-, bytes=354597
-safe_to_retire=false
-remaining blockers=legacy_markers_remain, legacy_entrypoint_still_active
+full backend suite=1259 passed, 7 skipped, 0 failed
+production semantic-primary matrix=32/32, fallback_count=0
+multi-topic memory=6 turns, N-2 reply resolved
+production report chat=answered, PDF magic=%PDF-
+active-app legacy imports=0
+production image legacy package=absent
+safe_to_retire=true
+remaining blockers=none
 ```
 
-The remaining blockers are intentional while `SEMANTIC_CANARY_PERCENT` is dormant and the
-semantic path is not yet the production primary. Removing `route_chat` or the soft-fallback
-regexes now would create an unverified single point of failure.
+The active application no longer imports or calls the legacy package. Legacy source remains
+only as a repository archive for historical tests/offline scripts and is excluded from the
+production image; it is not part of the runtime response path.

@@ -12,7 +12,6 @@ from app.schemas.semantic_query import SemanticQuery
 from app.services import (
     conclusion_store,
     email_service,
-    intent_engine,
     judgment_service,
     llm_reply,
     llm_semantic_parser,
@@ -22,7 +21,8 @@ from app.services import (
     trusted_email_service,
     verification_service,
 )
-from app.services.intent_engine import IntentResult, industry_l1_options
+from legacy import intent_engine as legacy_intent_engine
+from legacy.intent_engine import IntentResult, industry_l1_options
 from app.services.judgment_service import without_synthesis_claims
 from app.services.report_templates import (
     CHAPTER_REGISTRY,
@@ -102,7 +102,7 @@ async def _route_enterprise(
         "industry_l1": None,
         "province": None,
     }
-    intent_result = intent_engine.recognize(query)
+    intent_result = legacy_intent_engine.recognize(query)
     sc = scenario or ss.detect_scenario(query)
     if intent_result.function in ("report", "email_report"):
         denied = _subscription_denied_claim(user)
@@ -718,7 +718,7 @@ def _attach_ui(result: dict, dialogue_state: dict, *, sample_count: int | None =
     return result
 
 
-async def route_chat(
+async def legacy_pipeline(
     db: AsyncSession,
     query: str,
     session_id: str | None = None,
@@ -929,7 +929,7 @@ async def route_chat(
         )
         if pending_q:
             # 切完范围后立刻回答原问句
-            return await route_chat(
+            return await legacy_pipeline(
                 db,
                 pending_q,
                 session_id=sid,
@@ -1338,7 +1338,7 @@ async def route_chat(
         if act.scenario:
             dialogue_state = {**dialogue_state, "scenario": act.scenario}
             # 续答：把原问句当 analyze 再跑一轮
-            return await route_chat(
+            return await legacy_pipeline(
                 db,
                 query or f"{subject.get('display_name')}风险怎么样",
                 session_id=sid,
@@ -1608,7 +1608,7 @@ async def route_chat(
     else:
         # 全库 / 未绑定但问句不强制个体（FAQ 等）
         enterprise_id = None
-        intent_result = intent_engine.recognize(query, session_context=session_context)
+        intent_result = legacy_intent_engine.recognize(query, session_context=session_context)
         function = intent_result.function
         dimension = intent_result.dimension
         intent = intent_result.intent
@@ -1742,7 +1742,7 @@ async def route_chat(
             prev_sq = semantic_query.semantic_query_from_dict(
                 (session_context or {}).get("last_semantic_query")
             )
-            if intent_engine.is_followup_query(query) and prev_sq is not None:
+            if legacy_intent_engine.is_followup_query(query) and prev_sq is not None:
                 sq = semantic_query.merge_followup(sq, prev_sq, query)
 
             intent_result.semantic_query = sq
@@ -1761,7 +1761,7 @@ async def route_chat(
 
             async def _run_one_plan(plan: dict) -> tuple[list, list, dict]:
                 """按单个 tool 计划构造 sq 子查询并跑引擎；失败返回空 claims。"""
-                sub_ir = intent_engine.IntentResult(
+                sub_ir = legacy_intent_engine.IntentResult(
                     function=plan["function"],
                     dimension=plan.get("dimension") or dimension,
                     industry_l1=plan.get("industry_l1") or industry_l1,

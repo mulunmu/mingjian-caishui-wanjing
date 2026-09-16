@@ -14,9 +14,40 @@ def test_soft_fallback_inventory_not_faq():
     assert act.confidence >= da.CONFIDENCE_CLARIFY
 
 
+def test_dialog_act_normalizes_string_null_literals():
+    act = da.DialogAct.model_validate(
+        {
+            "act": "analyze",
+            "scenario": "null",
+            "subject_ref": "None",
+            "scope_target": "undefined",
+            "drill_op": "",
+            "ask_kind": "null",
+            "industry_l1": "None",
+            "province": "null",
+            "clarify_question": "",
+            "refusal_kind": "null",
+            "confidence": 0.9,
+        }
+    )
+
+    for field in (
+        "scenario",
+        "subject_ref",
+        "scope_target",
+        "drill_op",
+        "ask_kind",
+        "industry_l1",
+        "province",
+        "clarify_question",
+        "refusal_kind",
+    ):
+        assert getattr(act, field) is None
+
+
 def test_soft_fallback_industry_list():
     act = da._soft_fallback("服务业的企业是那些", ss.empty_dialogue_state())
-    act = da._normalize_act(act, "服务业的企业是那些", ss.empty_dialogue_state())
+    act = da.normalize_fallback_act(act, "服务业的企业是那些", ss.empty_dialogue_state())
     assert act.act == "negotiate_scope"
     assert act.ask_kind == "list"
     assert act.industry_l1 == "服务"
@@ -41,7 +72,7 @@ def test_soft_fallback_analyze_loan():
 
 def test_soft_fallback_warn_unbound_individual():
     act = da._soft_fallback("哪里不对劲？", ss.empty_dialogue_state())
-    act = da._normalize_act(act, "哪里不对劲？", ss.empty_dialogue_state())
+    act = da.normalize_fallback_act(act, "哪里不对劲？", ss.empty_dialogue_state())
     assert act.act == "analyze"
     assert act.scope_target == "individual"
 
@@ -50,7 +81,7 @@ def test_aggregate_trend_unbound_is_cohort():
     """根契约：各行业趋势 → cohort，不逼选企业。"""
     q = "分析各行业趋势走向"
     act = da._soft_fallback(q, ss.empty_dialogue_state())
-    act = da._normalize_act(act, q, ss.empty_dialogue_state())
+    act = da.normalize_fallback_act(act, q, ss.empty_dialogue_state())
     assert act.act == "analyze"
     assert act.scope_target == "cohort"
 
@@ -63,7 +94,7 @@ def test_greeting_is_meta():
 
 def test_authenticity_not_fake_drill():
     act = da.DialogAct(act="drill", drill_op="authenticity_cross", confidence=0.9)
-    act = da._normalize_act(act, "进一步看真实性交叉验证", ss.empty_dialogue_state())
+    act = da.normalize_fallback_act(act, "进一步看真实性交叉验证", ss.empty_dialogue_state())
     assert act.act == "analyze"
     assert act.drill_op is None
 
@@ -100,7 +131,7 @@ def test_normalize_legacy_voucher_is_action():
 
 def test_list_not_drill():
     act = da.DialogAct(act="drill", drill_op="group_by_industry", confidence=0.9)
-    act = da._normalize_act(act, "建筑那些家列一下", ss.empty_dialogue_state())
+    act = da.normalize_fallback_act(act, "建筑那些家列一下", ss.empty_dialogue_state())
     assert act.act == "negotiate_scope"
     assert act.ask_kind == "list"
 

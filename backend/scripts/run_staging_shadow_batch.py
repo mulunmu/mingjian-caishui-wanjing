@@ -14,7 +14,7 @@ from app.api.v1.chat import _maybe_run_shadow
 from app.db.session import get_async_session_factory
 from app.db.urls import get_sync_engine
 from app.models.core_metrics import CoreMetrics
-from app.services.chat_router import route_chat
+from legacy.chat_router import legacy_pipeline as route_chat
 from app.services.shadow_answer_evaluation import build_shadow_answer_summary
 from app.services.shadow_reporting import build_shadow_evaluation_summary
 

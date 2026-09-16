@@ -14,7 +14,7 @@ from typing import Any
 
 from app.schemas.custom_report import CustomReportSpec
 from app.services import llm_reply
-from app.services.intent_engine import (
+from app.services.semantic_lexicon import (
     _match_industry,
     _match_province,
     industry_l1_options,

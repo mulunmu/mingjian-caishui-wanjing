@@ -12,7 +12,7 @@ import os
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.services import llm_reply
 
@@ -40,10 +40,10 @@ FABRICATION_REFUSE_MSG = (
 )
 
 # 无 LLM 软降级兜底用的关键词（非主路径；主路径由 schema refusal_kind 判定）
-_SOFT_FABRICATE_KW = (
+FABRICATION_TERMS = (
     "编造", "编一个", "帮我编", "伪造", "假造", "捏造", "虚构", "造假数据", "造一个", "编一份",
 )
-_SOFT_OOD_KW = (
+OUT_OF_DOMAIN_TERMS = (
     "天气", "午饭", "晚饭", "吃什么", "电影", "电视剧", "足球", "篮球",
     "游戏", "讲个笑话", "星座", "算命", "股票行情",
 )
@@ -116,6 +116,28 @@ class DialogAct(BaseModel):
     # M1 工具调用计划：LLM 从能力地图选出的工具列表
     tools: list[dict] = Field(default_factory=list, description="LLM 选出的工具调用计划（MetricTool 列表）")
 
+    @field_validator(
+        "scenario",
+        "subject_ref",
+        "scope_target",
+        "drill_op",
+        "ask_kind",
+        "industry_l1",
+        "province",
+        "clarify_question",
+        "refusal_kind",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_optional_literals(cls, value):
+        """LLM 常把 JSON null 写成字符串；在 schema 入口统一清成真正的 None。"""
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.lower() in {"", "null", "none", "undefined", "nan"}:
+                return None
+            return stripped
+        return value
+
 
 def apply_refusal_policy(act: DialogAct) -> DialogAct:
     """将 refusal_kind 落到 can_answer / clarify_question（单一真源）。"""
@@ -143,9 +165,9 @@ def _soft_refusal_kind(query: str) -> RefusalKind | None:
     q = (query or "").strip()
     if not q:
         return None
-    if any(k in q for k in _SOFT_FABRICATE_KW):
+    if any(k in q for k in FABRICATION_TERMS):
         return "fabrication"
-    if any(k in q for k in _SOFT_OOD_KW):
+    if any(k in q for k in OUT_OF_DOMAIN_TERMS):
         return "out_of_domain"
     return None
 
@@ -252,7 +274,7 @@ async def classify(query: str | None, state: dict[str, Any] | None = None) -> Di
     if llm_reply.llm_available():
         act = await _llm_classify(q, state)
         if act is not None:
-            # 红线 §2.3：LLM 主路径禁止正则 _normalize_act；只合并会话焦点 + 弃权策略
+            # 红线 §2.3：LLM 主路径禁止正则 normalize_fallback_act；只合并会话焦点 + 弃权策略
             act = apply_refusal_policy(merge_inventory_focus(act, state))
             if (
                 act.refusal_kind is None
@@ -269,9 +291,9 @@ async def classify(query: str | None, state: dict[str, Any] | None = None) -> Di
             return act
         logger.info("dialog_act llm classify failed, soft fallback q=%r", q[:40])
 
-    # 无 LLM / LLM 失败：软降级才允许 _normalize_act（关键词兜底）
+    # 无 LLM / LLM 失败：软降级才允许 normalize_fallback_act（关键词兜底）
     act = apply_refusal_policy(
-        merge_inventory_focus(_normalize_act(_soft_fallback(q, state), q, state), state)
+        merge_inventory_focus(normalize_fallback_act(_soft_fallback(q, state), q, state), state)
     )
     if act.refusal_kind is None and act.confidence < CONFIDENCE_CLARIFY and act.can_answer:
         act = act.model_copy(
@@ -284,9 +306,9 @@ async def classify(query: str | None, state: dict[str, Any] | None = None) -> Di
     return act
 
 
-def _normalize_act(act: DialogAct, query: str, state: dict[str, Any]) -> DialogAct:
+def normalize_fallback_act(act: DialogAct, query: str, state: dict[str, Any]) -> DialogAct:
     """轻量校正：list≠drill；未绑个体分析默认 individual 门禁；补行业槽。"""
-    from app.services.intent_engine import _match_industry, _match_province
+    from app.services.semantic_lexicon import _match_industry, _match_province
 
     data = act.model_dump()
     q = query or ""
@@ -460,7 +482,7 @@ async def _llm_classify(query: str, state: dict[str, Any]) -> DialogAct | None:
 
 
 def _build_system(state: dict[str, Any]) -> str:
-    from app.services.intent_engine import industry_l1_options, province_options
+    from app.services.semantic_lexicon import industry_l1_options, province_options
     from app.services.metric_registry import to_tool_schema
     from app.services.persona import build_persona_prompt
 
@@ -508,7 +530,7 @@ def _build_system(state: dict[str, Any]) -> str:
 
 def _soft_fallback(query: str, state: dict[str, Any]) -> DialogAct:
     """无 LLM：软提示填槽；不确定则低置信。编造/超纲仅作兜底关键词。"""
-    from app.services.intent_engine import _match_industry, _match_province
+    from app.services.semantic_lexicon import _match_industry, _match_province
 
     q = query.strip()
     soft_refuse = _soft_refusal_kind(q)

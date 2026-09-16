@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 
 from app.api.v1 import chat as chat_api
 
@@ -14,11 +15,7 @@ async def test_primary_selected_does_not_call_legacy(monkeypatch):
     monkeypatch.setenv("SEMANTIC_PRIMARY_ENABLED", "true")
     monkeypatch.setenv("SEMANTIC_PRIMARY_PERCENT", "100")
     monkeypatch.setenv("SHADOW_SEMANTIC_INDEPENDENT_ROUTE", "true")
-    monkeypatch.setattr(
-        chat_api,
-        "route_chat",
-        AsyncMock(side_effect=AssertionError("legacy called")),
-    )
+    assert not hasattr(chat_api, "run_legacy_compat")
     monkeypatch.setattr(
         semantic_primary,
         "run_primary_turn",
@@ -40,7 +37,7 @@ async def test_primary_selected_does_not_call_legacy(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_primary_internal_failure_falls_back(monkeypatch):
+async def test_primary_internal_failure_returns_503_without_legacy_fallback(monkeypatch):
     from app.services import semantic_primary
 
     monkeypatch.setenv("SEMANTIC_PRIMARY_ENABLED", "true")
@@ -51,17 +48,23 @@ async def test_primary_internal_failure_falls_back(monkeypatch):
         "run_primary_turn",
         AsyncMock(side_effect=RuntimeError("internal-secret")),
     )
-    monkeypatch.setattr(
-        chat_api,
-        "route_chat",
-        AsyncMock(return_value={"reply": "legacy", "session_id": "s1", "data": {}}),
-    )
-    out = await chat_api.chat(
-        body=chat_api.ChatRequest(query="你好", session_id="s1"),
-        db=AsyncMock(),
-        _user=None,
-    )
-    assert out["reply"] == "legacy"
-    assert out["data"]["primary"]["fallback"] is True
-    assert out["data"]["primary"]["fallback_reason"] == "internal_error"
-    assert "internal-secret" not in str(out)
+    with pytest.raises(HTTPException) as exc_info:
+        await chat_api.chat(
+            body=chat_api.ChatRequest(query="你好", session_id="s1"),
+            db=AsyncMock(),
+            _user=None,
+        )
+    assert exc_info.value.status_code == 503
+    assert "internal-secret" not in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_disabled_primary_is_fail_closed(monkeypatch):
+    monkeypatch.setenv("SEMANTIC_PRIMARY_ENABLED", "false")
+    with pytest.raises(HTTPException) as exc_info:
+        await chat_api.chat(
+            body=chat_api.ChatRequest(query="你好", session_id="s1"),
+            db=AsyncMock(),
+            _user=None,
+        )
+    assert exc_info.value.status_code == 503

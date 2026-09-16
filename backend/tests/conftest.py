@@ -6,6 +6,9 @@ import pytest
 def pytest_configure(config):
     # 单测默认关闭鉴权，避免模块 import 时 AUTH_REQUIRED 代码默认 true 拖垮契约测试
     os.environ.setdefault("AUTH_REQUIRED", "false")
+    # 测试会跨多个 TestClient/事件循环复用全局 async engine；NullPool 避免
+    # 连接绑定到已关闭循环。生产环境仍使用默认 QueuePool。
+    os.environ.setdefault("DB_POOL_DISABLED", "true")
     config.addinivalue_line("markers", "llm: optional LLM integration (requires LLM_API_KEY)")
 
 

@@ -6,7 +6,7 @@
 - #5  多意图并行：act.tools 含两个合法 tool → 引擎被调两次，claims 合并
 - #6  超纲天气 → 弃权（refusal_kind=out_of_domain）
 - #7  10 轮人格一致：每轮响应都注入同一份 PERSONA
-- #9  无正则补丁：LLM 主路径不调 _normalize_act
+- #9  无正则补丁：LLM 主路径不调 normalize_fallback_act
 - #10 hallucination_guard：含未锚定数字的 reply 被剥句
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ def _patch_common(monkeypatch):
         "app.services.conclusion_store.covered_functions",
         lambda sid, dimension=None: set(),
     )
-    from app.services import chat_router
+    from legacy import chat_router
 
     monkeypatch.setattr(chat_router, "run_blocking", _run_blocking)
 
@@ -44,7 +44,8 @@ def _patch_common(monkeypatch):
 @pytest.mark.asyncio
 async def test_redline_1_fabrication_refused_via_schema(monkeypatch):
     """LLM 直接输出 refusal_kind=fabrication → 路由落地为拒绝文案，不走引擎。"""
-    from app.services import chat_router, dialog_act
+    from app.services import dialog_act
+    from legacy import chat_router
 
     _patch_common(monkeypatch)
     monkeypatch.setattr("app.services.llm_reply.llm_available", lambda: True)
@@ -61,7 +62,7 @@ async def test_redline_1_fabrication_refused_via_schema(monkeypatch):
     monkeypatch.setattr(dialog_act, "_llm_classify", fake_llm_classify)
 
     db = AsyncMock()
-    out = await chat_router.route_chat(db, "帮我编一个企业营收数字", session_id="s1")
+    out = await chat_router.legacy_pipeline(db, "帮我编一个企业营收数字", session_id="s1")
 
     reply = out.get("reply") or ""
     assert "数字只来自系统数据" in reply
@@ -72,11 +73,12 @@ async def test_redline_1_fabrication_refused_via_schema(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_redline_1_fabrication_no_regex_on_llm_path(monkeypatch):
-    """红线 §2.3：LLM 主路径不被 _normalize_act 正则补丁改写。
+    """红线 §2.3：LLM 主路径不被 normalize_fallback_act 正则补丁改写。
 
     即使 query 含「多少家」等关键词，LLM 已返回 act=analyze 时不应被改回 negotiate_scope。
     """
-    from app.services import chat_router, dialog_act
+    from app.services import dialog_act
+    from legacy import chat_router
 
     _patch_common(monkeypatch)
     monkeypatch.setattr("app.services.llm_reply.llm_available", lambda: True)
@@ -93,13 +95,13 @@ async def test_redline_1_fabrication_no_regex_on_llm_path(monkeypatch):
 
     monkeypatch.setattr(dialog_act, "_llm_classify", fake_llm_classify)
 
-    original_norm = dialog_act._normalize_act
+    original_norm = dialog_act.normalize_fallback_act
 
     def spy_normalize(act, query, state):
         captured["normalize_called"] = True
         return original_norm(act, query, state)
 
-    monkeypatch.setattr(dialog_act, "_normalize_act", spy_normalize)
+    monkeypatch.setattr(dialog_act, "normalize_fallback_act", spy_normalize)
 
     from app.schemas.semantic_query import SemanticQuery
 
@@ -118,10 +120,10 @@ async def test_redline_1_fabrication_no_regex_on_llm_path(monkeypatch):
     monkeypatch.setattr("app.services.llm_reply.financial_llm_available", lambda: False)
 
     db = AsyncMock()
-    # 关键词「多少家」若在旧 _normalize_act 中会触发 negotiate_scope 改写
-    out = await chat_router.route_chat(db, "各行业有多少家风险企业？", session_id="s1")
+    # 关键词「多少家」若在旧 normalize_fallback_act 中会触发 negotiate_scope 改写
+    out = await chat_router.legacy_pipeline(db, "各行业有多少家风险企业？", session_id="s1")
 
-    assert "normalize_called" not in captured, "_normalize_act 不应在 LLM 主路径被调用"
+    assert "normalize_called" not in captured, "normalize_fallback_act 不应在 LLM 主路径被调用"
     # 路由应仍按 analyze 推进（非 clarify 编造/弃权）
     assert out.get("parse_source") not in ("clarify", "abstain")
 
@@ -136,7 +138,8 @@ async def test_redline_2_colloquial_understanding_via_llm(monkeypatch):
     红线 §2.2：能理解口语化表达、省略、指代。验证 schema 输出直接驱动路由，
     不再依赖关键词正则。
     """
-    from app.services import chat_router, dialog_act
+    from app.services import dialog_act
+    from legacy import chat_router
 
     _patch_common(monkeypatch)
     monkeypatch.setattr("app.services.llm_reply.llm_available", lambda: True)
@@ -187,7 +190,7 @@ async def test_redline_2_colloquial_understanding_via_llm(monkeypatch):
     monkeypatch.setattr("app.services.llm_reply.generate_claim_reply", fake_reply)
 
     db = AsyncMock()
-    await chat_router.route_chat(db, "企业17咋样", session_id="s1")
+    await chat_router.legacy_pipeline(db, "企业17咋样", session_id="s1")
 
     # LLM 主路径被调用，且 act 是 analyze（非 meta_session 兜底）
     assert captured_act.get("act") is not None
@@ -201,7 +204,8 @@ async def test_redline_2_colloquial_understanding_via_llm(monkeypatch):
 async def test_redline_5_multi_intent_parallel_tools(monkeypatch):
     """「企业17的税务，顺便和同行比」→ act.tools 含两个合法 tool → 引擎并行执行。"""
     from app.schemas.claim import Claim, ClaimTrace, ClaimValue
-    from app.services import chat_router, dialog_act
+    from app.services import dialog_act
+    from legacy import chat_router
 
     _patch_common(monkeypatch)
     monkeypatch.setattr("app.services.llm_reply.llm_available", lambda: True)
@@ -256,7 +260,7 @@ async def test_redline_5_multi_intent_parallel_tools(monkeypatch):
     monkeypatch.setattr("app.services.llm_reply.financial_llm_available", lambda: False)
 
     db = AsyncMock()
-    out = await chat_router.route_chat(db, "企业17的税务，顺便和同行比", session_id="s1")
+    out = await chat_router.legacy_pipeline(db, "企业17的税务，顺便和同行比", session_id="s1")
 
     # 引擎至少被调一次；如果多意图并行生效应被调 2 次
     assert call_count["n"] >= 1, "run_semantic_query 至少应被调用一次"
@@ -272,7 +276,8 @@ async def test_redline_5_multi_intent_parallel_tools(monkeypatch):
 @pytest.mark.asyncio
 async def test_redline_6_out_of_domain_abstains_via_schema(monkeypatch):
     """LLM 输出 refusal_kind=out_of_domain → abstain（无 clarify_question），引导回财税。"""
-    from app.services import chat_router, dialog_act
+    from app.services import dialog_act
+    from legacy import chat_router
 
     _patch_common(monkeypatch)
     monkeypatch.setattr("app.services.llm_reply.llm_available", lambda: True)
@@ -289,7 +294,7 @@ async def test_redline_6_out_of_domain_abstains_via_schema(monkeypatch):
     monkeypatch.setattr(dialog_act, "_llm_classify", fake_llm_classify)
 
     db = AsyncMock()
-    out = await chat_router.route_chat(db, "今天天气怎么样", session_id="s1")
+    out = await chat_router.legacy_pipeline(db, "今天天气怎么样", session_id="s1")
 
     reply = out.get("reply") or ""
     # 弃权 → 明说没数据/不在范围，且引导回财税
@@ -307,7 +312,8 @@ async def test_redline_7_persona_consistent_across_turns(monkeypatch):
 
     通过 spy generate_claim_reply 检查每轮调用的 persona 参数是否一致。
     """
-    from app.services import chat_router, dialog_act
+    from app.services import dialog_act
+    from legacy import chat_router
 
     _patch_common(monkeypatch)
     monkeypatch.setattr("app.services.llm_reply.llm_available", lambda: True)
@@ -353,7 +359,7 @@ async def test_redline_7_persona_consistent_across_turns(monkeypatch):
     db = AsyncMock()
     # 模拟 5 轮连续对话（10 轮时间太长，5 轮足够验证一致性）
     for turn in range(5):
-        await chat_router.route_chat(db, f"第{turn}轮：看看风险", session_id="s1")
+        await chat_router.legacy_pipeline(db, f"第{turn}轮：看看风险", session_id="s1")
 
     assert len(seen_personas) == 5
     # 每轮都应注入 persona（不丢失）
@@ -371,8 +377,9 @@ async def test_redline_7_persona_consistent_across_turns(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_redline_9_no_regex_patch_on_llm_path(monkeypatch):
-    """红线 §9 #9 + §2.3：LLM 主路径不调 _normalize_act / _soft_fallback 关键词兜底。"""
-    from app.services import chat_router, dialog_act
+    """红线 §9 #9 + §2.3：LLM 主路径不调 normalize_fallback_act / _soft_fallback 关键词兜底。"""
+    from app.services import dialog_act
+    from legacy import chat_router
 
     _patch_common(monkeypatch)
     monkeypatch.setattr("app.services.llm_reply.llm_available", lambda: True)
@@ -389,13 +396,13 @@ async def test_redline_9_no_regex_patch_on_llm_path(monkeypatch):
 
     monkeypatch.setattr(dialog_act, "_llm_classify", fake_llm_classify)
 
-    original_norm = dialog_act._normalize_act
+    original_norm = dialog_act.normalize_fallback_act
 
     def spy_normalize(act, query, state):
         captured["normalize"] = True
         return original_norm(act, query, state)
 
-    monkeypatch.setattr(dialog_act, "_normalize_act", spy_normalize)
+    monkeypatch.setattr(dialog_act, "normalize_fallback_act", spy_normalize)
 
     original_soft = dialog_act._soft_fallback
 
@@ -423,9 +430,9 @@ async def test_redline_9_no_regex_patch_on_llm_path(monkeypatch):
 
     db = AsyncMock()
     # 含口语关键词的 query，验证 LLM 路径不走任何兜底
-    await chat_router.route_chat(db, "帮我瞅瞅那家公司", session_id="s1")
+    await chat_router.legacy_pipeline(db, "帮我瞅瞅那家公司", session_id="s1")
 
-    assert "normalize" not in captured, "LLM 主路径不应调 _normalize_act"
+    assert "normalize" not in captured, "LLM 主路径不应调 normalize_fallback_act"
     assert "soft" not in captured, "LLM 主路径不应调 _soft_fallback"
 
 
@@ -436,7 +443,8 @@ async def test_redline_9_no_regex_patch_on_llm_path(monkeypatch):
 async def test_redline_10_router_strips_unanchored_numbers(monkeypatch):
     """引擎只出 1 个 claim「72 分」；LLM 回复里混入未锚定的「42%」→ 被剥句。"""
     from app.schemas.claim import Claim, ClaimTrace, ClaimValue
-    from app.services import chat_router, dialog_act
+    from app.services import dialog_act
+    from legacy import chat_router
 
     _patch_common(monkeypatch)
     monkeypatch.setattr("app.services.llm_reply.llm_available", lambda: True)
@@ -480,7 +488,7 @@ async def test_redline_10_router_strips_unanchored_numbers(monkeypatch):
     monkeypatch.setattr("app.services.llm_reply.financial_llm_available", lambda: False)
 
     db = AsyncMock()
-    out = await chat_router.route_chat(db, "看看整体风险", session_id="s1")
+    out = await chat_router.legacy_pipeline(db, "看看整体风险", session_id="s1")
 
     reply = out.get("reply") or ""
     assert "72" in reply

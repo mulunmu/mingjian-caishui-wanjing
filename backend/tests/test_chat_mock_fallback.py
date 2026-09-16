@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 def test_chat_helpers_exist():
-    from app.services.chat_router import (
+    from legacy.chat_router import (
         _radar_chart,
         _bar_chart,
         _missing_enterprise_message,

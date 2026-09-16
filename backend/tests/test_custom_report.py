@@ -8,7 +8,7 @@ import pytest
 
 from app.schemas.custom_report import CustomReportSpec
 from app.services import custom_report as cr
-from app.services.intent_engine import recognize
+from legacy.intent_engine import recognize
 from app.services.report_templates import (
     get_scenario_label,
     get_scenario_tone,
@@ -266,7 +266,7 @@ async def test_available_custom_chapters_flags_empty(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_judgment_dispatches_enterprises_to_builders(monkeypatch):
     from app.services import judgment_service as js
-    from app.services.intent_engine import IntentResult
+    from legacy.intent_engine import IntentResult
 
     captured = {}
 
@@ -289,7 +289,7 @@ async def test_run_judgment_dispatches_enterprises_to_builders(monkeypatch):
 # ── 方案 A：拦截卡片确定性调整 + propose 阶段立即校验（数据驱动空引导） ──
 
 def test_apply_custom_adjustment_cards():
-    from app.services import chat_router
+    from legacy import chat_router
 
     spec = CustomReportSpec(
         chapters=["financial"], industry_l1="制造", province="浙江", enterprises=["企业一"]
@@ -320,7 +320,7 @@ def test_apply_custom_adjustment_cards():
 async def test_custom_proposal_blocks_and_offers_cards(monkeypatch):
     """全章节无数据 → 拦截（不开放「确认生成」），给根因 + 可点击调整卡片。"""
     from app.services import assessment, slice_report
-    from app.services import chat_router
+    from legacy import chat_router
 
     spec = CustomReportSpec(
         chapters=["financial"], industry_l1="制造", province="浙江", enterprises=["企业一"]
@@ -369,7 +369,7 @@ async def test_custom_asking_stage_returns_nonempty_reply(monkeypatch):
     """asking 阶段必须推进 next_turn，禁止空气泡（只剩规则引擎徽章）。"""
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    from app.services import chat_router
+    from legacy import chat_router
 
     async def fake_next(state, answer):
         return {
@@ -386,7 +386,7 @@ async def test_custom_asking_stage_returns_nonempty_reply(monkeypatch):
     async def fake_run_blocking(fn, *args, **kwargs):
         return None
 
-    with patch("app.services.chat_router.run_blocking", side_effect=fake_run_blocking):
+    with patch("legacy.chat_router.run_blocking", side_effect=fake_run_blocking):
         out = await chat_router._route_custom_report(
             MagicMock(),
             "我要生成一份定制化的报告",

@@ -513,7 +513,7 @@ async def classify_intent_llm(query: str) -> dict | None:
     """发散问题兜底：LLM 把问题映射到固定 功能×维度，失败返回 None。"""
     if not llm_available():
         return None
-    from app.services.intent_engine import DIMENSIONS, FUNCTIONS, industry_l1_options
+    from app.services.semantic_lexicon import DIMENSIONS, FUNCTIONS, industry_l1_options
 
     industries = "、".join(industry_l1_options())
     from app.services.persona import build_persona_prompt
@@ -726,7 +726,7 @@ async def llm_custom_report_turn(state: dict) -> "object | None":
     if not llm_available():
         return None
     from app.schemas.custom_report import CustomReportTurn
-    from app.services.intent_engine import industry_l1_options, province_options
+    from app.services.semantic_lexicon import industry_l1_options, province_options
     from app.services.report_templates import CHAPTER_REGISTRY
 
     chapters_vocab = "；".join(f"{k}:{entry['desc']}" for k, entry in CHAPTER_REGISTRY.items())

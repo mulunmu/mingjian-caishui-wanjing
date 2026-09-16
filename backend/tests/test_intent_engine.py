@@ -4,7 +4,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.intent_engine import (
+from legacy.intent_engine import (
     _match_intent_rules,
     _normalize_intent,
     evaluate,
@@ -146,7 +146,7 @@ def test_province_parsing():
 
 
 def test_industry_l1_options_includes_extended():
-    from app.services.intent_engine import industry_l1_options
+    from legacy.intent_engine import industry_l1_options
 
     opts = industry_l1_options()
     assert "新能源" in opts
@@ -154,7 +154,7 @@ def test_industry_l1_options_includes_extended():
 
 
 def test_it_substring_does_not_match_it_software():
-    from app.services.intent_engine import _match_industry
+    from legacy.intent_engine import _match_industry
 
     assert _match_industry("profit margin analysis") is None
     assert _match_industry("unit credit score") is None

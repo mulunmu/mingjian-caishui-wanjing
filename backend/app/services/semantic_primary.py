@@ -15,7 +15,12 @@ from app.services.route_normalize import normalize_route
 from app.services.composition_execution_bridge import execute_metric_composition
 from app.services.semantic_answer_composer import compose_semantic_turn
 from app.services.semantic_frame import frame_from_route
+from app.services.semantic_report_flow import (
+    build_custom_report_turn,
+    build_fixed_report_turn,
+)
 from app.services.semantic_turn_persistence import persist_primary_turn
+from app.services import session_store
 from app.services.shadow_integration import dialog_act_to_raw_route
 from app.services.sync_runner import run_blocking
 from app.services.topic_memory import resolve_topic_reference_blocking
@@ -136,6 +141,14 @@ def build_primary_chat_response(*, session_id: str, turn) -> dict:
         ],
         "evidence_hidden": True,
         "primary": _primary_meta(turn),
+        "report": turn.meta.get("report"),
+        "report_id": turn.meta.get("report_id"),
+        "report_hint": turn.meta.get("report_hint"),
+        "report_locked": bool(turn.meta.get("report_locked")),
+        "actions": list(turn.meta.get("actions") or []),
+        "cards": list(turn.meta.get("cards") or []),
+        "custom_report": turn.meta.get("custom_report_state"),
+        "custom_report_proposal": turn.meta.get("custom_report_proposal"),
     }
     return {
         "reply": turn.reply or "",
@@ -158,9 +171,17 @@ async def run_primary_turn(
     query: str,
     raw_route: dict | None = None,
     enterprise_id: str | None = None,
+    user: dict | None = None,
 ) -> dict:
     effective_query = query
     referenced = None
+    session_context = await run_blocking(session_store.get_session, session_id)
+    custom_state = (
+        (session_context or {}).get("custom_report")
+        if isinstance(session_context, dict)
+        else None
+    )
+    custom_act = False
     if _TOPIC_REFERENCE_RE.search(query):
         referenced = await run_blocking(
             resolve_topic_reference_blocking,
@@ -184,6 +205,7 @@ async def run_primary_turn(
         effective_query = f"{query} {referenced.get('summary') or ''}".strip()
     elif raw_route is None:
         act = await classify_dialog_act(query)
+        custom_act = getattr(act, "act", None) == "custom_report"
         raw_route = dialog_act_to_raw_route(act, query)
         if (
             enterprise_id
@@ -211,6 +233,45 @@ async def run_primary_turn(
         policy = ConversationPolicyRegistry.resolve(route)
         frame = frame_from_route(route, query=effective_query)
     turn = None
+    custom_active = bool(
+        isinstance(custom_state, dict) and custom_state.get("active")
+    )
+    if route.route == "report" or custom_act or custom_active:
+        report_route = route
+        if report_route.route != "report":
+            report_route = normalize_route(
+                {
+                    "route": "report",
+                    "domain": "report",
+                    "language": "zh",
+                    "entities": list(raw_route.get("entities") or []),
+                    "needs_tools": False,
+                    "needs_clarification": False,
+                    "confidence": 0.95,
+                },
+                effective_query,
+            )
+        if custom_act or custom_active:
+            turn = await build_custom_report_turn(
+                db=db,
+                session_id=session_id,
+                owner=owner,
+                user=user,
+                query=effective_query,
+                route=report_route,
+                state=custom_state,
+            )
+        else:
+            turn = await build_fixed_report_turn(
+                db=db,
+                session_id=session_id,
+                owner=owner,
+                user=user,
+                query=effective_query,
+                route=report_route,
+                enterprise_id=enterprise_id,
+                raw_entities=list(raw_route.get("entities") or []),
+            )
     if route.route == "analysis" and len(frame.metrics) >= 2:
         try:
             snapshot = await load_tool_snapshot(db)

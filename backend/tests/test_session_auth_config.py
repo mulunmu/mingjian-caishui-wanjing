@@ -10,7 +10,8 @@ from app.db.session import _pool_kwargs
 from app.services.auth_service import validate_production_config, _DEV_JWT_SECRET
 
 
-def test_pool_kwargs_uses_queue_pool_by_default():
+def test_pool_kwargs_uses_queue_pool_by_default(monkeypatch):
+    monkeypatch.delenv("DB_POOL_DISABLED", raising=False)
     kw = _pool_kwargs()
     assert "pool_size" in kw
     assert kw["pool_pre_ping"] is True

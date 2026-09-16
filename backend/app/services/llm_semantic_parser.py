@@ -21,7 +21,7 @@ _QUERY_TYPES = [
 
 
 def _build_parse_system(dictionary: dict | None, session_context: dict | None) -> str:
-    from app.services.intent_engine import _PROVINCE_KW, industry_l1_options
+    from app.services.semantic_lexicon import _PROVINCE_KW, industry_l1_options
 
     industries = "、".join(industry_l1_options())
     provinces = "、".join(sorted({prov for _, prov in _PROVINCE_KW}))

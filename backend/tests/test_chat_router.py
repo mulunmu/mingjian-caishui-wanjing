@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 def test_chart_helpers():
-    from app.services.chat_router import _radar_chart, _bar_chart
+    from legacy.chat_router import _radar_chart, _bar_chart
 
     ent = {
         "enterprise_name": "Test",
@@ -33,14 +33,14 @@ def test_chart_helpers():
 
 
 def test_missing_enterprise_message():
-    from app.services.chat_router import _missing_enterprise_message
+    from legacy.chat_router import _missing_enterprise_message
 
     msg = _missing_enterprise_message("score")
     assert "行业" in msg or "趋势" in msg
 
 
 def test_unknown_enterprise_message():
-    from app.services.chat_router import _unknown_enterprise_message
+    from legacy.chat_router import _unknown_enterprise_message
 
     msg = _unknown_enterprise_message()
     assert "匿名" in msg or "行业" in msg

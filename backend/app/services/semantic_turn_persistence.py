@@ -92,7 +92,7 @@ async def persist_primary_turn(
     stored = await run_blocking(
         session_store.store_session,
         session_id,
-        turn.route.route,
+        turn.meta.get("session_intent") or turn.route.route,
         query=query,
         function=_function(turn),
         dimension=turn.route.domain or "overall",
@@ -101,6 +101,7 @@ async def persist_primary_turn(
         reply=turn.reply,
         followups=list(turn.followups),
         dialogue_state=_dialogue_state(turn, entities),
+        custom_report=turn.meta.get("custom_report_state"),
     )
     if not stored:
         raise PrimaryPersistenceError("session history persistence failed")

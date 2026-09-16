@@ -8,16 +8,20 @@ from app.api.v1 import chat as chat_api
 
 
 @pytest.mark.asyncio
-async def test_shadow_hook_is_disabled_by_default(monkeypatch):
+async def test_chat_uses_primary_even_when_shadow_is_disabled(monkeypatch):
+    from app.services import semantic_primary
+
     monkeypatch.delenv("SHADOW_SEMANTIC_ENABLED", raising=False)
+    monkeypatch.setenv("SEMANTIC_PRIMARY_ENABLED", "true")
+    monkeypatch.setenv("SEMANTIC_PRIMARY_PERCENT", "100")
     monkeypatch.setattr(
-        chat_api,
-        "route_chat",
-        AsyncMock(return_value={"reply": "ok", "session_id": "s1", "data": {}}),
+        semantic_primary,
+        "run_primary_turn",
+        AsyncMock(return_value={"reply": "primary ok", "session_id": "s1", "data": {}}),
     )
     body = chat_api.ChatRequest(query="你好", session_id="s1")
     out = await chat_api.chat(body=body, db=AsyncMock(), _user=None)
-    assert out["reply"] == "ok"
+    assert out["reply"] == "primary ok"
     assert out["session_note"] == chat_api.SESSION_NOTE
 
 

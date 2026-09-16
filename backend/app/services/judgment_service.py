@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.core_metrics import CoreMetrics, IndustryBenchmark
 from app.schemas.claim import Claim, ClaimTrace, ClaimValue
 from app.schemas.semantic_query import QueryType, SemanticQuery
-from app.services.intent_engine import IntentResult
+from app.services.semantic_lexicon import IntentResult
 from app.services.metric_registry import REVENUE_DEVIATION_WARN, revenue_deviation_warn_label
 from app.services.report_templates import business_level, zh_industry, zh_signal
 from app.services.sync_runner import run_blocking
