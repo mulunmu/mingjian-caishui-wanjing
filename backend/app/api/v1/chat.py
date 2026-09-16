@@ -106,6 +106,28 @@ async def _maybe_run_shadow(
     except Exception as exc:
         logger.warning("shadow semantic evaluation skipped: %s", exc)
 
+
+async def _maybe_run_primary(
+    query: str,
+    *,
+    session_id: str,
+    owner: str | None,
+    db=None,
+) -> dict | None:
+    from app.services import semantic_primary
+
+    if not semantic_primary.primary_enabled():
+        return None
+    if not semantic_primary.primary_selected(session_id):
+        return None
+    return await semantic_primary.run_primary_turn(
+        db=db,
+        session_id=session_id,
+        owner=owner,
+        query=query,
+    )
+
+
 async def _maybe_apply_canary(
     query: str,
     result: dict,
@@ -191,11 +213,29 @@ async def chat(
 
     query = body.query or (body.followup or {}).get("label") or ""
     started = time.perf_counter()
+    owner = _owner_from_user(_user)
+    sid = await run_blocking(session_store.ensure_session_id, body.session_id, owner)
+    primary_failure: str | None = None
+    primary_result: dict | None = None
+    try:
+        primary_result = await _maybe_run_primary(
+            query,
+            session_id=sid,
+            owner=owner,
+            db=db,
+        )
+    except Exception as exc:
+        primary_failure = "internal_error"
+        logger.warning("semantic primary skipped: %s", exc)
+    if primary_result is not None:
+        primary_result["session_note"] = SESSION_NOTE
+        return primary_result
+
     try:
         result = await route_chat(
             db,
             query,
-            session_id=body.session_id,
+            session_id=sid,
             enterprise_id=body.enterprise_id,
             user=_user,
             followup=body.followup,
@@ -207,19 +247,26 @@ async def chat(
             detail="对话服务暂不可用，请稍后重试。演示数据不会在服务端伪造返回。",
         ) from exc
 
+    if primary_failure:
+        result.setdefault("data", {})["primary"] = {
+            "status": "error",
+            "fallback": True,
+            "fallback_reason": primary_failure,
+        }
+
     legacy_latency_ms = (time.perf_counter() - started) * 1000
     await _maybe_run_shadow(
         query,
         result,
-        session_id=result.get("session_id") or body.session_id,
+        session_id=result.get("session_id") or sid,
         legacy_latency_ms=legacy_latency_ms,
         db=db,
     )
     await _maybe_apply_canary(
         query,
         result,
-        session_id=result.get("session_id") or body.session_id,
-        owner=_owner_from_user(_user),
+        session_id=result.get("session_id") or sid,
+        owner=owner,
         db=db,
     )
     result["session_note"] = SESSION_NOTE
