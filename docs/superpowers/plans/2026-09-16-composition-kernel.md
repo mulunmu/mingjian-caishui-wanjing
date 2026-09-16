@@ -1,5 +1,9 @@
 # Composition Kernel Implementation Plan
 
+> Execution status 2026-09-16: Tasks 1-4 and the semantic-frame portion of Task 5 are
+> implemented and verified. End-to-end composition execution, per-node session isolation,
+> staging matrix, and report integration remain pending. Task 6 is not complete.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add typed module composition and an asynchronous DAG runtime that can generate, validate, and execute many dialogue and report combinations without enumerating them.
