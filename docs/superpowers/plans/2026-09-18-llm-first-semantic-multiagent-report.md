@@ -442,31 +442,31 @@ git commit -m "refactor: remove semantic routing overrides"
 - Modify: `backend/app/services/semantic_frame.py`
 - Test: `backend/tests/test_semantic_frame_integration.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 测试 `frame_from_plan(plan)` 的 metrics、analysis_pattern、subject_scope、filters、comparison_basis 全部来自 plan。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `docker exec 20-backend-1 python -m pytest -q tests/test_semantic_frame_integration.py`
 
 Expected: FAIL，当前主路径仍调用 `frame_from_route`。
 
-- [ ] **Step 3: 实现 frame_from_plan**
+- [x] **Step 3: 实现 frame_from_plan**
 
 只做结构映射和枚举校正，不读取 query 关键词。
 
-- [ ] **Step 4: 主路径切换**
+- [x] **Step 4: 主路径切换**
 
 `semantic_primary` 使用 `frame_from_plan`。`frame_from_route` 只保留给无 LLM 降级链路。
 
-- [ ] **Step 5: 运行回归**
+- [x] **Step 5: 运行回归**
 
 Run: `docker exec 20-backend-1 python -m pytest -q tests/test_semantic_frame_integration.py tests/test_semantic_primary.py tests/test_dynamic_composition.py`
 
 Expected: PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/app/services/semantic_frame_from_plan.py backend/app/services/semantic_primary.py backend/app/services/semantic_frame.py backend/tests/test_semantic_frame_integration.py

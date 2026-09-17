@@ -27,6 +27,7 @@ from app.schemas.semantic_plan import (
     SemanticPlanValidationReport,
 )
 from app.services import llm_reply
+from app.services.semantic_frame_from_plan import frame_from_plan
 from app.services.analysis_patterns import ANALYSIS_PATTERNS, COMPARISON_BASIS
 from app.services.composition_validator import validate_composition_plan
 
@@ -393,38 +394,7 @@ def semantic_plan_to_frame(
     route: ConversationRoute,
     base: SemanticFrame,
 ) -> SemanticFrame:
-    pattern_key = plan.analysis_patterns[0] if plan.analysis_patterns else "metric_lookup"
-    spec = ANALYSIS_PATTERNS.get(pattern_key)
-    metrics = list(plan.metrics)
-    steps = _plan_steps(plan)
-    step_metrics = [
-        step.tool_id.removeprefix("metric_")
-        for step in steps
-        if step.tool_id.startswith("metric_")
-    ]
-    if step_metrics:
-        metrics = step_metrics
-    filters = dict(base.filters or {})
-    filters.update(plan.filters or {})
-    entities = list(plan.entities or base.entities)
-    return base.model_copy(
-        update={
-            "policy_route": route.route,
-            "task_type": spec.task_type if spec is not None else base.task_type,
-            "analysis_pattern": pattern_key,
-            "analysis_components": list(plan.analysis_patterns) or [pattern_key],
-            "comparison_basis": plan.comparison_basis,
-            "subject_scope": plan.scope,
-            "entities": entities,
-            "metrics": metrics,
-            "filters": filters,
-            "output_requirements": list(
-                dict.fromkeys([*base.output_requirements, *plan.output_requirements])
-            ),
-            "confidence": plan.confidence,
-            "missing_slots": [],
-        }
-    )
+    return frame_from_plan(plan, route=route, base=base)
 
 
 def _tool_rows(

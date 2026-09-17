@@ -27,9 +27,7 @@ from app.services.route_normalize import is_industry_distribution_query, normali
 from app.services.composition_execution_bridge import execute_metric_composition
 from app.services.analysis_patterns import ANALYSIS_PATTERNS
 from app.services.hybrid_tool_rag import retrieve_tools_hybrid
-from app.services.semantic_planner import (
-    semantic_plan_to_frame,
-)
+from app.services.semantic_frame_from_plan import frame_from_plan
 from app.schemas.semantic_plan import SemanticPlan
 from app.services.semantic_answer_composer import (
     compose_semantic_turn,
@@ -846,7 +844,7 @@ async def run_primary_turn(
             semantic_plan_obj.plan_summary
             or f"计划执行 {len(semantic_plan_obj.steps)} 个模块",
         )
-        frame = semantic_plan_to_frame(
+        frame = frame_from_plan(
             semantic_plan_obj,
             route=route,
             base=frame,
@@ -889,7 +887,7 @@ async def run_primary_turn(
         policy = ConversationPolicyRegistry.resolve(route)
         frame = frame_from_route(route, query=effective_query)
         if semantic_plan_obj is not None:
-            frame = semantic_plan_to_frame(
+            frame = frame_from_plan(
                 semantic_plan_obj,
                 route=route,
                 base=frame,
