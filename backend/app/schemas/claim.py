@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 Confidence = Literal["computed", "inferred", "asserted"]
@@ -36,6 +36,27 @@ class ClaimBundle(BaseModel):
     conclusions: list[str] = Field(default_factory=list, description="面向用户的结论句")
     followups: list[str] = Field(default_factory=list, description="追问建议")
     report_hint: str | None = Field(default=None, description="覆盖度够时的报告提示")
+
+
+class GeneratedClaimBundle(BaseModel):
+    """LLM generation schema: an empty conclusion list is a schema violation."""
+
+    conclusions: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=3,
+        description="面向用户的结论句，至少一句",
+    )
+    followups: list[str] = Field(default_factory=list, max_length=3)
+    report_hint: str | None = None
+
+    @field_validator("conclusions")
+    @classmethod
+    def conclusions_must_contain_text(cls, values: list[str]) -> list[str]:
+        cleaned = [value.strip() for value in values if value and value.strip()]
+        if not cleaned:
+            raise ValueError("at least one non-blank conclusion is required")
+        return cleaned
 
 
 def filter_claims(claims: list[Claim]) -> list[Claim]:

@@ -121,6 +121,7 @@ async def test_langgraph_parity_and_report_interrupt_resume(monkeypatch):
         require_approval=True,
     )
     assert pending["data"]["primary"]["approval_required"] is True
+    assert pending["data"]["primary"]["orchestrator"]["approval_expires_at"]
     assert pending["data"]["primary"]["orchestrator"]["status"] == "approval_required"
     assert [
         item["agent"]
@@ -224,6 +225,42 @@ async def test_stale_report_approval_does_not_hijack_unrelated_question(monkeypa
         require_approval=True,
     )
     assert second["reply"] == "无关问题正常回答"
+
+
+@pytest.mark.asyncio
+async def test_expired_report_approval_requires_new_request(monkeypatch):
+    pytest.importorskip("langgraph")
+    from app.services import outer_orchestrator, semantic_primary
+
+    async def primary(**kwargs):
+        return {"reply": "unexpected", "session_id": kwargs["session_id"], "data": {}}
+
+    async def classify(self, query):
+        del self, query
+        return {"route": "report", "domain": "report"}
+
+    monkeypatch.setenv("LANGGRAPH_OUTER_ENABLED", "true")
+    monkeypatch.setattr(semantic_primary, "run_primary_turn", primary)
+    monkeypatch.setattr(outer_orchestrator.OuterTurnRuntime, "classify", classify)
+
+    session_id = f"outer-expired-{uuid.uuid4().hex}"
+    await outer_orchestrator.run_outer_turn(
+        db=object(),
+        session_id=session_id,
+        owner=None,
+        query="生成报告",
+        require_approval=True,
+    )
+    monkeypatch.setattr(outer_orchestrator, "_approval_expired", lambda _: True)
+    expired = await outer_orchestrator.run_outer_turn(
+        db=object(),
+        session_id=session_id,
+        owner=None,
+        query="确认生成报告",
+        require_approval=True,
+    )
+    assert expired["data"]["primary"]["approval_expired"] is True
+    assert expired["data"]["primary"]["orchestrator"]["status"] == "approval_expired"
 
 
 @pytest.mark.asyncio

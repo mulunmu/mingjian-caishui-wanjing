@@ -19,6 +19,7 @@ from app.services.dialog_act import (
 )
 from app.services.dialogue_composition import build_dialogue_composition_plan
 from app.services.non_analysis_replies import build_non_analysis_turn
+from app.services.observability import get_trace_id
 from app.services.rollout import is_selected, normalize_percent
 from app.services.route_normalize import normalize_route
 from app.services.composition_execution_bridge import execute_metric_composition
@@ -123,6 +124,7 @@ def _primary_meta(turn, *, fallback: bool = False, fallback_reason: str | None =
         "fallback": fallback,
         "fallback_reason": fallback_reason,
         "referenced_topic_id": turn.meta.get("referenced_topic_id"),
+        "trace_id": get_trace_id(),
         "topic_match_score": turn.meta.get("topic_match_score"),
         "topic_match_reason": turn.meta.get("topic_match_reason"),
         "semantic_frame": turn.meta.get("semantic_frame"),
@@ -190,6 +192,7 @@ def build_primary_chat_response(*, session_id: str, turn) -> dict:
         "function": function,
         "dimension": turn.route.domain or "overall",
         "session_id": session_id,
+        "trace_id": get_trace_id(),
         "data": data,
     }
 

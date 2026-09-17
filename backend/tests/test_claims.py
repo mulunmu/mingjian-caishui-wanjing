@@ -1,4 +1,4 @@
-"""claim schema + conclusion_store + llm 模板（无 LLM）"""
+"""claim schema + conclusion_store + LLM 输出约束。"""
 import sys
 import os
 
@@ -6,7 +6,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.schemas.claim import Claim, ClaimTrace, ClaimValue, claims_to_public_reply, filter_claims
 from app.services import conclusion_store
-from app.services.llm_reply import _sanitize_conclusions, _template_from_claims
+from app.services.llm_reply import _sanitize_conclusions
+from app.services.hallucination_guard import (
+    collect_allowed_numbers,
+    filter_unanchored_sentences,
+    sentence_has_anchor,
+)
 
 
 def test_filter_drops_asserted():
@@ -47,6 +52,28 @@ def test_sanitize_blocks_new_numbers():
     ]
     cleaned = _sanitize_conclusions(["样本 10 家。", "逾期率高达 99.9%。"], claims)
     assert cleaned == ["样本 10 家。"]
+
+
+def test_entity_identifier_is_not_metric_number():
+    allowed = collect_allowed_numbers(
+        [Claim(claim="样本欠税均值 0.8 次。", confidence="computed")]
+    )
+    assert sentence_has_anchor("企业1欠税情况整体不算多。", allowed)
+    kept, dropped = filter_unanchored_sentences(
+        ["企业1欠税情况整体不算多。"],
+        [Claim(claim="样本欠税均值 0.8 次。", confidence="computed")],
+    )
+    assert kept == ["企业1欠税情况整体不算多。"]
+    assert dropped == []
+
+
+def test_thousands_separator_has_same_numeric_anchor():
+    allowed = collect_allowed_numbers(
+        [Claim(claim="样本平均开票 1,477.7 张。", confidence="computed")]
+    )
+    assert "1477.7" in allowed
+    assert sentence_has_anchor("样本平均开票1477.7张。", allowed)
+    assert sentence_has_anchor("样本平均开票1,477.7张。", allowed)
 
 
 def test_sanitize_accepts_normalized_decimal_variants():
@@ -113,15 +140,3 @@ def test_conclusion_store_roundtrip():
     assert entry["evidence_hidden"] is True
     assert entry["claims"][0]["trace"]["table"] == "core_metrics"
     assert "trend" in conclusion_store.covered_functions("sess-test")
-
-
-def test_template_from_claims_no_machine_prefix():
-    claims = [Claim(claim="行业趋势平稳，综合评分 72 分。", confidence="computed",
-                    value=ClaimValue(metric="score", number=72, unit="分"))]
-    reply = _template_from_claims(claims, ["追问A"], with_prefix=True, query="整体怎么样")
-    assert "[规则模板生成]" not in reply
-    assert "行业趋势平稳" in reply or "偏稳" in reply or "平稳" in reply
-    assert "建议" in reply
-    assert "72" in reply
-    # 追问只走结构化 chips，正文不再拼「追问A」字面量
-    assert "下方按钮可继续追问" in reply

@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -17,6 +18,7 @@ from app.api.v1.chat import router as chat_router
 from app.api.v1.email import router as email_router
 from app.api.v1.ingest import router as ingest_router
 from app.api.v1.metrics import router as metrics_router
+from app.api.v1.observability import router as observability_router
 from app.api.v1.report import router as report_router
 from app.api.v1.risk import router as risk_router
 from app.api.v1.subscription import router as subscription_router
@@ -24,6 +26,15 @@ from app.db.session import _get_async_session_local
 from app.models.core_metrics import CoreMetrics
 from app.responses import UTF8JSONResponse
 from app.services.llm_reply import is_llm_configured
+from app.services.observability import (
+    capture_exception,
+    get_trace_id,
+    increment_metric,
+    init_sentry,
+    observe_latency,
+    reset_trace_id,
+    set_trace_id,
+)
 from app.services import rate_limiter
 
 logger = logging.getLogger(__name__)
@@ -38,6 +49,7 @@ async def lifespan(app: FastAPI):
     from app.db.mysql_encoding import run_startup_checks
 
     global _startup_checks
+    _startup_checks["sentry_initialized"] = init_sentry()
     try:
         _startup_checks = await asyncio.to_thread(run_startup_checks)
         if not _startup_checks.get("ok"):
@@ -289,12 +301,65 @@ def _client_key_from_scope(scope: Scope) -> str:
 app.add_middleware(RateLimitMiddleware)
 
 
+class TraceMiddleware:
+    """Pure ASGI middleware for trace propagation and request metrics."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = {
+            key.decode("latin-1").lower(): value.decode("latin-1")
+            for key, value in (scope.get("headers") or [])
+        }
+        trace_id, token = set_trace_id(headers.get("x-trace-id"))
+        method = str(scope.get("method") or "GET")
+        started = time.perf_counter()
+        status_code = 500
+
+        async def send_with_trace(message):
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = int(message.get("status") or 500)
+                raw_headers = list(message.get("headers") or [])
+                raw_headers.append((b"x-trace-id", trace_id.encode("ascii")))
+                message = {**message, "headers": raw_headers}
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_trace)
+        except Exception as exc:
+            increment_metric("http_errors_total", {"method": method})
+            capture_exception(exc)
+            raise
+        finally:
+            latency_ms = (time.perf_counter() - started) * 1000
+            increment_metric(
+                "http_requests_total",
+                {"method": method, "status": str(status_code)},
+            )
+            observe_latency(
+                "http_request_latency_ms",
+                latency_ms,
+                {"method": method},
+            )
+            reset_trace_id(token)
+
+
+app.add_middleware(TraceMiddleware)
+
+
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(risk_router, prefix="/api/v1")
 app.include_router(report_router, prefix="/api/v1")
 app.include_router(email_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(metrics_router, prefix="/api/v1")
+app.include_router(observability_router, prefix="/api/v1")
 app.include_router(ingest_router, prefix="/api/v1")
 app.include_router(subscription_router, prefix="/api/v1")
 

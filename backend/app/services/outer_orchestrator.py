@@ -5,9 +5,11 @@ import asyncio
 import importlib.util
 import logging
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, TypedDict
 
 from app.db.urls import sync_database_url
@@ -16,6 +18,7 @@ from app.services import session_store
 from app.services.dialog_act import classify as classify_dialog_act
 from app.services.shadow_integration import dialog_act_to_raw_route
 from app.services.sync_runner import run_blocking
+from app.services.observability import get_trace_id, increment_metric, observe_latency
 from app.services.topic_memory import (
     compose_memory_context_blocking,
     looks_like_topic_reference,
@@ -31,6 +34,7 @@ _CHECKPOINT_SETUP_DSNS: set[str] = set()
 class OuterTurnState(TypedDict, total=False):
     query: str
     approval: bool | None
+    approval_requested_at: str
     approval_required: bool
     memory_context: dict[str, Any]
     agent_trace: list[dict[str, Any]]
@@ -100,6 +104,40 @@ def report_approval_required() -> bool:
     }
 
 
+def approval_ttl_seconds() -> int:
+    try:
+        return max(1, int(os.getenv("LANGGRAPH_APPROVAL_TTL_SECONDS", "900")))
+    except ValueError:
+        return 900
+
+
+def _approval_expired(values: dict[str, Any]) -> bool:
+    raw = str(values.get("approval_requested_at") or "").strip()
+    if not raw:
+        return False
+    try:
+        requested = datetime.fromisoformat(raw)
+        if requested.tzinfo is None:
+            requested = requested.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return (datetime.now(timezone.utc) - requested).total_seconds() > approval_ttl_seconds()
+
+
+def _approval_expires_at(values: dict[str, Any]) -> str | None:
+    raw = str(values.get("approval_requested_at") or "").strip()
+    if not raw:
+        return None
+    try:
+        requested = datetime.fromisoformat(raw)
+        if requested.tzinfo is None:
+            requested = requested.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    expires = requested.timestamp() + approval_ttl_seconds()
+    return datetime.fromtimestamp(expires, tz=timezone.utc).isoformat()
+
+
 def langgraph_available() -> bool:
     return importlib.util.find_spec("langgraph") is not None
 
@@ -142,6 +180,7 @@ async def _checkpointer_context():
 def _pending_response(
     runtime: OuterTurnRuntime,
     agents: list[dict[str, Any]] | None = None,
+    expires_at: str | None = None,
 ) -> dict[str, Any]:
     return {
         "reply": "报告生成需要确认。确认后将执行报告流程。",
@@ -168,6 +207,35 @@ def _pending_response(
                     "status": "approval_required",
                     "session_id": runtime.session_id,
                     "agents": list(agents or []),
+                    "approval_expires_at": expires_at,
+                },
+            },
+            "claims": [],
+        },
+    }
+
+
+def _expired_response(runtime: OuterTurnRuntime) -> dict[str, Any]:
+    return {
+        "reply": "报告确认已过期，请重新发起报告生成。",
+        "reply_source": "langgraph_interrupt",
+        "analysis_mode": "rule",
+        "parse_source": "langgraph_outer",
+        "intent": "report",
+        "function": "report",
+        "dimension": "report",
+        "session_id": runtime.session_id,
+        "followups": ["重新生成报告", "继续分析"],
+        "data": {
+            "primary": {
+                "status": "clarify",
+                "fallback": False,
+                "route": "report",
+                "approval_expired": True,
+                "orchestrator": {
+                    "engine": "langgraph",
+                    "status": "approval_expired",
+                    "session_id": runtime.session_id,
                 },
             },
             "claims": [],
@@ -213,11 +281,28 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
         **details: Any,
     ) -> list[dict[str, Any]]:
         trace = list(state.get("agent_trace") or [])
-        trace.append({"agent": agent, "status": status, **details})
+        trace.append(
+            {
+                "agent": agent,
+                "status": status,
+                "trace_id": get_trace_id(),
+                **details,
+            }
+        )
         return trace
 
+    def finish_agent(agent: str, started: float) -> None:
+        increment_metric("agent_runs_total", {"agent": agent, "status": "completed"})
+        observe_latency(
+            "agent_latency_ms",
+            (time.perf_counter() - started) * 1000,
+            {"agent": agent},
+        )
+
     async def memory_node(state: OuterTurnState) -> OuterTurnState:
+        started = time.perf_counter()
         memory_context = await runtime.load_memory(state["query"])
+        finish_agent("memory_agent", started)
         return {
             "memory_context": memory_context,
             "agent_trace": append_trace(
@@ -230,7 +315,9 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
         }
 
     async def classify_node(state: OuterTurnState) -> OuterTurnState:
+        started = time.perf_counter()
         raw_route = await runtime.classify(state["query"])
+        finish_agent("classification_agent", started)
         return {
             "raw_route": raw_route,
             "agent_trace": append_trace(
@@ -242,10 +329,12 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
         }
 
     async def planning_node(state: OuterTurnState) -> OuterTurnState:
+        started = time.perf_counter()
         raw_route = state.get("raw_route") or {}
         approval_required = bool(
             require_approval and raw_route.get("route") == "report"
         )
+        finish_agent("planning_agent", started)
         return {
             "approval_required": approval_required,
             "agent_trace": append_trace(
@@ -260,6 +349,7 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
         }
 
     async def approval_node(state: OuterTurnState) -> OuterTurnState:
+        started = time.perf_counter()
         approval = state.get("approval")
         if approval is None:
             approval = interrupt(
@@ -269,6 +359,7 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
                     "message": "确认生成报告？",
                 }
             )
+        finish_agent("approval_agent", started)
         return {
             "approval": bool(approval),
             "agent_trace": append_trace(
@@ -280,7 +371,9 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
         }
 
     async def execute_node(state: OuterTurnState) -> OuterTurnState:
+        started = time.perf_counter()
         result = await runtime.execute(state["query"], state["raw_route"])
+        finish_agent("execution_agent", started)
         return {
             "result": result,
             "agent_trace": append_trace(
@@ -294,6 +387,7 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
         return {"result": _cancelled_response(runtime)}
 
     async def review_node(state: OuterTurnState) -> OuterTurnState:
+        started = time.perf_counter()
         result = dict(state.get("result") or {})
         primary = result.setdefault("data", {}).setdefault("primary", {})
         if primary.get("fallback"):
@@ -310,6 +404,7 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
             "session_id": runtime.session_id,
             "agents": trace,
         }
+        finish_agent("verification_agent", started)
         return {
             "result": result,
             "agent_trace": trace,
@@ -361,6 +456,7 @@ async def _run_langgraph(
         config = {"configurable": {"thread_id": runtime.session_id}}
         snapshot = await app.aget_state(config)
         pending = bool(snapshot.next)
+        state_values = getattr(snapshot, "values", None) or {}
         effective_approval = approval
         if pending and effective_approval is None:
             effective_approval = _approval_from_query(query)
@@ -373,23 +469,31 @@ async def _run_langgraph(
                 }
             }
             pending = False
+        if pending and effective_approval is not None and _approval_expired(state_values):
+            return _expired_response(runtime)
         if pending:
             raw = await app.ainvoke(Command(resume=effective_approval), config=config)
         else:
+            approval_requested_at = datetime.now(timezone.utc).isoformat()
             raw = await app.ainvoke(
                 {
                     "query": query,
-                "approval": effective_approval,
-                "approval_required": False,
-                "memory_context": {},
-                "agent_trace": [],
-                "raw_route": {},
+                    "approval": effective_approval,
+                    "approval_requested_at": approval_requested_at,
+                    "approval_required": False,
+                    "memory_context": {},
+                    "agent_trace": [],
+                    "raw_route": {},
                     "result": {},
                 },
                 config=config,
             )
     if isinstance(raw, dict) and "__interrupt__" in raw:
-        return _pending_response(runtime, raw.get("agent_trace"))
+        return _pending_response(
+            runtime,
+            raw.get("agent_trace"),
+            _approval_expires_at(raw),
+        )
     result = (raw or {}).get("result") if isinstance(raw, dict) else None
     return result if isinstance(result, dict) else _pending_response(runtime)
 

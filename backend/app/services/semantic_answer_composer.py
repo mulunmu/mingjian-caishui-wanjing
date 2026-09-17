@@ -1,6 +1,7 @@
 """Semantic answer composer: route -> executable plan -> claims -> guarded reply."""
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from sqlalchemy import select
@@ -15,6 +16,7 @@ from app.services.plan_execution import execute_tool_plan_async
 from app.services.route_normalize import normalize_route
 from app.services.semantic_tool_executors import build_semantic_tool_executors
 from app.services.tool_rag import ToolRagRetriever, ToolSnapshot, load_tool_snapshot
+from app.services.observability import observe_latency
 
 
 def _numeric_entity_key(value: str) -> str | None:
@@ -98,6 +100,7 @@ async def compose_semantic_turn(
         or bool(resolved_entities)
         or route.route in {"analysis", "report", "clarify", "capability"}
     )
+    retrieval_started = time.perf_counter()
     candidates = (
         ToolRagRetriever(snapshot).retrieve(
             query,
@@ -108,6 +111,11 @@ async def compose_semantic_turn(
         )
         if probe_allowed
         else []
+    )
+    observe_latency(
+        "semantic_stage_latency_ms",
+        (time.perf_counter() - retrieval_started) * 1000,
+        {"stage": "retrieval"},
     )
     if route.route in {"capability", "clarify"} and resolved_entities and candidates:
         route = route.model_copy(
@@ -156,11 +164,17 @@ async def compose_semantic_turn(
         ],
     )
     executors = build_semantic_tool_executors(db=db, session_id=session_id)
+    execution_started = time.perf_counter()
     execution = await execute_tool_plan_async(
         plan,
         snapshot,
         executors,
         policy=policy,
+    )
+    observe_latency(
+        "semantic_stage_latency_ms",
+        (time.perf_counter() - execution_started) * 1000,
+        {"stage": "tool_execution"},
     )
     claims = [Claim.model_validate(item) for item in execution.claims]
     if not claims:
@@ -181,17 +195,29 @@ async def compose_semantic_turn(
 
     from app.services import llm_reply
 
+    authoring_started = time.perf_counter()
     reply, bundle, reply_source = await llm_reply.generate_claim_reply(
         query,
         claims,
         followups,
     )
+    observe_latency(
+        "semantic_stage_latency_ms",
+        (time.perf_counter() - authoring_started) * 1000,
+        {"stage": "authoring"},
+    )
     from app.services.hallucination_guard import apply_chat_hallucination_guard
 
+    guard_started = time.perf_counter()
     reply, _, followups = apply_chat_hallucination_guard(
         reply,
         claims,
         followups=followups,
+    )
+    observe_latency(
+        "semantic_stage_latency_ms",
+        (time.perf_counter() - guard_started) * 1000,
+        {"stage": "guard"},
     )
     return SemanticTurnResult(
         status="answered",

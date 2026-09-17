@@ -11,12 +11,17 @@ from app.services.scope_contract import (  # 公共切片契约再导出
     validate_scope_sample_alignment,
 )
 
-_NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
+_NUM_RE = re.compile(r"-?(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)")
+_ENTITY_ID_RE = re.compile(r"(?:企业|主体|ENT)\s*\d+", re.I)
+
+
+def _strip_entity_ids(text: str) -> str:
+    return _ENTITY_ID_RE.sub(" ", text or "")
 
 
 def _normalize_num(s: str) -> str:
     try:
-        f = float(s)
+        f = float(s.replace(",", ""))
         if abs(f - int(f)) < 1e-9:
             return str(int(f))
         return f"{f:.4f}".rstrip("0").rstrip(".")
@@ -27,18 +32,18 @@ def _normalize_num(s: str) -> str:
 def collect_allowed_numbers(claims: list[Claim]) -> set[str]:
     allowed: set[str] = set()
     for c in filter_claims(claims):
-        for n in _NUM_RE.findall(c.claim or ""):
+        for n in _NUM_RE.findall(_strip_entity_ids(c.claim or "")):
             allowed.add(_normalize_num(n))
         if c.value and c.value.number is not None:
             allowed.add(_normalize_num(str(c.value.number)))
         for e in c.evidence_chain or []:
-            for n in _NUM_RE.findall(e):
+            for n in _NUM_RE.findall(_strip_entity_ids(e)):
                 allowed.add(_normalize_num(n))
     return allowed
 
 
 def sentence_has_anchor(text: str, allowed: set[str]) -> bool:
-    nums = [_normalize_num(n) for n in _NUM_RE.findall(text or "")]
+    nums = [_normalize_num(n) for n in _NUM_RE.findall(_strip_entity_ids(text or ""))]
     if not nums:
         return True
     return all(n in allowed for n in nums)
@@ -98,7 +103,14 @@ def apply_chat_hallucination_guard(
     allowed = collect_allowed_numbers(kept_claims) if kept_claims else set()
 
     def _gate_text(text: str) -> tuple[str, list[str]]:
-        parts = _split_chat_sentences(text or "")
+        from app.services.metric_registry import (
+            collapse_repeated_phrases,
+            sanitize_surface_metric_tokens,
+        )
+
+        cleaned = sanitize_surface_metric_tokens(text or "")
+        cleaned = collapse_repeated_phrases(cleaned)
+        parts = _split_chat_sentences(cleaned)
         if not parts:
             return (text or "").strip(), []
         if allowed:

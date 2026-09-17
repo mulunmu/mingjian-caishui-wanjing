@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.db.urls import get_sync_engine
 from app.models.metric_registry import MetricDefinition
 from app.models.semantic_registry import ThresholdRule, ToolAlias, ToolDefinition
+from app.services.metric_registry import zh_metric_label
 from app.services.semantic_tool_executors import semantic_executor_tool_ids
 from app.services.module_contracts import build_compatibility_report
 from app.services.report_blocks import build_report_block_compatibility_report
@@ -71,6 +72,7 @@ def build_coverage_report(engine) -> dict[str, Any]:
                 "tool_enabled": tool.enabled if tool else False,
                 "executor_registered": tool_id in executable_ids,
                 "threshold_count": threshold_map.get(metric.metric_key, 0),
+                "surface_label": zh_metric_label(metric.metric_key),
             }
         )
 
@@ -88,6 +90,11 @@ def build_coverage_report(engine) -> dict[str, Any]:
         item["metric_key"]
         for item in items
         if item["threshold_required"] and item["threshold_count"] == 0
+    ]
+    validated_missing_surface_label = [
+        item["metric_key"]
+        for item in items
+        if item["status"] == "validated" and not item["surface_label"]
     ]
     chapter_gaps: list[dict[str, Any]] = []
     for chapter_id, dependencies in chapter_to_deps.items():
@@ -129,6 +136,7 @@ def build_coverage_report(engine) -> dict[str, Any]:
         "validated_without_executor": validated_without_executor,
         "executable_without_alias": executable_without_alias,
         "thresholds_missing_required": thresholds_missing_required,
+        "validated_missing_surface_label": validated_missing_surface_label,
         "chapter_gaps": chapter_gaps,
     }
     compatibility = build_compatibility_report(load_tool_snapshot_sync(engine))
@@ -166,6 +174,7 @@ def main() -> None:
         or summary["chapter_gaps"]
         or summary["executable_without_alias"]
         or summary["thresholds_missing_required"]
+        or summary["validated_missing_surface_label"]
         or composition["missing_metric_to_chapter"]
         or composition["missing_metric_pair_to_chapter"]
         or report_blocks["missing"]

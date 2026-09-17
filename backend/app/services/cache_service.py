@@ -46,6 +46,11 @@ def _get_sync_redis():
     return _sync_client
 
 
+def get_sync_redis():
+    """Public accessor for services that need atomic Redis operations."""
+    return _get_sync_redis()
+
+
 def get_sync(key: str) -> Any | None:
     r = _get_sync_redis()
     if r is not None:

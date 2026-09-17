@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -618,6 +619,28 @@ RUNTIME_METRIC_LABELS: dict[str, str] = {
     "flagged_count": "预警主体数",
     "risk_level": "群体风险判断",
     "high_severity_cnt": "高危信号数",
+    "cash_flow_level": "现金流水平",
+    "cash_flow_net": "经营现金流净额",
+    "credit_level": "纳税信用等级",
+    "finance_revenue": "财务口径收入",
+    "finance_score": "财务健康得分",
+    "industry_score": "行业地位得分",
+    "invoice_cnt": "开票张数",
+    "invoice_monthly_avg": "月均开票",
+    "invoice_revenue": "发票口径收入",
+    "invoice_score": "发票健康得分",
+    "is_dishonesty": "是否失信",
+    "is_execution": "是否被执行",
+    "legal_score": "法律合规得分",
+    "loan_amount": "贷款金额",
+    "loan_cnt": "贷款笔数",
+    "red_invoice_cnt": "红字发票笔数",
+    "social_months": "社保缴纳月数",
+    "social_trend": "社保趋势",
+    "tax_arrears_cnt": "欠税次数",
+    "tax_health_score": "税务健康得分",
+    "tax_violation_cnt": "税务违法次数",
+    "vat_revenue": "增值税口径收入",
 }
 
 
@@ -639,6 +662,34 @@ def zh_metric_label(metric: str | None) -> str | None:
     if any("\u4e00" <= ch <= "\u9fff" for ch in metric):
         return metric
     return None
+
+
+def sanitize_surface_metric_tokens(text: str | None) -> str:
+    """Replace known internal metric keys with user-facing Chinese labels."""
+    value = str(text or "")
+    if not value:
+        return ""
+    tokens = sorted(RUNTIME_METRIC_LABELS, key=len, reverse=True)
+    if not tokens:
+        return value
+    pattern = re.compile(
+        r"(?<![A-Za-z0-9_])(" + "|".join(re.escape(token) for token in tokens) + r")(?![A-Za-z0-9_])"
+    )
+    return pattern.sub(lambda match: RUNTIME_METRIC_LABELS[match.group(1)], value)
+
+
+def collapse_repeated_phrases(text: str | None) -> str:
+    """Collapse accidental immediate repetitions such as 买卖买卖."""
+    value = str(text or "")
+    if not value:
+        return ""
+    repeated = re.compile(r"([\u4e00-\u9fff]{2,8})\1")
+    for _ in range(3):
+        new_value = repeated.sub(r"\1", value)
+        if new_value == value:
+            break
+        value = new_value
+    return value
 
 
 def format_surface_number(num: Any, unit: str = "", *, metric: str = "") -> str:

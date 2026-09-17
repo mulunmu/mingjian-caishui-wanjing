@@ -10,6 +10,33 @@ from app.services.llm_reply import classify_intent_llm, generate_narration, is_l
 from app.schemas.claim import Claim, ClaimValue
 
 
+def test_llm_timeout_is_bounded(monkeypatch):
+    from app.services.llm_reply import _llm_timeout_seconds
+
+    monkeypatch.setenv("LLM_TIMEOUT_SECONDS", "12.5")
+    assert _llm_timeout_seconds() == 12.5
+    monkeypatch.setenv("LLM_TIMEOUT_SECONDS", "999")
+    assert _llm_timeout_seconds() == 60.0
+
+
+def test_dialogue_uses_fast_model_by_default(monkeypatch):
+    from app.services.llm_reply import _llm_authoring_params
+
+    monkeypatch.delenv("LLM_DIALOGUE_MODEL", raising=False)
+    monkeypatch.setenv("LLM_FALLBACK_MODEL", "deepseek-v4-flash")
+    model, _ = _llm_authoring_params()
+    assert model.endswith("deepseek-v4-flash")
+
+
+@pytest.mark.asyncio
+async def test_core_generation_does_not_fall_back_to_template(monkeypatch):
+    from app.services.llm_reply import LLMGenerationError, generate_claim_reply
+
+    monkeypatch.setattr("app.services.llm_reply.llm_available", lambda: False)
+    with pytest.raises(LLMGenerationError):
+        await generate_claim_reply("资产负债率怎么样", [], [])
+
+
 @pytest.mark.llm
 @pytest.mark.asyncio
 async def test_classify_intent_llm_divergent_query(llm_api_key):

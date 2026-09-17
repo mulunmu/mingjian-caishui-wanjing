@@ -86,6 +86,8 @@ services:
       LLM_MODEL: ${LLM_MODEL:-deepseek-v4-pro}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
       LLM_FALLBACK_MODEL: ${LLM_FALLBACK_MODEL:-deepseek-v4-flash}
+      LLM_DIALOGUE_MODEL: ${LLM_DIALOGUE_MODEL:-deepseek-v4-flash}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-15}
       LLM_DAILY_LIMIT: ${LLM_DAILY_LIMIT:-1000}
       # M1 通义点金金融解读层
       FINANCIAL_LLM_MODEL: ${FINANCIAL_LLM_MODEL:-}

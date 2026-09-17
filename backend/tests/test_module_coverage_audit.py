@@ -26,6 +26,7 @@ def test_module_coverage_audit_builds_metric_tool_and_chapter_summary():
     assert summary["metrics_executable"] >= 40
     assert summary["chapter_gaps"] == []
     assert summary["thresholds_missing_required"] == []
+    assert summary["validated_missing_surface_label"] == []
     assert summary["composition"]["metric_to_chapter_pairs"] > 0
     assert summary["composition"]["missing_metric_to_chapter"] == []
     assert summary["composition"]["metric_pair_to_chapter_triples"] > 0

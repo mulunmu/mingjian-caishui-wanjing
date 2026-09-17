@@ -231,6 +231,18 @@ async def test_classify_fabricate_refuses_without_regex_primary(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_system_support_question_is_capability(monkeypatch):
+    from app.services import dialog_act
+    from app.services.scope_state import empty_dialogue_state
+
+    monkeypatch.setattr(dialog_act.llm_reply, "llm_available", lambda: False)
+    for query in ("这个系统支持什么？", "你们平台有哪些功能？", "系统能做什么？"):
+        act = await dialog_act.classify(query, empty_dialogue_state())
+        assert act.act == "negotiate_scope"
+        assert act.ask_kind == "overview"
+
+
+@pytest.mark.asyncio
 async def test_classify_weather_abstains(monkeypatch):
     """§9#6：超纲天气 → refusal_kind=out_of_domain → abstain。"""
     from app.services import llm_reply

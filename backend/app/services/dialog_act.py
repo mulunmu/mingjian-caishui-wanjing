@@ -1,4 +1,4 @@
-"""对话行为分类：DialogAct 为一等真源（LLM instructor + pydantic 封闭枚举）。
+"""对话行为分类：DialogAct 为一等真源（单次异步 LLM JSON + pydantic 封闭枚举）。
 
 铁律：
 - LLM 只出 act + 槽位，不出库存数字/名单；
@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from typing import Any, Literal
 
@@ -71,7 +70,10 @@ _FIXED_REPORT_COMMAND_RE = re.compile(
 )
 _CAPABILITY_METRIC_RE = re.compile(
     r"(?:能|可以|支持).{0,8}(?:问|查|分析).{0,8}(?:哪些|什么).{0,6}指标|"
-    r"(?:能|可以).{0,8}(?:同时|多个).{0,6}指标|多指标",
+    r"(?:能|可以).{0,8}(?:同时|多个).{0,6}指标|多指标|"
+    r"(?:系统|平台|你们|你).{0,8}(?:支持|能做|可以|会).{0,8}(?:什么|哪些|啥)|"
+    r"(?:支持|提供).{0,6}(?:什么|哪些).{0,6}(?:功能|能力|数据|服务)|"
+    r"能做什么|可以做什么|有什么功能|有哪些功能",
     re.I,
 )
 _UNDERSPECIFIED_QUERY_RE = re.compile(
@@ -455,58 +457,17 @@ def normalize_fallback_act(act: DialogAct, query: str, state: dict[str, Any]) ->
 async def _llm_classify(query: str, state: dict[str, Any]) -> DialogAct | None:
     system = _build_system(state)
     user = f"用户话：{query}"
-    model, llm_params = llm_reply._llm_completion_params()
     try:
-        import instructor
-        from openai import OpenAI
-
-        api_key = llm_params.get("api_key") or ""
-        base = llm_params.get("api_base") or "https://api.deepseek.com"
-        raw_model = (os.getenv("LLM_MODEL") or "deepseek-v4-pro").strip()
-        if raw_model.startswith("openai/"):
-            raw_model = raw_model[len("openai/") :]
-
-        client = instructor.from_openai(OpenAI(api_key=api_key, base_url=base))
-        kwargs: dict = {
-            "model": raw_model,
-            "response_model": DialogAct,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "max_retries": 2,
-            "temperature": 0.0,
-        }
-        extra = llm_reply._llm_extra_body(raw_model)
-        if extra:
-            kwargs["extra_body"] = extra
-        return client.chat.completions.create(**kwargs)
-    except Exception as e1:
-        logger.info("instructor dialog_act failed (%s), try litellm json", e1)
-
-    try:
-        import litellm
-
-        completion_kwargs: dict = {
-            "model": model,
-            **llm_params,
-            "messages": [
-                {"role": "system", "content": system + " 只输出一个 JSON 对象。"},
-                {"role": "user", "content": user},
-            ],
-            "max_tokens": 350,
-            "temperature": 0.0,
-            "timeout": 45,
-            "response_format": {"type": "json_object"},
-        }
-        extra = llm_reply._llm_extra_body(model)
-        if extra:
-            completion_kwargs["extra_body"] = extra
-        response = litellm.completion(**completion_kwargs)
-        raw = llm_reply._extract_llm_content(response)
-        return DialogAct.model_validate_json(raw)
-    except Exception as e2:
-        logger.warning("litellm dialog_act fallback failed: %s", e2)
+        return await llm_reply._async_instructor_completion(
+            system,
+            user,
+            DialogAct,
+            model_params=llm_reply._llm_authoring_params(),
+            max_tokens=350,
+            temperature=0.0,
+        )
+    except Exception as exc:
+        logger.warning("async dialog_act instructor failed: %s", exc)
         return None
 
 

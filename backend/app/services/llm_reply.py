@@ -1,7 +1,8 @@
 """
 LLM 回复：只组织语言，不产生新数字。
 
-优先用 instructor 结构化 ClaimBundle；失败则模板拼接 computed claims。
+核心对话使用单次异步 JSON 生成；快速模型失败后才升级一次主模型。
+生成失败时关闭回答，不回退固定模板或直接拼接 Claim 原文。
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ from dotenv import load_dotenv
 
 from pydantic import BaseModel, Field
 
-from app.schemas.claim import Claim, ClaimBundle, filter_claims
+from app.schemas.claim import Claim, ClaimBundle, GeneratedClaimBundle, filter_claims
 from app.services.hallucination_guard import (
     claims_have_risk_verdict,
     collect_allowed_numbers,
@@ -25,8 +26,16 @@ from app.services.hallucination_guard import (
 from app.services.report_templates import BANNED_AI_PHRASES
 
 load_dotenv()
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 logger = logging.getLogger(__name__)
+
+
+def _llm_timeout_seconds() -> float:
+    try:
+        return max(1.0, min(60.0, float(os.getenv("LLM_TIMEOUT_SECONDS", "15"))))
+    except ValueError:
+        return 15.0
 
 
 class NarrationPlan(BaseModel):
@@ -47,8 +56,8 @@ class SummaryPlan(BaseModel):
 
     sentences: list[str] = Field(default_factory=list, max_length=32)
 
-TEMPLATE_PREFIX = ""  # M3：去掉「[规则模板生成]」前缀；保留常量名兼容旧引用
-FALLBACK_REPLY = "分析完成。整体判断请结合关键数字；可继续追问放贷、评级、预警或稽查场景。"
+class LLMGenerationError(RuntimeError):
+    """The configured LLM could not produce a valid conversational reply."""
 
 # 兼容旧测试/调用
 WARNING_LABELS = {
@@ -85,68 +94,31 @@ def llm_available() -> bool:
     return rate_limiter.check_llm_limit()
 
 
-def _ensure_reply(text: str) -> str:
-    cleaned = (text or "").strip()
-    return cleaned if cleaned else FALLBACK_REPLY
-
-
 def _sanitize_conclusions(conclusions: list[str], claims: list[Claim]) -> list[str]:
     """丢弃引入未授权数字的句子（与 hallucination_guard 同口径）。"""
     kept, dropped = filter_unanchored_sentences(conclusions, claims)
     for line in dropped:
-        logger.info("drop hallucinated conclusion: %r", line[:80])
+        logger.warning("drop hallucinated conclusion: %r", line[:120])
     return [s.strip() for s in kept if s.strip()]
-
-
-def _template_from_claims(
-    claims: list[Claim],
-    followups: list[str],
-    with_prefix: bool = False,
-    report_hint: str | None = None,
-    query: str | None = None,
-) -> str:
-    from app.services.plain_language import build_advisor_reply, translate_terms
-
-    # with_prefix 保留参数兼容旧调用；M3 起不再添加机器前缀
-    _ = with_prefix
-    body = build_advisor_reply(
-        claims,
-        query=query,
-        followups=followups,
-        report_hint=translate_terms(report_hint) if report_hint else None,
-    )
-    return _ensure_reply(body)
-
-
-def _template_reply(intent: str, data: dict, with_prefix: bool = False) -> str:
-    """兼容旧接口：优先 data['claims']，否则用 message。"""
-    _ = with_prefix
-    if data.get("claims"):
-        claims = [Claim.model_validate(c) if isinstance(c, dict) else c for c in data["claims"]]
-        return _template_from_claims(
-            claims,
-            data.get("followups") or [],
-            with_prefix=False,
-            report_hint=data.get("report_hint"),
-            query=data.get("query") or data.get("user_query"),
-        )
-    from app.services.plain_language import translate_terms
-
-    if data.get("message"):
-        return _ensure_reply(translate_terms(str(data["message"])))
-    if data.get("conclusions"):
-        text = "\n".join(translate_terms(str(x)) for x in data["conclusions"])
-        fus = data.get("followups") or []
-        if fus:
-            text += "\n\n（下方按钮可继续追问）"
-        return _ensure_reply(text)
-    return _ensure_reply(
-        "你好，我是明鉴风控顾问。可以直接问：这家能贷吗？信用怎么样？哪里不对劲？哪里可疑要查？"
-    )
 
 
 def _llm_completion_params() -> tuple[str, dict]:
     model = (os.getenv("LLM_MODEL") or "deepseek-v4-pro").strip()
+    params: dict = {"api_key": (os.getenv("LLM_API_KEY") or "").strip()}
+    base = (os.getenv("LLM_BASE_URL") or "https://api.deepseek.com").strip().rstrip("/")
+    if base:
+        params["api_base"] = base
+        if not model.startswith(("openai/", "azure/", "gemini/", "zhipu/", "zai/", "deepseek/")):
+            model = f"openai/{model}"
+    return model, params
+
+
+def _llm_authoring_params() -> tuple[str, dict]:
+    model = (
+        os.getenv("LLM_DIALOGUE_MODEL")
+        or os.getenv("LLM_FALLBACK_MODEL")
+        or "deepseek-v4-flash"
+    ).strip()
     params: dict = {"api_key": (os.getenv("LLM_API_KEY") or "").strip()}
     base = (os.getenv("LLM_BASE_URL") or "https://api.deepseek.com").strip().rstrip("/")
     if base:
@@ -274,7 +246,7 @@ async def generate_financial_interpretation(
                 ],
                 max_tokens=300,
                 temperature=0.3,
-                timeout=30,
+                timeout=_llm_timeout_seconds(),
             )
             raw_text = _extract_llm_content(response)
 
@@ -322,6 +294,117 @@ def _extract_llm_content(response) -> str:
         if isinstance(reasoning, str) and reasoning.strip():
             content = reasoning.strip()
     return content
+
+
+def _json_candidates(raw: str) -> list[str]:
+    """Return safe JSON candidates without making a second model call."""
+    text = (raw or "").strip()
+    if not text:
+        return []
+    candidates: list[str] = []
+    fenced = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
+    fenced = re.sub(r"\s*```$", "", fenced).strip()
+    if fenced:
+        candidates.append(fenced)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(text[start : end + 1].strip())
+    return list(dict.fromkeys(candidates))
+
+
+def _parse_model_json(raw: str, response_model):
+    last_exc: Exception | None = None
+    for candidate in _json_candidates(raw):
+        try:
+            return response_model.model_validate_json(candidate)
+        except Exception as exc:
+            last_exc = exc
+        try:
+            return response_model.model_validate(json.loads(candidate))
+        except Exception as exc:
+            last_exc = exc
+    raise ValueError("LLM did not return valid JSON") from last_exc
+
+
+async def _async_json_completion(
+    system: str,
+    user: str,
+    response_model,
+    *,
+    model_params: tuple[str, dict] | None = None,
+    max_tokens: int,
+    temperature: float = 0.1,
+):
+    """One non-blocking JSON completion with provider retries disabled."""
+    import litellm
+
+    model, llm_params = model_params or _llm_authoring_params()
+    if "json" not in system.lower():
+        system += " 请只输出一个 JSON 对象。"
+    kwargs: dict = {
+        "model": model,
+        **llm_params,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "timeout": _llm_timeout_seconds(),
+        "response_format": {"type": "json_object"},
+        "max_retries": 0,
+    }
+    extra = _llm_extra_body(model)
+    if extra:
+        kwargs["extra_body"] = extra
+    response = await litellm.acompletion(**kwargs)
+    raw = _extract_llm_content(response)
+    if not raw:
+        raise ValueError("LLM returned empty content")
+    return _parse_model_json(raw, response_model)
+
+
+async def _async_instructor_completion(
+    system: str,
+    user: str,
+    response_model,
+    *,
+    model_params: tuple[str, dict] | None = None,
+    max_tokens: int,
+    temperature: float = 0.1,
+    max_retries: int = 0,
+):
+    """Non-blocking schema-constrained completion with no hidden retries."""
+    import instructor
+    from openai import AsyncOpenAI
+
+    model, llm_params = model_params or _llm_authoring_params()
+    raw_model = model.strip()
+    if raw_model.startswith("openai/"):
+        raw_model = raw_model[len("openai/") :]
+    client = instructor.from_openai(
+        AsyncOpenAI(
+            api_key=llm_params.get("api_key") or "",
+            base_url=llm_params.get("api_base") or "https://api.deepseek.com",
+        )
+    )
+    kwargs: dict = {
+        "model": raw_model,
+        "response_model": response_model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "max_retries": max_retries,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "timeout": _llm_timeout_seconds(),
+    }
+    extra = _llm_extra_body(raw_model)
+    if extra:
+        kwargs["extra_body"] = extra
+    return await client.chat.completions.create(**kwargs)
 
 
 def _sanitize_narration(text: str, claims: list[Claim]) -> str:
@@ -487,7 +570,7 @@ async def _plain_completion(
             ],
             "max_tokens": max_tokens,
             "temperature": temperature,
-            "timeout": 40,
+            "timeout": _llm_timeout_seconds(),
         }
         extra = _llm_extra_body(model)
         if extra:
@@ -561,11 +644,10 @@ async def generate_claim_reply(
     persona: dict | None = None,
     financial_interp: str | None = None,
 ) -> tuple[str, ClaimBundle, str]:
-    """DeepSeek 校验润色层：Claims(+可选金融因果参考) → 大白话。reply_source ∈ {llm,template}。"""
+    """LLM 校验润色层：Claims(+可选金融因果参考) → 大白话。reply_source=llm。"""
     from app.services.hallucination_guard import apply_chat_hallucination_guard
     from app.services.persona import build_persona_prompt
     from app.services.plain_language import (
-        build_advisor_reply,
         detect_scenario,
         scenario_system_prompt,
         translate_terms,
@@ -585,13 +667,7 @@ async def generate_claim_reply(
             persona_scenario = persona.get("scenario")
 
     if not llm_available():
-        reply = build_advisor_reply(
-            kept,
-            query=query,
-            followups=seed.followups,
-            report_hint=report_hint,
-        )
-        return _ensure_reply(reply), seed, "template"
+        raise LLMGenerationError("LLM is not configured or daily quota is exhausted")
 
     claim_payload = [
         {
@@ -618,15 +694,23 @@ async def generate_claim_reply(
         )
 
     try:
-        bundle = await _instructor_bundle(system, user)
+        bundle = await _fast_claim_bundle(system, user)
+        if bundle is None:
+            bundle = await _async_instructor_completion(
+                system,
+                user,
+                GeneratedClaimBundle,
+                model_params=_llm_completion_params(),
+                max_tokens=520,
+                max_retries=1,
+            )
         if bundle is None:
             raise RuntimeError("instructor unavailable")
-        conclusions = _sanitize_conclusions(bundle.conclusions or [], kept) or [
-            translate_terms(c.claim) for c in kept
-        ]
+        bundle = ClaimBundle.model_validate(bundle.model_dump())
+        conclusions = _sanitize_conclusions(bundle.conclusions or [], kept)
         conclusions = [translate_terms(s) for s in conclusions]
-        if len(conclusions) < 2:
-            raise RuntimeError("advisor structure too short")
+        if not conclusions:
+            raise RuntimeError("advisor structure empty")
         fus = (bundle.followups or followups)[:3]
         hint = bundle.report_hint or report_hint
         # report_hint 内数字必须过闸
@@ -640,82 +724,62 @@ async def generate_claim_reply(
             text += "\n\n（下方按钮可继续追问）"
         if "规则模板生成" in text:
             text = text.replace("[规则模板生成]", "").replace("规则模板生成", "").strip()
+        if not text.strip():
+            raise RuntimeError("advisor structure empty")
         _record_llm_usage()
-        return _ensure_reply(text), out, "llm"
+        return text, out, "llm"
     except Exception as exc:
         logger.warning("structured LLM failed: %s", exc)
-        reply = build_advisor_reply(
-            kept,
-            query=query,
-            followups=followups,
-            report_hint=report_hint,
-        )
-        return _ensure_reply(reply), seed, "template"
+        raise LLMGenerationError("LLM failed to generate a valid conversational reply") from exc
 
 
-async def _structured_response(system: str, user: str, response_model, json_hint: str):
-    """通用结构化输出：instructor 优先，失败回退 litellm JSON 模式 + model_validate_json。
+async def _structured_response(
+    system: str,
+    user: str,
+    response_model,
+    json_hint: str,
+    *,
+    model_params: tuple[str, dict] | None = None,
+):
+    """通用结构化输出：单次异步 JSON；失败返回 None。
 
     供 ClaimBundle（对话结论）与 CustomReportTurn（定制对话）共用。
     """
-    model, llm_params = _llm_completion_params()
     try:
-        import instructor
-        from openai import OpenAI
-
-        api_key = llm_params.get("api_key") or ""
-        base = llm_params.get("api_base") or "https://api.deepseek.com"
-        # litellm 用 openai/ 前缀；instructor OpenAI 客户端用裸模型名
-        raw_model = (os.getenv("LLM_MODEL") or "deepseek-v4-pro").strip()
-        if raw_model.startswith("openai/"):
-            raw_model = raw_model[len("openai/") :]
-
-        client = instructor.from_openai(OpenAI(api_key=api_key, base_url=base))
-        kwargs: dict = {
-            "model": raw_model,
-            "response_model": response_model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "max_retries": 2,
-            "temperature": 0.1,
-        }
-        extra = _llm_extra_body(raw_model)
-        if extra:
-            kwargs["extra_body"] = extra
-        return client.chat.completions.create(**kwargs)
-    except Exception as e1:
-        logger.info("instructor path failed (%s), try litellm json", e1)
-
-    try:
-        import litellm
-
-        completion_kwargs: dict = {
-            "model": model,
-            **llm_params,
-            "messages": [
-                {"role": "system", "content": system + f" 请只输出 JSON：{json_hint}。"},
-                {"role": "user", "content": user},
-            ],
-            "max_tokens": 600,
-            "temperature": 0.1,
-            "timeout": 45,
-            "response_format": {"type": "json_object"},
-        }
-        extra = _llm_extra_body(model)
-        if extra:
-            completion_kwargs["extra_body"] = extra
-        response = litellm.completion(**completion_kwargs)
-        raw = _extract_llm_content(response)
-        return response_model.model_validate_json(raw)
-    except Exception as e2:
-        logger.warning("litellm json fallback failed: %s", e2)
+        return await _async_json_completion(
+            system + f" 请只输出 JSON：{json_hint}。",
+            user,
+            response_model,
+            model_params=model_params,
+            max_tokens=600,
+        )
+    except Exception as exc:
+        logger.warning("structured JSON call failed: %s", exc)
         return None
 
 
 async def _instructor_bundle(system: str, user: str) -> ClaimBundle | None:
     return await _structured_response(system, user, ClaimBundle, "conclusions, followups, report_hint")
+
+
+async def _fast_claim_bundle(system: str, user: str) -> ClaimBundle | None:
+    """Single low-latency JSON call for the common dialogue authoring path."""
+    if not llm_available():
+        return None
+    try:
+        generated = await _async_json_completion(
+            system
+            + ' 只输出 JSON 对象，格式为 {"conclusions":["句1","句2"],"followups":[],"report_hint":null}。'
+            + " conclusions 最少1句、最多3句，每句不超过60个汉字；followups 最多3条；不要输出 JSON 之外的内容。",
+            user,
+            GeneratedClaimBundle,
+            model_params=_llm_authoring_params(),
+            max_tokens=420,
+        )
+        return ClaimBundle.model_validate(generated.model_dump())
+    except Exception as exc:
+        logger.info("fast claim bundle failed: %s", exc)
+        return None
 
 
 async def llm_custom_report_turn(state: dict) -> "object | None":
@@ -778,7 +842,7 @@ async def llm_custom_report_turn(state: dict) -> "object | None":
 
 
 async def generate_reply(query: str, intent: str, data: dict) -> str:
-    """兼容旧 chat 路径。"""
+    """兼容旧 chat 路径：只接受结构化 Claims，失败关闭且不回退模板。"""
     from app.services.hallucination_guard import apply_chat_hallucination_guard
 
     if data.get("claims"):
@@ -791,42 +855,5 @@ async def generate_reply(query: str, intent: str, data: dict) -> str:
         )
         reply, _, _ = apply_chat_hallucination_guard(reply, claims)
         return reply
-    if not llm_available():
-        return _template_reply(intent, data, with_prefix=False)
-    try:
-        import litellm
-
-        model, llm_params = _llm_completion_params()
-        summary = json.dumps(
-            {k: v for k, v in data.items() if k not in ("claims", "charts")},
-            ensure_ascii=False,
-            default=str,
-        )[:800]
-        completion_kwargs: dict = {
-            "model": model,
-            **llm_params,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "你是风控分析引擎。根据数据用中文概括，不要编造数字。",
-                },
-                {"role": "user", "content": f"问题：{query}\n意图：{intent}\n数据：{summary}"},
-            ],
-            "max_tokens": 250,
-            "temperature": 0.2,
-            "timeout": 45,
-        }
-        extra = _llm_extra_body(model)
-        if extra:
-            completion_kwargs["extra_body"] = extra
-        response = litellm.completion(**completion_kwargs)
-        raw = _extract_llm_content(response)
-        if not raw:
-            return _template_reply(intent, data, with_prefix=False)
-        _record_llm_usage()
-        # 无 Claim：剥离一切含数字句子
-        gated, _, _ = apply_chat_hallucination_guard(raw[:400], [])
-        return _ensure_reply(gated)
-    except Exception as exc:
-        logger.warning("LLM reply failed: %s", exc)
-        return _template_reply(intent, data, with_prefix=False)
+    _ = (intent, query)
+    raise LLMGenerationError("structured claims are required for conversational generation")
