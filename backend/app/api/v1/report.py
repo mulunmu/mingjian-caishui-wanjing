@@ -11,6 +11,7 @@ from app.api.deps import get_current_user_optional, require_plan
 from app.db.session import get_db
 from app.services import auth_service, email_service, slice_report
 from app.services.report_templates import PremiumReportLocked, get_scenario_label, zh_report_title
+from app.schemas.custom_report import CustomReportSpec
 from app.services.slice_report import (
     build_report_detail,
     can_access_report,
@@ -74,6 +75,14 @@ class EmailReportRequest(BaseModel):
     enterprise_id: str | None = None
     recipient: EmailStr
     scenario: str = "general"
+    session_id: str | None = None
+
+
+class CustomReportPlanRequest(BaseModel):
+    spec: CustomReportSpec
+
+
+class CustomReportGenerateRequest(CustomReportPlanRequest):
     session_id: str | None = None
 
 
@@ -262,6 +271,111 @@ async def validate_wizard(
     except Exception as exc:
         logger.warning("validate-wizard failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"预校验失败: {exc}") from exc
+
+
+@router.get("/custom/catalog")
+async def custom_report_catalog(
+    _user: dict | None = Depends(require_plan("subscriber")),
+):
+    """Return the data-backed chapter and analysis-pattern vocabulary."""
+    from app.services.analysis_patterns import catalog as analysis_catalog
+    from app.services.report_templates import CUSTOM_MODULE_REGISTRY
+
+    chapters = [
+        {
+            "key": key,
+            "title": item.get("title") or key,
+            "description": item.get("desc") or "",
+            "category": item.get("category") or "基础章节",
+            "base_chapter": item.get("base_chapter") or key,
+            "default_dimension": item.get("default_dimension") or "overall",
+            "keywords": list(item.get("keywords") or []),
+            "kpis": list(item.get("kpis") or []),
+            "analysis_patterns": list(item.get("analysis_patterns") or []),
+        }
+        for key, item in CUSTOM_MODULE_REGISTRY.items()
+    ]
+    return {
+        "chapters": chapters,
+        "analysis_patterns": analysis_catalog(),
+        "comparison_basis": [
+            {"key": key, "label": label}
+            for key, (label, _) in {
+                "yoy": ("同比", ()),
+                "mom": ("环比", ()),
+                "peer": ("同行", ()),
+                "target": ("目标", ()),
+                "cohort_slice": ("群体切片", ()),
+                "entity_pair": ("个体之间", ()),
+            }.items()
+        ],
+    }
+
+
+def _normalized_custom_spec(spec: CustomReportSpec) -> CustomReportSpec:
+    from app.services.custom_report import normalize_spec
+
+    normalized = normalize_spec(spec)
+    if normalized is None or not normalized.chapters:
+        raise HTTPException(status_code=422, detail="请至少选择一个可执行报告章节。")
+    return normalized
+
+
+@router.post("/custom/plan")
+async def plan_custom_report(
+    body: CustomReportPlanRequest,
+    _user: dict | None = Depends(require_plan("subscriber")),
+):
+    from app.services.custom_report import proposed_blocks
+    from app.services.report_planner import build_report_plan
+
+    spec = _normalized_custom_spec(body.spec)
+    return {
+        "ok": True,
+        "spec": spec.model_dump(),
+        "blocks": proposed_blocks(spec),
+        "report_plan": build_report_plan(spec).model_dump(mode="json"),
+    }
+
+
+@router.post("/custom/generate")
+async def generate_custom_report_endpoint(
+    body: CustomReportGenerateRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: dict | None = Depends(require_plan("subscriber")),
+):
+    from app.services.assessment import resolve_enterprise_ids
+    from app.services.slice_report import generate_custom_report
+
+    spec = _normalized_custom_spec(body.spec)
+    try:
+        enterprise_ids = await resolve_enterprise_ids(db, spec.enterprises)
+        report_id, _path, context = await generate_custom_report(
+            db,
+            spec=spec,
+            session_id=body.session_id,
+            owner=_owner_email(_user),
+            industry_l1=spec.industry_l1,
+            province=spec.province,
+            enterprise_ids=enterprise_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning("custom report generation failed: %s", exc)
+        raise HTTPException(status_code=500, detail="定制报告生成失败，请稍后重试。") from exc
+    return {
+        "report_id": report_id,
+        "status": "completed",
+        "title": context.get("title") or spec.title,
+        "scenario": "custom",
+        "chapters": [
+            {"key": key, "title": chapter.get("title") or key}
+            for chapter in context.get("chapters") or []
+            for key in [chapter.get("function") or ""]
+        ],
+        "download_url": f"/api/v1/report/{report_id}/download",
+    }
 
 
 @router.post("/email")

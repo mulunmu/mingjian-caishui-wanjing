@@ -22,11 +22,21 @@ from app.services.semantic_lexicon import (
 )
 from app.services.report_templates import (
     CHAPTER_REGISTRY,
+    CUSTOM_MODULE_REGISTRY,
     CUSTOM_CHAPTER_KEYWORDS,
     has_scenario_keyword,
     sanitize_surface_industry_terms,
     scope_label,
 )
+from app.services.report_planner import build_report_plan_from_report_spec
+
+
+def _module_spec(key: str) -> dict[str, Any]:
+    return CUSTOM_MODULE_REGISTRY.get(key) or CHAPTER_REGISTRY.get(key) or {}
+
+
+def _is_module_key(key: str) -> bool:
+    return key in CUSTOM_MODULE_REGISTRY or key in CHAPTER_REGISTRY
 
 MAX_TURNS = 6
 
@@ -129,7 +139,7 @@ def clamp_chapters_for_scope(chapters: list[str], scope_mode: str = "") -> list[
     _ = scope_mode
     out: list[str] = []
     for c in chapters or []:
-        if c in CHAPTER_REGISTRY and c not in out:
+        if _is_module_key(c) and c not in out:
             out.append(c)
     return out
 
@@ -165,11 +175,24 @@ def normalize_spec(spec: CustomReportSpec | None) -> CustomReportSpec | None:
         return None
     chapters: list[str] = []
     for c in spec.chapters or []:
-        if c in CHAPTER_REGISTRY and c not in chapters:
+        if _is_module_key(c) and c not in chapters:
             chapters.append(c)
     industry = spec.industry_l1 if spec.industry_l1 in industry_l1_options() else None
     province = spec.province if spec.province in province_options() else None
     enterprises = _dedupe_enterprises(spec.enterprises)
+    from app.services.analysis_patterns import ANALYSIS_PATTERNS
+
+    chapter_analyses: dict[str, list[str]] = {}
+    for key, patterns in (spec.chapter_analyses or {}).items():
+        if key not in chapters:
+            continue
+        valid = [
+            p
+            for p in (patterns or [])
+            if p in ANALYSIS_PATTERNS and p not in {"report", "overview", "metric_lookup"}
+        ]
+        if valid:
+            chapter_analyses[key] = list(dict.fromkeys(valid))
     return CustomReportSpec(
         chapters=chapters,
         industry_l1=industry,
@@ -180,6 +203,7 @@ def normalize_spec(spec: CustomReportSpec | None) -> CustomReportSpec | None:
         ),
         tone=spec.tone,
         purpose=(spec.purpose or "").strip(),
+        chapter_analyses=chapter_analyses,
     )
 
 
@@ -187,16 +211,21 @@ def spec_to_report_spec(spec: CustomReportSpec) -> dict:
     """把 CustomReportSpec 转成报告引擎可消费的 SCENARIOS 风格 spec dict。"""
     chapters = []
     for fn in spec.chapters:
-        if fn not in CHAPTER_REGISTRY:
+        if not _is_module_key(fn):
             continue
-        title = CHAPTER_REGISTRY[fn]["title"]
-        desc = CHAPTER_REGISTRY[fn]["desc"]
+        module = _module_spec(fn)
+        title = module["title"]
+        desc = module["desc"]
         chapters.append(
             {
-                "function": fn,
-                "dimension": (CHAPTER_REGISTRY.get(fn) or {}).get("default_dimension", "overall"),
+                "function": module.get("base_chapter") or fn,
+                "module_key": fn,
+                "dimension": module.get("default_dimension", "overall"),
                 "title": title,
                 "purpose": desc,
+                "analysis_patterns": list((spec.chapter_analyses or {}).get(fn) or []),
+                "metric_allowlist": list(module.get("metric_allowlist") or []),
+                "metric_allow_prefixes": list(module.get("metric_allow_prefixes") or []),
             }
         )
     # 单章定制：给场景专属 KPI，避免退回通用「高风险/标记·项」歧义卡
@@ -208,7 +237,7 @@ def spec_to_report_spec(spec: CustomReportSpec) -> dict:
             {"label": "舞弊预警主体数", "metric": "flagged_count", "unit": "家", "source": "fraud"},
             {"label": "舞弊信号", "metric": "fraud_signal_count", "unit": "项", "source": "fraud"},
         ]
-    return {
+    result = {
         "title": spec.title or "定制风控报告",
         "subtitle": "对话定制 · 自由组合章节",
         "tier": "general",
@@ -220,7 +249,37 @@ def spec_to_report_spec(spec: CustomReportSpec) -> dict:
         "cover": {"motif": "compass", "accent": "#152446"},
         "kpis": kpis,
         "chapters": chapters,
+        "industry_l1": spec.industry_l1,
+        "province": spec.province,
+        "enterprises": list(spec.enterprises or []),
     }
+    result["report_plan"] = build_report_plan_from_report_spec(result).model_dump(
+        mode="json"
+    )
+    return result
+
+
+def proposed_blocks(spec: CustomReportSpec) -> list[dict[str, Any]]:
+    """Expose the ordered chapter plan without executing any metric."""
+    normalized = normalize_spec(spec)
+    if normalized is None:
+        return []
+    blocks: list[dict[str, Any]] = []
+    for index, key in enumerate(normalized.chapters, start=1):
+        item = _module_spec(key)
+        blocks.append(
+            {
+                "order": index,
+                "chapter_key": key,
+                "title": item.get("title") or key,
+                "description": item.get("desc") or "",
+                "category": item.get("category") or "基础章节",
+                "dimension": item.get("default_dimension") or "overall",
+                "analysis_patterns": list((spec.chapter_analyses or {}).get(key) or []),
+                "status": "planned",
+            }
+        )
+    return blocks
 
 
 def proposal_text(spec: CustomReportSpec) -> str:
@@ -234,7 +293,7 @@ def proposal_text(spec: CustomReportSpec) -> str:
         lines.append(f"数据范围：{scope}（行业切片）")
     else:
         lines.append("数据范围：全部样本（未限定行业/企业）")
-    names = [CHAPTER_REGISTRY[c]["title"] for c in spec.chapters if c in CHAPTER_REGISTRY]
+    names = [_module_spec(c).get("title") for c in spec.chapters if _is_module_key(c)]
     lines.append(f"章节（按对话识别，可调整）：{'、'.join(names) or '（未确定）'}")
     lines.append("确认无误请点「确认生成」；要换场景或章节请直接说明。")
     return "\n".join(lines)
@@ -261,7 +320,7 @@ def match_chapters(text: str) -> list[str]:
 
 def infer_title(chapters: list[str]) -> str:
     """按章节组合推导标题（纯结构，无数字/事实）。"""
-    names = [CHAPTER_REGISTRY[c]["title"] for c in chapters if c in CHAPTER_REGISTRY]
+    names = [_module_spec(c).get("title") for c in chapters if _is_module_key(c)]
     if not names:
         return "定制风控报告"
     if len(names) == 1:
@@ -327,7 +386,7 @@ def _spec_from_slots(state: dict) -> CustomReportSpec | None:
     spec = _spec_dict(state)
     # 合并已累计章节（最大化覆盖）
     for c in spec.get("chapters") or []:
-        if c in CHAPTER_REGISTRY and c not in chapters:
+        if _is_module_key(c) and c not in chapters:
             chapters.append(c)
     industry = spec.get("industry_l1") or _match_industry(text)
     province = spec.get("province") or _match_province(text)
@@ -345,6 +404,7 @@ def _spec_from_slots(state: dict) -> CustomReportSpec | None:
         title=title,
         tone=spec.get("tone"),
         purpose=(spec.get("purpose") or "").strip(),
+        chapter_analyses=dict(spec.get("chapter_analyses") or {}),
     )
 
 
@@ -355,7 +415,7 @@ def _merge_llm_spec(state: dict, spec) -> None:
     acc = _spec_dict(state)
     chapters = list(acc.get("chapters") or [])
     for c in spec.chapters or []:
-        if c in CHAPTER_REGISTRY and c not in chapters:
+        if _is_module_key(c) and c not in chapters:
             chapters.append(c)
     if chapters:
         acc["chapters"] = chapters
@@ -368,6 +428,8 @@ def _merge_llm_spec(state: dict, spec) -> None:
         acc["enterprises"] = _dedupe_enterprises((acc.get("enterprises") or []) + ent)
     if spec.purpose:
         acc["purpose"] = spec.purpose
+    if spec.chapter_analyses:
+        acc["chapter_analyses"] = dict(spec.chapter_analyses)
     state["spec"] = acc
 
 
@@ -376,7 +438,7 @@ def _merge_with_slots(spec: CustomReportSpec, state: dict) -> CustomReportSpec:
     acc = _spec_dict(state)
     chapters = list(spec.chapters or [])
     for c in acc.get("chapters") or []:
-        if c in CHAPTER_REGISTRY and c not in chapters:
+        if _is_module_key(c) and c not in chapters:
             chapters.append(c)
     industry = spec.industry_l1 or acc.get("industry_l1")
     province = spec.province or acc.get("province")
@@ -390,6 +452,7 @@ def _merge_with_slots(spec: CustomReportSpec, state: dict) -> CustomReportSpec:
         title=title,
         tone=spec.tone,
         purpose=(spec.purpose or acc.get("purpose") or "").strip(),
+        chapter_analyses={**dict(acc.get("chapter_analyses") or {}), **dict(spec.chapter_analyses or {})},
     )
 
 
@@ -407,6 +470,7 @@ def _salvage_or_give_up(state: dict) -> dict:
             title=infer_title(spec.chapters),
             tone=spec.tone,
             purpose=spec.purpose,
+            chapter_analyses=spec.chapter_analyses,
         )
         state["spec"] = spec.model_dump()
         return {

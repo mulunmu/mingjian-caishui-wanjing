@@ -668,7 +668,7 @@ git commit -m "feat: expand semantic composition operators"
 - Test: `backend/tests/test_report_plan.py`
 - Test: `backend/tests/test_report_plan_http.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖：
 
@@ -680,17 +680,17 @@ git commit -m "feat: expand semantic composition operators"
 - 封面 page 1 不被预览吞掉。
 - 判断段不出现“回答：回答”和重复结论。
 
-- [ ] **Step 2: 实现 ReportPlan schema**
+- [x] **Step 2: 实现 ReportPlan schema**
 
 ReportPlan、ReportChapter、ReportBlock 均使用稳定 ID，支持 fingerprint 去重和 Claim 引用。
 
-- [ ] **Step 3: 实现 ReportPlanner**
+- [x] **Step 3: 实现 ReportPlanner**
 
 输入：用户报告描述、SemanticPlan、可用指标、阈值、章节、Block kind、历史 Claim。
 
 输出：结构化 ReportPlan，不给最终散文。
 
-- [ ] **Step 4: 实现 ReportPlanValidator**
+- [x] **Step 4: 实现 ReportPlanValidator**
 
 校验：
 
@@ -700,21 +700,21 @@ ReportPlan、ReportChapter、ReportBlock 均使用稳定 ID，支持 fingerprint
 - claim/chart 引用存在。
 - 章节没有空 Block。
 
-- [ ] **Step 5: 实现 ReportPlanExecutor**
+- [x] **Step 5: 实现 ReportPlanExecutor**
 
 逐 Block 生成事实段落和图表，再组装章节。LLM 只改写 Claim，不创造数字。
 
-- [ ] **Step 6: 接入自定义报告工作台**
+- [x] **Step 6: 接入自定义报告工作台**
 
 工作台逐步展示章节和 Block，允许用户添加、删除、替换分析方式。每次修改都经过同一 Validator。
 
-- [ ] **Step 7: 运行测试**
+- [x] **Step 7: 运行测试**
 
 Run: `docker exec 20-backend-1 python -m pytest -q tests/test_report_plan.py tests/test_report_plan_http.py tests/test_custom_report.py tests/test_report_blocks.py tests/test_stage14_report_block_matrix.py`
 
 Expected: PASS。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add backend/app/schemas/report_plan.py backend/app/services/report_planner.py backend/app/services/report_plan_validator.py backend/app/services/report_plan_executor.py backend/app/services/report_blocks.py backend/app/services/custom_report.py backend/app/services/slice_report.py backend/tests/test_report_plan.py backend/tests/test_report_plan_http.py

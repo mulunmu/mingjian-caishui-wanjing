@@ -39,6 +39,7 @@ from app.services.metric_registry import revenue_deviation_warn_label
 from app.services.report_html import build_report_html, try_generate_weasyprint_pdf
 from app.services.report_templates import (
     CHAPTER_REGISTRY,
+    CUSTOM_MODULE_REGISTRY,
     PremiumReportLocked,
     compose_purpose_from_claims,
     compose_story_from_chapters,
@@ -250,6 +251,9 @@ def _attach_chapter_blocks(chapters: list[dict[str, Any]]) -> None:
                 f"incompatible report blocks: {chapter.get('function')}:{invalid}"
             )
         chapter["blocks"] = blocks
+    from app.services.report_blocks import dedupe_report_blocks_across_chapters
+
+    dedupe_report_blocks_across_chapters(chapters or [])
 
 
 def _enterprise_chapters(snap: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1288,15 +1292,17 @@ async def _chapter_available(
 
     空时不传 enterprise_ids kwarg，兼容测试 monkeypatch 的 _chapter_claims 签名。
     """
-    dim = (CHAPTER_REGISTRY.get(fn) or {}).get("default_dimension", "overall")
+    chapter_spec = CUSTOM_MODULE_REGISTRY.get(fn) or CHAPTER_REGISTRY.get(fn) or {}
+    engine_fn = chapter_spec.get("base_chapter") or fn
+    dim = chapter_spec.get("default_dimension", "overall")
     try:
         if enterprise_ids:
             claims, meta = await _chapter_claims(
-                db, None, fn, dim, industry_l1=industry_l1, province=province, enterprise_ids=enterprise_ids
+                db, None, engine_fn, dim, industry_l1=industry_l1, province=province, enterprise_ids=enterprise_ids
             )
         else:
             claims, meta = await _chapter_claims(
-                db, None, fn, dim, industry_l1=industry_l1, province=province
+                db, None, engine_fn, dim, industry_l1=industry_l1, province=province
             )
     except Exception as exc:
         logger.debug("chapter availability unavailable (%s): %s", fn, exc)
@@ -1754,6 +1760,22 @@ async def _build_context_from_spec(
             industry_l1=industry_l1, province=province, enterprise_ids=enterprise_ids,
         )
         safe = [c for c in claims if _is_real_data_claim(c)]
+        allow = {str(item) for item in (ch.get("metric_allowlist") or [])}
+        prefixes = tuple(str(item) for item in (ch.get("metric_allow_prefixes") or []))
+        if allow or prefixes:
+            filtered = [
+                c
+                for c in safe
+                if (
+                    (c.value.metric if c.value else None) in allow
+                    or (
+                        prefixes
+                        and str((c.value.metric if c.value else "") or "").startswith(prefixes)
+                    )
+                )
+            ]
+            if filtered:
+                safe = filtered
         if not safe:
             logger.debug("skip empty report chapter: %s", ch.get("title"))
             continue
@@ -1765,6 +1787,8 @@ async def _build_context_from_spec(
                 "purpose": compose_purpose_from_claims(ch["purpose"], ctx_claims),
                 "function": ch["function"],
                 "dimension": ch["dimension"],
+                "module_key": ch.get("module_key") or ch["function"],
+                "analysis_patterns": list(ch.get("analysis_patterns") or []),
                 "claims": ctx_claims,
                 "meta": meta,
                 "charts": meta.get("charts"),
@@ -1772,6 +1796,19 @@ async def _build_context_from_spec(
                 "sample_note": _sample_note(meta),
             }
         )
+
+    report_plan = None
+    if spec.get("report_plan"):
+        from app.schemas.report_plan import ReportPlan
+        from app.services.report_planner import bind_report_plan_claims
+        from app.services.report_plan_validator import validate_report_plan
+
+        planned = bind_report_plan_claims(
+            ReportPlan.model_validate(spec["report_plan"]),
+            chapters,
+        )
+        report_plan = planned.model_dump(mode="json")
+        report_plan["validation"] = validate_report_plan(planned).model_dump(mode="json")
 
     # 汇总高风险主体（匿名 enterprise_id，明文身份绝不落报告，铁律）：信号 unique_affected +
     # 舞弊 top_flags + 真实性 top_suspicious，去重后作为「重点关注主体清单」（禁词：附录）。
@@ -1933,6 +1970,7 @@ async def _build_context_from_spec(
         "scenario_kpis": scenario_kpis,
         "report_date": _now_cn().strftime("%Y年%m月%d日"),
         "chapters": chapters,
+        "report_plan": report_plan,
         "summary_kpis": summary_kpis,
         "executive_summary": sanitize_surface_industry_terms(
             f"{_sample_banner}{executive_summary}"
