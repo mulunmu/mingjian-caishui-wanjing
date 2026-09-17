@@ -475,6 +475,7 @@ def _build_system(state: dict[str, Any]) -> str:
     from app.services.semantic_lexicon import industry_l1_options, province_options
     from app.services.metric_registry import to_tool_schema
     from app.services.persona import build_persona_prompt
+    from app.services.stage17_metric_catalog import all_stage17_specs
 
     scope = (state or {}).get("scope") or "unbound"
     subject = (state or {}).get("subject") or {}
@@ -487,6 +488,10 @@ def _build_system(state: dict[str, Any]) -> str:
     chap_desc = "|".join(f"{c['chapter']}({c['title']})" for c in chapters)
     # 能力地图：章节工具为主；指标工具名作补充白名单（动态自 registry）
     metric_names = "、".join(t["name"] for t in to_tool_schema()[:16])
+    stage17_metrics = "；".join(
+        f"{spec.name}={key}({ '/'.join(spec.aliases[:3]) })"
+        for key, spec in all_stage17_specs().items()
+    )
     return (
         persona + "\n"
         "你是对话行为分类器。只输出 DialogAct JSON，不要解释、不要编造数字或企业名单。\n"
@@ -494,7 +499,8 @@ def _build_system(state: dict[str, Any]) -> str:
         "- negotiate_scope：库存/名单/计数/怎么选。ask_kind=overview|list|count|entry_help。"
         "问某行业有哪些/是谁/名单→list并填 industry_l1；问多少家→count；问能分析哪些/有哪些行业→overview；"
         "问怎么选→entry_help。列名单绝不是 drill。\n"
-        "- bind_subject：选定/换一家主体（随便一家、企业3、换一家）。"
+        "- bind_subject：选定/换一家主体（随便一家、企业3、换一家）；"
+        "点名不存在公司、无此企业、虚构企业、测试公司、火星银行、银河集团时，也输出 bind_subject 并原样填 subject_ref。"
         "「那建筑呢」若在问行业名单则是 negotiate_scope+list，不是 bind。\n"
         "- analyze：风险研判。各行业/趋势/走向/分布/真实性交叉/按地区→scope_target=cohort；"
         "这家/能贷/信用怎么样等指代单户→individual。未选主体的聚合问法默认 cohort。\n"
@@ -515,6 +521,7 @@ def _build_system(state: dict[str, Any]) -> str:
         f"tools：act=analyze 时从章节工具选 1..N：{chap_desc}。"
         "每项填 {chapter, dimension, filters}；filters 可含 industry_l1/province。"
         f"也可填指标工具名（如 {metric_names}）映射到对应章节。非 analyze 时 tools=[]。\n"
+        f"Stage17 已支持指标：{stage17_metrics}。这些均属于财税风控分析，不得判为 out_of_domain。\n"
         f"当前 scope={scope} 主体={name} inventory_focus={focus or '无'}。"
     )
 

@@ -99,4 +99,4 @@ def test_gate_blocks_when_planned_tool_is_enabled():
         session.commit()
     report = build_deployment_gate(engine, min_shadow_samples=20)
     assert report["ok"] is False
-    assert any("planned_tools_enabled" in item for item in report["blockers"])
+    assert any("unsupported_tools_enabled" in item for item in report["blockers"])

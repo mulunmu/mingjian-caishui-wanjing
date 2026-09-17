@@ -289,3 +289,11 @@ def test_chapter_tool_catalog_and_metric_schema_live():
     tools = to_tool_schema()
     assert any(t["name"].startswith("metric_") for t in tools)
     assert all("shape" in (t.get("metadata") or {}) for t in tools)
+
+
+def test_dialog_classifier_prompt_lists_stage17_metrics():
+    system = da._build_system({})
+    assert "customer_hhi" in system
+    assert "customer_top5_concentration" in system
+    assert "violation_recency_days" in system
+    assert "不得判为 out_of_domain" in system

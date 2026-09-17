@@ -125,7 +125,7 @@ def dialog_act_to_raw_route(act, query: str) -> dict[str, Any]:
         route = "capability"
     if _looks_abusive(query):
         route = "abuse"
-    elif _looks_unknown_entity(query) and route in {"out_of_domain", "refuse", "capability", "clarify"}:
+    elif _looks_unknown_entity(query):
         route = "unknown_entity"
     elif _looks_language_switch(query) and _SUPPORTED_ENGLISH_RE.search(query or ""):
         route = "language_switch"

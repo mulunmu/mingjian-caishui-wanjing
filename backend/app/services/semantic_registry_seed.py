@@ -26,6 +26,11 @@ from app.services.metric_registry import (
 )
 from app.services.financial_benchmarks import FINANCIAL_RATIOS
 from app.services.report_templates import CHAPTER_REGISTRY
+from app.services.stage17_metric_catalog import (
+    SUPPORTED_EXTENDED_METRICS,
+    CROSS_DEVIATION_METRICS,
+    UNSUPPORTED_METRICS,
+)
 
 
 SCENARIO_DEPENDENCIES: dict[str, list[str]] = {
@@ -187,6 +192,8 @@ def _upsert_metric(
     status: str,
     shape: str,
     metric_type: str = "computed",
+    unit: str = "",
+    edge_cases: str = "",
 ) -> MetricDefinition:
     rec = session.get(MetricDefinition, metric_key)
     if rec is None:
@@ -196,12 +203,12 @@ def _upsert_metric(
     rec.description = description
     rec.metric_type = metric_type
     rec.formula = formula
-    rec.unit = ""
+    rec.unit = unit
     rec.grain = "enterprise"
     rec.source_fields_json = _json(source_fields)
     rec.dimensions_json = _json(["industry_l1", "province", "scale_label", "time"])
     rec.default_filters_json = "{}"
-    rec.edge_cases = ""
+    rec.edge_cases = edge_cases
     rec.is_canonical = metric_key in {m["metric_key"] for m in CANONICAL_METRICS}
     rec.category = category
     rec.version = 1
@@ -357,12 +364,15 @@ def _seed_metrics_and_tools(session: Session) -> dict[str, int]:
     core_columns = set(CoreMetrics.__table__.columns.keys())
     canonical = {metric["metric_key"]: metric for metric in CANONICAL_METRICS}
     candidates = {item["metric_key"]: item for item in P0_CANDIDATES}
+    stage17 = {**SUPPORTED_EXTENDED_METRICS, **CROSS_DEVIATION_METRICS}
     core_metric_keys = core_columns - NON_TOOL_CORE_FIELDS
     all_keys = list(
         dict.fromkeys(
             list(canonical)
             + [key for key in core_metric_keys if key not in canonical]
             + [key for key in candidates if key not in canonical and key not in core_metric_keys]
+            + [key for key in stage17 if key not in canonical and key not in core_metric_keys and key not in candidates]
+            + [key for key in UNSUPPORTED_METRICS if key not in canonical and key not in core_metric_keys and key not in candidates]
         )
     )
     tool_count = 0
@@ -371,9 +381,13 @@ def _seed_metrics_and_tools(session: Session) -> dict[str, int]:
     for metric_key in all_keys:
         canonical_metric = canonical.get(metric_key)
         candidate = candidates.get(metric_key) or {}
-        implemented = bool(canonical_metric) or metric_key in core_metric_keys
-        status = "validated" if implemented else "planned"
+        stage17_metric = stage17.get(metric_key)
+        unsupported = UNSUPPORTED_METRICS.get(metric_key)
+        implemented = bool(canonical_metric) or metric_key in core_metric_keys or bool(stage17_metric)
+        status = "unsupported" if unsupported else ("validated" if implemented else "planned")
         aliases = list(candidate.get("aliases") or [])
+        if stage17_metric:
+            aliases = list(stage17_metric.aliases) + aliases
         aliases.extend(CORE_FIELD_ALIASES.get(metric_key, []))
         aliases.extend(MULTILINGUAL_ALIASES.get(metric_key, []))
         deduped_aliases: list[str] = []
@@ -384,11 +398,15 @@ def _seed_metrics_and_tools(session: Session) -> dict[str, int]:
         title = (
             canonical_metric.get("name")
             if canonical_metric
+            else stage17_metric.name
+            if stage17_metric
             else (aliases[0] if aliases else metric_key)
         )
         formula = (
             canonical_metric.get("formula")
             if canonical_metric
+            else stage17_metric.formula
+            if stage17_metric
             else candidate.get("formula") or ""
         )
         _upsert_metric(
@@ -405,13 +423,16 @@ def _seed_metrics_and_tools(session: Session) -> dict[str, int]:
             source_fields=(
                 canonical_metric.get("source_fields")
                 if canonical_metric
+                    else list(stage17_metric.source_fields) if stage17_metric
                     else ([metric_key] if metric_key in core_metric_keys else [])
             ),
-            source_tables=list(candidate.get("source_tables") or []),
+            source_tables=list(stage17_metric.source_tables) if stage17_metric else list(candidate.get("source_tables") or []),
             aliases=aliases,
             status=status,
-            shape=(canonical_metric or {}).get("shape") or "single_value",
+            shape=(canonical_metric or {}).get("shape") or (stage17_metric.shape if stage17_metric else "single_value"),
             metric_type="computed" if canonical_metric else "simple",
+            unit=stage17_metric.unit if stage17_metric else "",
+            edge_cases=unsupported.reason if unsupported else "",
         )
         kind = "scenario_tool" if metric_key.startswith("scenario_") else (
             "composite_metric" if canonical_metric else "atomic_metric"

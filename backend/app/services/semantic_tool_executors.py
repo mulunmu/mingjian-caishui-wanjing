@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.claim import claims_to_dict
 from app.schemas.semantic_query import QueryType, SemanticQuery
+from app.services.stage17_metric_catalog import SUPPORTED_METRIC_KEYS as STAGE17_METRIC_KEYS
 
 
 SUPPORTED_METRIC_KEYS: set[str] = {
@@ -73,6 +74,7 @@ SUPPORTED_METRIC_KEYS: set[str] = {
     "high_dev",
     "low_credit",
 }
+SUPPORTED_METRIC_KEYS.update(STAGE17_METRIC_KEYS)
 
 
 def semantic_executor_tool_ids() -> set[str]:

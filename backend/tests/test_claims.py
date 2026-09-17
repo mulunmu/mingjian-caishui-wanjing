@@ -76,6 +76,33 @@ def test_thousands_separator_has_same_numeric_anchor():
     assert sentence_has_anchor("样本平均开票1,477.7张。", allowed)
 
 
+def test_ratio_metric_accepts_percent_and_decimal_forms():
+    claims = [
+        Claim(
+            claim="毛利率均值 0.21。",
+            value=ClaimValue(metric="gross_margin", number=0.21, unit=""),
+            confidence="computed",
+        )
+    ]
+    allowed = collect_allowed_numbers(claims)
+    assert "0.21" in allowed
+    assert "21" in allowed
+    assert sentence_has_anchor("毛利率均值 21%。", allowed)
+
+
+def test_large_percent_value_is_not_scaled_again():
+    claims = [
+        Claim(
+            claim="营收同比均值 32.14%。",
+            value=ClaimValue(metric="revenue_yoy", number=32.14, unit="%"),
+            confidence="computed",
+        )
+    ]
+    allowed = collect_allowed_numbers(claims)
+    assert "32.14" in allowed
+    assert "3214" not in allowed
+
+
 def test_sanitize_accepts_normalized_decimal_variants():
     """85.2 与 85.20 应视为同一锚点（hallucination_guard 归一化口径）。"""
     from app.services.llm_reply import _sanitize_narration

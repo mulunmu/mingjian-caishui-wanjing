@@ -156,6 +156,7 @@ async def test_dialog_classifier_uses_one_async_instructor_call(monkeypatch):
 @pytest.mark.asyncio
 async def test_async_instructor_completion_disables_hidden_retries(monkeypatch):
     calls: list[dict] = []
+    modes: list[object] = []
 
     class FakeCompletions:
         async def create(self, **kwargs):
@@ -165,7 +166,11 @@ async def test_async_instructor_completion_disables_hidden_retries(monkeypatch):
     class FakeClient:
         chat = SimpleNamespace(completions=FakeCompletions())
 
-    monkeypatch.setattr("instructor.from_openai", lambda client: FakeClient())
+    def fake_from_openai(client, *, mode):
+        modes.append(mode)
+        return FakeClient()
+
+    monkeypatch.setattr("instructor.from_openai", fake_from_openai)
 
     result = await llm_reply._async_instructor_completion(
         "system",
@@ -179,3 +184,6 @@ async def test_async_instructor_completion_disables_hidden_retries(monkeypatch):
     assert result.act == "meta_session"
     assert calls[0]["max_retries"] == 0
     assert calls[0]["model"] == "deepseek-v4-flash"
+    import instructor
+
+    assert modes == [instructor.Mode.JSON]

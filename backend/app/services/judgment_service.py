@@ -1776,6 +1776,20 @@ async def _metric_dispatcher(
     db: AsyncSession, sq: SemanticQuery, metric: str
 ) -> tuple[list[Claim], dict[str, Any]]:
     """按 metric 把 aggregation/lookup 委托到既有 builder，或走通用基础指标均值。"""
+    from app.services.extended_metric_executors import build_extended_metric_claims
+    from app.services.stage17_metric_catalog import SUPPORTED_METRIC_KEYS
+
+    if metric in SUPPORTED_METRIC_KEYS:
+        rows = await _load_metrics_scoped(
+            db,
+            _sq_industry(sq),
+            province=_sq_province(sq),
+            enterprise_ids=list(sq.entities or []),
+        )
+        extended = await build_extended_metric_claims(db, sq, metric, rows)
+        if extended is not None:
+            return extended
+
     industry = _sq_industry(sq)
     province = _sq_province(sq)
     if metric == "overall_score":

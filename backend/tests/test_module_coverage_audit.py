@@ -14,13 +14,17 @@ def test_module_coverage_audit_builds_metric_tool_and_chapter_summary():
 
     assert summary["metrics_total"] >= 60
     assert summary["registry_metrics_total"] == summary["metrics_total"]
-    assert summary["metrics_planned"] == 48
-    assert summary["metrics_validated"] == 53
-    assert summary["metrics_executable"] == 53
-    assert summary["validated_metrics_with_aliases"] == 53
-    assert len(summary["planned_metric_keys"]) == 48
+    assert summary["metrics_planned"] == 0
+    assert summary["metrics_validated"] == 67
+    assert summary["metrics_unsupported"] == 36
+    assert summary["metrics_executable"] == 67
+    assert summary["validated_metrics_with_aliases"] == 67
+    assert summary["planned_metric_keys"] == []
+    assert len(summary["unsupported_metric_keys"]) == 36
+    assert len(summary["unsupported_metric_reasons"]) == 36
+    assert summary["unsupported_enabled"] == []
     assert summary["tools_total"] >= summary["metrics_total"]
-    assert summary["metric_tools_validated"] == 53
+    assert summary["metric_tools_validated"] == 67
     assert summary["chapter_tools_validated"] == 8
     assert summary["chapters_total"] >= 8
     assert summary["metrics_executable"] >= 40

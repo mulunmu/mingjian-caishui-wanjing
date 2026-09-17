@@ -12,6 +12,7 @@ from app.schemas.shadow_evaluation import LegacyDialogueSnapshot
 from app.services.semantic_registry_seed import seed_semantic_registry
 from app.services.shadow_integration import (
     compare_snapshots,
+    dialog_act_to_raw_route,
     legacy_snapshot_from_result,
     run_shadow_evaluation_sync,
 )
@@ -178,3 +179,14 @@ def test_legacy_clarify_with_shadow_candidates_is_route_compatible():
     )
     assert comparison.route_match is True
     assert comparison.switch_eligible is True
+
+
+def test_unknown_entity_overrides_misclassified_analysis_route():
+    from app.services.dialog_act import DialogAct
+
+    route = dialog_act_to_raw_route(
+        DialogAct(act="analyze", scenario="warn", scope_target="individual", confidence=0.9),
+        "看看无此企业发票异常",
+    )
+    assert route["route"] == "unknown_entity"
+    assert route["needs_tools"] is False

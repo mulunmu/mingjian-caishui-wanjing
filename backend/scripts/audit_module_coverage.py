@@ -73,6 +73,9 @@ def build_coverage_report(engine) -> dict[str, Any]:
                 "executor_registered": tool_id in executable_ids,
                 "threshold_count": threshold_map.get(metric.metric_key, 0),
                 "surface_label": zh_metric_label(metric.metric_key),
+                "unsupported_reason": (
+                    metric.edge_cases if metric.status == "unsupported" else None
+                ),
             }
         )
 
@@ -96,6 +99,12 @@ def build_coverage_report(engine) -> dict[str, Any]:
         for item in items
         if item["status"] == "validated" and not item["surface_label"]
     ]
+    unsupported_enabled = [
+        item["metric_key"]
+        for item in items
+        if item["status"] == "unsupported"
+        and (item["retrieval_enabled"] or item["tool_enabled"] or item["executor_registered"])
+    ]
     chapter_gaps: list[dict[str, Any]] = []
     for chapter_id, dependencies in chapter_to_deps.items():
         missing = [tool_id for tool_id in dependencies if tool_id not in executable_ids]
@@ -106,6 +115,7 @@ def build_coverage_report(engine) -> dict[str, Any]:
         "registry_metrics_total": len(items),
         "metrics_validated": sum(1 for item in items if item["status"] == "validated"),
         "metrics_planned": sum(1 for item in items if item["status"] == "planned"),
+        "metrics_unsupported": sum(1 for item in items if item["status"] == "unsupported"),
         "metrics_executable": sum(1 for item in items if item["executor_registered"]),
         "validated_metrics_with_aliases": sum(
             1
@@ -115,6 +125,14 @@ def build_coverage_report(engine) -> dict[str, Any]:
         "planned_metric_keys": sorted(
             item["metric_key"] for item in items if item["status"] == "planned"
         ),
+        "unsupported_metric_keys": sorted(
+            item["metric_key"] for item in items if item["status"] == "unsupported"
+        ),
+        "unsupported_metric_reasons": {
+            item["metric_key"]: item["unsupported_reason"]
+            for item in items
+            if item["status"] == "unsupported"
+        },
         "metrics_total": len(items),
         "metrics_retrieval_enabled": sum(1 for item in items if item["retrieval_enabled"]),
         "metrics_with_aliases": sum(1 for item in items if item["alias_count"] > 0),
@@ -137,6 +155,7 @@ def build_coverage_report(engine) -> dict[str, Any]:
         "executable_without_alias": executable_without_alias,
         "thresholds_missing_required": thresholds_missing_required,
         "validated_missing_surface_label": validated_missing_surface_label,
+        "unsupported_enabled": unsupported_enabled,
         "chapter_gaps": chapter_gaps,
     }
     compatibility = build_compatibility_report(load_tool_snapshot_sync(engine))
@@ -175,6 +194,8 @@ def main() -> None:
         or summary["executable_without_alias"]
         or summary["thresholds_missing_required"]
         or summary["validated_missing_surface_label"]
+        or summary["metrics_planned"]
+        or summary["unsupported_enabled"]
         or composition["missing_metric_to_chapter"]
         or composition["missing_metric_pair_to_chapter"]
         or report_blocks["missing"]

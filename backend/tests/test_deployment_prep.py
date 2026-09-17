@@ -45,7 +45,7 @@ def test_semantic_readiness_rejects_enabled_planned_tool():
         session.commit()
     report = build_semantic_readiness_report(engine)
     assert report["ok"] is False
-    assert any(item.startswith("planned_tools_enabled") for item in report["failures"])
+    assert any(item.startswith("unsupported_tools_enabled") for item in report["failures"])
 
 
 def test_semantic_readiness_rejects_missing_topic_memory_columns():

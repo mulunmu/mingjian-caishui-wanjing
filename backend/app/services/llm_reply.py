@@ -380,6 +380,8 @@ async def _async_instructor_completion(
     from openai import AsyncOpenAI
 
     model, llm_params = model_params or _llm_authoring_params()
+    if "json" not in system.lower():
+        system += " 请只输出一个 JSON 对象。"
     raw_model = model.strip()
     if raw_model.startswith("openai/"):
         raw_model = raw_model[len("openai/") :]
@@ -387,7 +389,8 @@ async def _async_instructor_completion(
         AsyncOpenAI(
             api_key=llm_params.get("api_key") or "",
             base_url=llm_params.get("api_base") or "https://api.deepseek.com",
-        )
+        ),
+        mode=instructor.Mode.JSON,
     )
     kwargs: dict = {
         "model": raw_model,

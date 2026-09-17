@@ -13,6 +13,32 @@ from app.services.scope_contract import (  # 公共切片契约再导出
 
 _NUM_RE = re.compile(r"-?(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)")
 _ENTITY_ID_RE = re.compile(r"(?:企业|主体|ENT)\s*\d+", re.I)
+_RATIO_PERCENT_METRICS = frozenset(
+    {
+        "revenue_yoy",
+        "profit_margin",
+        "revenue_deviation",
+        "profit_yoy",
+        "debt_ratio",
+        "tax_on_time_rate",
+        "customer_concentration",
+        "supplier_concentration",
+        "category_concentration",
+        "vat_burden",
+        "income_tax_burden",
+        "gross_margin",
+        "net_margin",
+        "roe",
+        "roa",
+        "customer_top5_concentration",
+        "supplier_top5_concentration",
+        "income_tax_effective_rate",
+        "invalid_invoice_ratio",
+        "ocf_to_revenue",
+        "red_invoice_count_ratio",
+        "void_invoice_ratio",
+    }
+)
 
 
 def _strip_entity_ids(text: str) -> str:
@@ -35,7 +61,14 @@ def collect_allowed_numbers(claims: list[Claim]) -> set[str]:
         for n in _NUM_RE.findall(_strip_entity_ids(c.claim or "")):
             allowed.add(_normalize_num(n))
         if c.value and c.value.number is not None:
-            allowed.add(_normalize_num(str(c.value.number)))
+            raw = _normalize_num(str(c.value.number))
+            allowed.add(raw)
+            try:
+                value = float(c.value.number)
+            except (TypeError, ValueError):
+                value = None
+            if c.value.metric in _RATIO_PERCENT_METRICS and value is not None and abs(value) <= 1.5:
+                allowed.add(_normalize_num(str(value * 100)))
         for e in c.evidence_chain or []:
             for n in _NUM_RE.findall(_strip_entity_ids(e)):
                 allowed.add(_normalize_num(n))

@@ -137,3 +137,61 @@ full backend regression: 800 passed, 8 skipped (test auth contract)
 frontend production build: passed
 Sentry SDK installed; SENTRY_DSN not configured; no Sentry events claimed
 ```
+
+## Stage 17 Metric And Threshold Closure
+
+Stage 17 classifies every previous `planned` metric into one of two terminal
+states:
+
+- `validated`: a deterministic executor exists and the metric can enter RAG.
+- `unsupported`: the required source fields or time series do not exist; the
+  metric remains disabled and must never enter RAG.
+
+Current registry state:
+
+```text
+registry_metrics_total=103
+metrics_validated=67
+metrics_unsupported=36
+metrics_planned=0
+validated_thresholds=16
+planned_thresholds=0
+```
+
+Validated Stage 17 additions:
+
+```text
+cross_avg_deviation
+cross_max_deviation
+customer_count
+customer_hhi
+customer_top5_concentration
+income_tax_effective_rate
+invalid_invoice_ratio
+ocf_to_revenue
+red_invoice_count_ratio
+supplier_count
+supplier_hhi
+supplier_top5_concentration
+violation_recency_days
+void_invoice_ratio
+```
+
+Unsupported examples and reasons are stored in `metric_definition.edge_cases`.
+They include missing time series, missing tax amounts, missing employee count,
+missing registered capital, and scenario composites whose required inputs are
+not yet complete. Unsupported tools have `enabled=false` and
+`retrieval_enabled=false`.
+
+Required Stage 17 gates:
+
+```text
+python -m scripts.audit_stage17_metric_data
+python -m scripts.audit_module_coverage --strict
+python -m scripts.verify_semantic_readiness --apply
+```
+
+Promotion of an unsupported metric is allowed only after adding the missing
+source field, a deterministic executor, boundary tests, aliases, and a passing
+strict audit. Do not turn it back into `planned`; move it directly to
+`validated`.

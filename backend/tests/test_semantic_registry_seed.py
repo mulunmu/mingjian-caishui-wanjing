@@ -47,8 +47,14 @@ def test_seed_registry_marks_implemented_and_planned_tools_correctly():
         assert debt_metric is not None and debt_metric.retrieval_enabled is True
         assert debt_tool is not None and debt_tool.status == "validated"
         assert debt_tool.enabled is True
-        assert loan_tool is not None and loan_tool.status == "planned"
+        assert loan_tool is not None and loan_tool.status == "unsupported"
         assert loan_tool.enabled is False
+        unsupported_metric = session.get(MetricDefinition, "scenario_loan_readiness")
+        assert unsupported_metric is not None
+        assert unsupported_metric.retrieval_enabled is False
+        assert "不完整" in (unsupported_metric.edge_cases or "")
+        cross_tool = session.get(ToolDefinition, "metric_cross_max_deviation")
+        assert cross_tool is not None and cross_tool.status == "validated"
 
 
 def test_seed_registry_adds_thresholds_aliases_and_chapters():
@@ -56,6 +62,8 @@ def test_seed_registry_adds_thresholds_aliases_and_chapters():
     seed_semantic_registry(engine)
     with Session(engine) as session:
         assert session.get(ThresholdRule, "debt_ratio.default.gt.0.7.v1") is not None
+        cross_rule = session.get(ThresholdRule, "cross_max_deviation.default.gte.0.4.v1")
+        assert cross_rule is not None and cross_rule.status == "validated"
         assert session.get(ToolDefinition, "chapter_financial") is not None
         alias_count = session.scalar(
             select(func.count()).select_from(ToolAlias).where(

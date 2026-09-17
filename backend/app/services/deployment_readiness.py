@@ -61,6 +61,7 @@ def build_semantic_readiness_report(
     tool_status: dict[str, int] = {}
     threshold_status: dict[str, int] = {}
     planned_enabled_tools: list[str] = []
+    unsupported_enabled_tools: list[str] = []
     if not missing_tables:
         with Session(engine) as session:
             metric_status = _status_counts(session, MetricDefinition)
@@ -70,6 +71,14 @@ def build_semantic_readiness_report(
                 session.scalars(
                     select(ToolDefinition.tool_id).where(
                         ToolDefinition.status == "planned",
+                        ToolDefinition.enabled.is_(True),
+                    )
+                )
+            )
+            unsupported_enabled_tools = list(
+                session.scalars(
+                    select(ToolDefinition.tool_id).where(
+                        ToolDefinition.status == "unsupported",
                         ToolDefinition.enabled.is_(True),
                     )
                 )
@@ -96,6 +105,8 @@ def build_semantic_readiness_report(
         )
     if planned_enabled_tools:
         failures.append(f"planned_tools_enabled:{planned_enabled_tools}")
+    if unsupported_enabled_tools:
+        failures.append(f"unsupported_tools_enabled:{unsupported_enabled_tools}")
 
     return {
         "ok": not failures,
@@ -105,6 +116,7 @@ def build_semantic_readiness_report(
         "tool_status": tool_status,
         "threshold_status": threshold_status,
         "planned_enabled_tools": planned_enabled_tools,
+        "unsupported_enabled_tools": unsupported_enabled_tools,
         "counts": {
             "tables": len(REQUIRED_TABLES),
             "validated_metrics": metric_status.get("validated", 0),

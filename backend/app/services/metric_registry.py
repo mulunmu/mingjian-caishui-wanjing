@@ -643,6 +643,13 @@ RUNTIME_METRIC_LABELS: dict[str, str] = {
     "vat_revenue": "增值税口径收入",
 }
 
+from app.services.stage17_metric_catalog import all_stage17_specs
+
+_STAGE17_METRIC_SPECS = all_stage17_specs()
+
+for _stage17_key, _stage17_spec in _STAGE17_METRIC_SPECS.items():
+    RUNTIME_METRIC_LABELS.setdefault(_stage17_key, _stage17_spec.name)
+
 
 def zh_metric_label(metric: str | None) -> str | None:
     """运行时 metric → 业务中文名；未知英文/蛇形字段返回 None（禁止对外透出）。"""
@@ -725,7 +732,9 @@ RUNTIME_TO_CANONICAL: dict[str, str] = {
 
 # 语义层可表达（可作为 metrics/group_by 目标）的规范 + 运行时指标全集，供 LLM 白名单。
 ALLOWED_METRIC_KEYS: list[str] = sorted(
-    {m["metric_key"] for m in CANONICAL_METRICS} | {"fraud_composite_score"}
+    {m["metric_key"] for m in CANONICAL_METRICS}
+    | {"fraud_composite_score"}
+    | set(_STAGE17_METRIC_SPECS)
 )
 
 

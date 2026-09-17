@@ -74,8 +74,16 @@ DIMENSION_ALIASES: dict[str, str] = {
     "时间": "time",
 }
 
+from app.services.stage17_metric_catalog import all_stage17_specs
+
+_STAGE17_SPECS = all_stage17_specs()
+
 # 运行时可表达的非规范 metric（除 canonical 外允许的）
-RUNTIME_METRIC_KEYS = frozenset({"fraud_composite_score", "signal_total", "risk_level"})
+RUNTIME_METRIC_KEYS = frozenset({"fraud_composite_score", "signal_total", "risk_level"}) | frozenset(_STAGE17_SPECS)
+
+for _metric_key, _metric_spec in _STAGE17_SPECS.items():
+    for _alias in _metric_spec.aliases:
+        METRIC_ALIASES.setdefault(_alias, _metric_key)
 
 _GROUP_DIMENSIONS = ("industry_l1", "province", "scale_label", "time")
 
