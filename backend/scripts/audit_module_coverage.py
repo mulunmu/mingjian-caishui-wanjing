@@ -96,14 +96,33 @@ def build_coverage_report(engine) -> dict[str, Any]:
             chapter_gaps.append({"chapter": chapter_id, "missing_executors": missing})
 
     summary = {
-        "metrics_total": len(items),
+        "registry_metrics_total": len(items),
         "metrics_validated": sum(1 for item in items if item["status"] == "validated"),
-        "metrics_retrieval_enabled": sum(1 for item in items if item["retrieval_enabled"]),
+        "metrics_planned": sum(1 for item in items if item["status"] == "planned"),
         "metrics_executable": sum(1 for item in items if item["executor_registered"]),
+        "validated_metrics_with_aliases": sum(
+            1
+            for item in items
+            if item["status"] == "validated" and item["alias_count"] > 0
+        ),
+        "planned_metric_keys": sorted(
+            item["metric_key"] for item in items if item["status"] == "planned"
+        ),
+        "metrics_total": len(items),
+        "metrics_retrieval_enabled": sum(1 for item in items if item["retrieval_enabled"]),
         "metrics_with_aliases": sum(1 for item in items if item["alias_count"] > 0),
         "metrics_with_thresholds": sum(1 for item in items if item["threshold_count"] > 0),
         "tools_total": len(tools),
         "tools_validated": sum(1 for tool in tools if tool.status == "validated"),
+        "metric_tools_validated": sum(
+            1
+            for tool in tools
+            if tool.status == "validated"
+            and tool.kind in {"atomic_metric", "composite_metric"}
+        ),
+        "chapter_tools_validated": sum(
+            1 for tool in tools if tool.status == "validated" and tool.kind == "chapter"
+        ),
         "tools_enabled": sum(1 for tool in tools if tool.enabled),
         "chapters_total": len(chapter_to_deps),
         "chapters_complete": len(chapter_to_deps) - len(chapter_gaps),

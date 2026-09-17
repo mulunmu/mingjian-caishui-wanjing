@@ -154,6 +154,19 @@ def _run_case(token: str, case: dict[str, Any]) -> dict[str, Any]:
     if case.get("enterprise_id"):
         body["enterprise_id"] = case["enterprise_id"]
     code, payload, latency = _request("POST", f"{BASE_URL}/api/v1/chat", body=body, token=token)
+    primary = (payload.get("data") or {}).get("primary") or {}
+    if (
+        code == 200
+        and case["category"] == "report"
+        and primary.get("approval_required") is True
+    ):
+        code, payload, extra_latency = _request(
+            "POST",
+            f"{BASE_URL}/api/v1/chat",
+            body={"query": "确认生成报告", "session_id": session_id},
+            token=token,
+        )
+        latency += extra_latency
     errors = [f"http={code}"] if code != 200 else validate_response(case, payload)
     return {"id": case["id"], "category": case["category"], "query": case["query"], "latency_ms": round(latency, 2), "ok": not errors, "errors": errors, "status": (payload.get("data") or {}).get("primary", {}).get("status"), "route": (payload.get("data") or {}).get("primary", {}).get("route"), "reply": str(payload.get("reply") or "")[:180]}
 

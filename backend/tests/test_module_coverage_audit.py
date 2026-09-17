@@ -13,7 +13,15 @@ def test_module_coverage_audit_builds_metric_tool_and_chapter_summary():
     summary = report["summary"]
 
     assert summary["metrics_total"] >= 60
+    assert summary["registry_metrics_total"] == summary["metrics_total"]
+    assert summary["metrics_planned"] == 48
+    assert summary["metrics_validated"] == 53
+    assert summary["metrics_executable"] == 53
+    assert summary["validated_metrics_with_aliases"] == 53
+    assert len(summary["planned_metric_keys"]) == 48
     assert summary["tools_total"] >= summary["metrics_total"]
+    assert summary["metric_tools_validated"] == 53
+    assert summary["chapter_tools_validated"] == 8
     assert summary["chapters_total"] >= 8
     assert summary["metrics_executable"] >= 40
     assert summary["chapter_gaps"] == []
