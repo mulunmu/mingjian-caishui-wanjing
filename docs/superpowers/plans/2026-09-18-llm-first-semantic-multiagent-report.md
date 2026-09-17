@@ -732,7 +732,7 @@ git commit -m "feat: add llm report plan and block assembly"
 - Modify: `src/types/chat.ts`
 - Test: `src` build and browser smoke.
 
-- [ ] **Step 1: 写前端契约失败测试或类型检查**
+- [x] **Step 1: 写前端契约失败测试或类型检查**
 
 前端必须能渲染：
 
@@ -742,21 +742,21 @@ git commit -m "feat: add llm report plan and block assembly"
 - `semantic_planner_errors`
 - `report_plan_id`
 
-- [ ] **Step 2: 更新类型和 store**
+- [x] **Step 2: 更新类型和 store**
 
 这些字段作为 API 结果的一部分传递，不硬编码在本地组件文案中。
 
-- [ ] **Step 3: 更新 ProcessTimeline**
+- [x] **Step 3: 更新 ProcessTimeline**
 
 显示真实节点：理解、规划、检索、校验、执行、对比、报告组装、最终校验。禁止显示模型隐藏推理。
 
-- [ ] **Step 4: 运行前端构建**
+- [x] **Step 4: 运行前端构建**
 
 Run: `npm run build`
 
 Expected: 构建成功。
 
-- [ ] **Step 5: 浏览器验收**
+- [x] **Step 5: 浏览器验收**
 
 验证：
 
@@ -766,7 +766,7 @@ Expected: 构建成功。
 - 清空对话不会触发旧 bootstrap 文案。
 - 企业列表显示行业和地区。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/components/chat/ProcessTimeline.tsx src/components/chat/AIMessage.tsx src/stores/chatStore.ts src/types/chat.ts

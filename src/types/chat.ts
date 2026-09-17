@@ -59,6 +59,12 @@ export interface ChatReportMeta {
   title?: string;
 }
 
+export interface ProcessStep {
+  stage: string;
+  label: string;
+  detail?: string;
+}
+
 export interface Message {
   id: string;
   role: MessageRole;
@@ -66,6 +72,7 @@ export interface Message {
   timestamp: number;
   /** AI 回复附带的图表 */
   chart?: ChartConfig;
+  visuals?: ChartConfig[];
   /** 追问建议（兼容旧字符串） */
   followups?: string[];
   /** 结构化追问（优先于 followups） */
@@ -88,6 +95,13 @@ export interface Message {
   parseSource?: string;
   /** 对话内生成的报告（可下载 / 跳转详情） */
   report?: ChatReportMeta;
+  /** 可审计的分析过程摘要，不是模型私有思维链 */
+  processSteps?: ProcessStep[];
+  semanticPlanSummary?: string;
+  semanticPlannerStatus?: string;
+  semanticPlannerErrors?: string[];
+  semanticCompositionToolIds?: string[];
+  reportPlanId?: string;
 }
 
 /** 对话上下文 */

@@ -5,6 +5,7 @@ import type {
   GuidanceCard,
   ChatReportMeta,
   FollowUpItem,
+  ProcessStep,
 } from '@/types/chat';
 
 /** 后端 Chat 请求体 */
@@ -72,6 +73,8 @@ export interface ChatBackendResponse {
     [key: string]: unknown;
   };
   charts?: unknown;
+  visuals?: unknown;
+  process?: ProcessStep[];
   // 后端可能附加的其他字段（由 route_chat 动态返回）
   [key: string]: unknown;
 }
@@ -102,6 +105,12 @@ export interface ChatUiBundle {
   }>;
 }
 
+export interface ChatBootstrapResponse {
+  session_id: string;
+  dialogue_state: DialogueState;
+  ui: ChatUiBundle;
+}
+
 /** 前端 Chat 响应（统一格式） */
 export interface ChatResponse {
   conclusion: string;
@@ -115,13 +124,20 @@ export interface ChatResponse {
   function?: string;
   dimension?: string;
   chart?: ChartConfig;
+  visuals?: ChartConfig[];
   replySource?: string;
   analysisMode?: string;
   parseSource?: string;
   report?: ChatReportMeta;
+  processSteps?: ProcessStep[];
   dialogueState?: DialogueState | null;
   ui?: ChatUiBundle | null;
   enterprise_id?: string;
+  semanticPlanSummary?: string;
+  semanticPlannerStatus?: string;
+  semanticPlannerErrors?: string[];
+  semanticCompositionToolIds?: string[];
+  reportPlanId?: string;
 }
 
 /** 将后端 claims 转换为前端 EvidenceItem 数组 */
@@ -209,51 +225,22 @@ function normalizeChart(chart: unknown): ChartConfig | undefined {
 }
 
 export const chatApi = {
-  send: async (params: ChatRequest): Promise<ChatResponse> => {
-    const res: ChatBackendResponse = await client.post('/chat', params);
+  bootstrap: async (sessionId?: string): Promise<ChatBootstrapResponse> => {
+    const suffix = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
+    return (await client.get(`/chat/bootstrap${suffix}`)) as ChatBootstrapResponse;
+  },
 
-    // 适配层：后端 reply → 前端 conclusion
-    // 从后端 data 中提取 followups 和 claims（后端结构: res.data.followups / res.data.claims）
-    const backendData = res.data;
-    const followupItems = Array.isArray(backendData?.followup_items)
-      ? (backendData.followup_items as FollowUpItem[])
-      : [];
-    const followups =
-      followupItems.length > 0
-        ? followupItems.map((x) => x.label).filter(Boolean)
-        : backendData?.followups || [];
-    const actions = Array.isArray(backendData?.actions) ? backendData.actions : [];
-    const guidanceCards = Array.isArray(backendData?.guidance_cards)
-      ? (backendData.guidance_cards as GuidanceCard[])
-      : [];
-    const evidence = claimsToEvidence(backendData?.claims);
-
-    return {
-      conclusion: res.reply || '',
-      session_id: res.session_id,
-      evidence,
-      trace: res.intent || '',
-      followups,
-      followupItems,
-      actions,
-      guidanceCards,
-      function: res.function,
-      dimension: res.dimension,
-      chart: normalizeChart(res.charts),
-      replySource: res.reply_source || res.judgment_modes?.narration,
-      analysisMode: res.analysis_mode || res.judgment_modes?.analysis || 'rule',
-      parseSource: res.parse_source || res.judgment_modes?.parse,
-      report: (backendData?.report as ChatReportMeta | undefined) || undefined,
-      dialogueState:
-        (res.dialogue_state as DialogueState | undefined) ||
-        (backendData?.dialogue_state as DialogueState | undefined) ||
-        null,
-      ui:
-        (res.ui as ChatUiBundle | undefined) ||
-        (backendData?.ui as ChatUiBundle | undefined) ||
-        null,
-      enterprise_id: (res.enterprise_id as string | undefined) || undefined,
-    };
+  send: async (
+    params: ChatRequest,
+    onProgress?: (step: ProcessStep) => void
+  ): Promise<ChatResponse> => {
+    let res: ChatBackendResponse;
+    if (onProgress) {
+      res = await sendStreamingChat(params, onProgress);
+    } else {
+      res = await client.post('/chat', params);
+    }
+    return normalizeBackendResponse(res);
   },
 
   listSessions: async (): Promise<ChatSessionSummary[]> => {
@@ -269,6 +256,136 @@ export const chatApi = {
     await client.delete(`/chat/sessions/${encodeURIComponent(sessionId)}`);
   },
 };
+
+function baseUrl(): string {
+  return '/api/v1';
+}
+
+async function sendStreamingChat(
+  params: ChatRequest,
+  onProgress: (step: ProcessStep) => void
+): Promise<ChatBackendResponse> {
+  const token = localStorage.getItem('access_token');
+  const response = await fetch(`${baseUrl()}/chat/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(params),
+  });
+  if (!response.ok || !response.body) {
+    throw { response: { status: response.status } };
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalPayload: ChatBackendResponse | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const parsed = parseSseBlock(block);
+      if (parsed?.event === 'progress') {
+        onProgress(parsed.data as ProcessStep);
+      } else if (parsed?.event === 'result') {
+        finalPayload = parsed.data as ChatBackendResponse;
+      } else if (parsed?.event === 'error') {
+        throw { response: { status: 503, data: parsed.data } };
+      }
+      boundary = buffer.indexOf('\n\n');
+    }
+  }
+  if (!finalPayload) {
+    throw { response: { status: 503 } };
+  }
+  return finalPayload;
+}
+
+function parseSseBlock(block: string): { event: string; data: unknown } | null {
+  const eventLine = block.split('\n').find((line) => line.startsWith('event:'));
+  const dataLine = block.split('\n').find((line) => line.startsWith('data:'));
+  if (!eventLine || !dataLine) return null;
+  try {
+    return {
+      event: eventLine.slice('event:'.length).trim(),
+      data: JSON.parse(dataLine.slice('data:'.length).trim()),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeBackendResponse(res: ChatBackendResponse): ChatResponse {
+    const backendData = res.data;
+    const followupItems = Array.isArray(backendData?.followup_items)
+      ? (backendData.followup_items as FollowUpItem[])
+      : [];
+    const followups =
+      followupItems.length > 0
+        ? followupItems.map((x) => x.label).filter(Boolean)
+        : backendData?.followups || [];
+    const actions = Array.isArray(backendData?.actions) ? backendData.actions : [];
+    const guidanceCards = Array.isArray(backendData?.guidance_cards)
+      ? (backendData.guidance_cards as GuidanceCard[])
+      : [];
+    const evidence = claimsToEvidence(backendData?.claims);
+    const primary = (backendData?.primary || {}) as Record<string, unknown>;
+    const reportPlan = (backendData?.report_plan || {}) as Record<string, unknown>;
+
+    return {
+      conclusion: res.reply || '',
+      session_id: res.session_id,
+      evidence,
+      trace: res.intent || '',
+      followups,
+      followupItems,
+      actions,
+      guidanceCards,
+      function: res.function,
+      dimension: res.dimension,
+      chart: normalizeChart(res.charts),
+      visuals: Array.isArray(res.visuals)
+        ? res.visuals.map(normalizeChart).filter((item): item is ChartConfig => Boolean(item))
+        : (() => {
+            const chart = normalizeChart(res.charts);
+            return chart ? [chart] : [];
+          })(),
+      replySource: res.reply_source || res.judgment_modes?.narration,
+      analysisMode: res.analysis_mode || res.judgment_modes?.analysis || 'rule',
+      parseSource: res.parse_source || res.judgment_modes?.parse,
+      report: (backendData?.report as ChatReportMeta | undefined) || undefined,
+      processSteps: Array.isArray(res.process) ? res.process : [],
+      dialogueState:
+        (res.dialogue_state as DialogueState | undefined) ||
+        (backendData?.dialogue_state as DialogueState | undefined) ||
+        null,
+      ui:
+        (res.ui as ChatUiBundle | undefined) ||
+        (backendData?.ui as ChatUiBundle | undefined) ||
+        null,
+      enterprise_id: (res.enterprise_id as string | undefined) || undefined,
+      semanticPlanSummary: typeof primary.semantic_plan_summary === 'string'
+        ? primary.semantic_plan_summary
+        : undefined,
+      semanticPlannerStatus: typeof primary.semantic_planner_status === 'string'
+        ? primary.semantic_planner_status
+        : undefined,
+      semanticPlannerErrors: Array.isArray(primary.semantic_planner_errors)
+        ? primary.semantic_planner_errors.map(String)
+        : [],
+      semanticCompositionToolIds: Array.isArray(primary.semantic_composition_tool_ids)
+        ? primary.semantic_composition_tool_ids.map(String)
+        : [],
+      reportPlanId: typeof reportPlan.plan_id === 'string' ? reportPlan.plan_id : undefined,
+    };
+}
 
 /** 会话列表项（M0） */
 export interface ChatSessionSummary {

@@ -4,6 +4,7 @@ import { FileText } from 'lucide-react';
 import type { FollowUpItem, Message } from '@/types/chat';
 import ConclusionCard from './ConclusionCard';
 import EvidenceDrawer from './EvidenceDrawer';
+import ProcessTimeline from './ProcessTimeline';
 
 interface AIMessageProps {
   message: Message;
@@ -16,6 +17,7 @@ export default function AIMessage({ message, onFollowUp, onAction }: AIMessagePr
   const report = message.report;
   const hasCard =
     message.chart ||
+    (message.visuals && message.visuals.length > 0) ||
     (message.followupItems && message.followupItems.length > 0) ||
     (message.followups && message.followups.length > 0) ||
     (message.actions && message.actions.length > 0) ||
@@ -38,6 +40,7 @@ export default function AIMessage({ message, onFollowUp, onAction }: AIMessagePr
           <ConclusionCard
             conclusion={message.content}
             chart={message.chart}
+            visuals={message.visuals}
             followups={message.followups || []}
             followupItems={message.followupItems}
             actions={message.actions}
@@ -46,6 +49,14 @@ export default function AIMessage({ message, onFollowUp, onAction }: AIMessagePr
             onAction={onAction}
           />
           {reportCard}
+          {message.processSteps && message.processSteps.length > 0 && (
+            <ProcessTimeline
+              steps={message.processSteps}
+              planSummary={message.semanticPlanSummary}
+              plannerStatus={message.semanticPlannerStatus}
+              toolIds={message.semanticCompositionToolIds}
+            />
+          )}
           {hasEvidence && <EvidenceDrawer evidence={message.evidence!} />}
         </div>
       </div>
@@ -66,6 +77,14 @@ export default function AIMessage({ message, onFollowUp, onAction }: AIMessagePr
             {message.content}
           </div>
           {reportCard}
+          {message.processSteps && message.processSteps.length > 0 && (
+            <ProcessTimeline
+              steps={message.processSteps}
+              planSummary={message.semanticPlanSummary}
+              plannerStatus={message.semanticPlannerStatus}
+              toolIds={message.semanticCompositionToolIds}
+            />
+          )}
           {hasEvidence && <EvidenceDrawer evidence={message.evidence!} />}
         </div>
       </div>

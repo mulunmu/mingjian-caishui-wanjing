@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Message, ChatContext, DimensionType, FunctionType, FollowUpItem } from '@/types/chat';
+import type { Message, ChatContext, DimensionType, FunctionType, FollowUpItem, ProcessStep } from '@/types/chat';
 import { chatApi, type ChatSessionSummary, type DialogueState, type ChatUiBundle } from '@/api/chat';
 import { uid } from '@/utils/formatters';
 
@@ -15,6 +15,8 @@ interface ChatStore {
   ingestModalOpen: boolean;
   dialogueState: DialogueState | null;
   ui: ChatUiBundle | null;
+  activeProcess: ProcessStep[];
+  pickerRequested: boolean;
 
   sendMessage: (text: string, followup?: FollowUpItem) => Promise<void>;
   selectDimension: (dim: DimensionType) => void;
@@ -31,6 +33,8 @@ interface ChatStore {
   refreshSessions: () => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
   resetLocalChat: () => void;
+  requestScopePicker: () => void;
+  consumeScopePicker: () => void;
 }
 
 const initialContext: ChatContext = {
@@ -73,20 +77,17 @@ export function clearChatLocalCache(email?: string | null) {
   keys.forEach((k) => localStorage.removeItem(k));
 }
 
-const createWelcomeMessage = (ui?: ChatUiBundle | null): Message => ({
-  id: 'welcome',
-  role: 'assistant',
-  content:
-    ui?.welcome ||
-    '我是明鉴风控顾问。先选分析范围：试用演示企业、从列表选一家，或看全库群体。范围不清时我不会用全样本冒充「这家」。',
-  timestamp: Date.now(),
-  followups: (ui?.chips || []).map((c) => c.label).filter(Boolean),
-  followupItems: ui?.chips || [
-    { type: 'switch_scope', label: '试用演示企业', target: 'individual', params: { use_demo: true } },
-    { type: 'switch_scope', label: '从列表选一家', target: 'individual', params: { open_picker: true } },
-    { type: 'switch_scope', label: '看全库 193 家群体', target: 'cohort' },
-  ],
-});
+const createWelcomeMessage = (ui?: ChatUiBundle | null): Message | null => {
+  if (!ui?.welcome) return null;
+  return {
+    id: 'welcome',
+    role: 'assistant',
+    content: ui.welcome,
+    timestamp: Date.now(),
+    followups: (ui.chips || []).map((c) => c.label).filter(Boolean),
+    followupItems: ui.chips || [],
+  };
+};
 
 function errorMessage(error: unknown): string {
   const status = (error as { response?: { status?: number } })?.response?.status;
@@ -124,7 +125,7 @@ function applyDialogueFromRes(
 }
 
 const useChatStore = create<ChatStore>((set, get) => ({
-  messages: [createWelcomeMessage()],
+  messages: [],
   context: { ...initialContext },
   isLoading: false,
   sessionId: readPersistedSessionId(),
@@ -135,6 +136,8 @@ const useChatStore = create<ChatStore>((set, get) => ({
   ingestModalOpen: false,
   dialogueState: { scope: 'unbound', subject: null, scenario: null },
   ui: null,
+  activeProcess: [],
+  pickerRequested: false,
 
   setEnterpriseId: (id: string | null) => {
     if (id === get().enterpriseId) return;
@@ -143,6 +146,8 @@ const useChatStore = create<ChatStore>((set, get) => ({
 
   openIngestModal: () => set({ ingestModalOpen: true }),
   closeIngestModal: () => set({ ingestModalOpen: false }),
+  requestScopePicker: () => set({ pickerRequested: true }),
+  consumeScopePicker: () => set({ pickerRequested: false }),
 
   addUserMessage: (text: string) => {
     set((s) => ({
@@ -155,21 +160,26 @@ const useChatStore = create<ChatStore>((set, get) => ({
 
   bootstrapSession: async () => {
     const { sessionId } = get();
+    set({ isLoading: true });
     try {
-      const res = await chatApi.send({
-        query: '',
-        session_id: sessionId || undefined,
-        followup: { type: 'bootstrap', label: 'bootstrap' },
-      });
+      const res = await chatApi.bootstrap(sessionId || undefined);
       const nextSessionId = res.session_id || sessionId;
       if (nextSessionId) writePersistedSessionId(nextSessionId);
-      applyDialogueFromRes(set, res);
+      set({
+        dialogueState: res.dialogue_state,
+        ui: res.ui,
+        enterpriseId:
+          res.dialogue_state?.scope === 'individual'
+            ? res.dialogue_state.subject?.enterprise_id || null
+            : null,
+      });
       set({
         sessionId: nextSessionId,
-        messages: [createWelcomeMessage(res.ui)],
+        messages: createWelcomeMessage(res.ui) ? [createWelcomeMessage(res.ui)!] : [],
+        isLoading: false,
       });
     } catch {
-      /* keep local unbound welcome */
+      set({ isLoading: false });
     }
   },
 
@@ -180,7 +190,7 @@ const useChatStore = create<ChatStore>((set, get) => ({
     } else if ((text || '').trim()) {
       addUserMessage(text);
     }
-    set({ isLoading: true });
+    set({ isLoading: true, activeProcess: [] });
 
     try {
       const sendEid =
@@ -195,6 +205,8 @@ const useChatStore = create<ChatStore>((set, get) => ({
         session_id: sessionId || undefined,
         enterprise_id: sendEid,
         followup,
+      }, (step) => {
+        set((s) => ({ activeProcess: [...s.activeProcess, step] }));
       });
 
       applyDialogueFromRes(set, res);
@@ -205,6 +217,7 @@ const useChatStore = create<ChatStore>((set, get) => ({
         content: res.conclusion,
         timestamp: Date.now(),
         chart: res.chart,
+        visuals: res.visuals,
         followups: res.followups,
         followupItems: res.followupItems?.length ? res.followupItems : res.ui?.chips,
         actions: res.actions,
@@ -216,6 +229,12 @@ const useChatStore = create<ChatStore>((set, get) => ({
         analysisMode: res.analysisMode || 'rule',
         parseSource: res.parseSource,
         report: res.report,
+        processSteps: res.processSteps,
+        semanticPlanSummary: res.semanticPlanSummary,
+        semanticPlannerStatus: res.semanticPlannerStatus,
+        semanticPlannerErrors: res.semanticPlannerErrors,
+        semanticCompositionToolIds: res.semanticCompositionToolIds,
+        reportPlanId: res.reportPlanId,
       };
 
       const nextSessionId = res.session_id || sessionId;
@@ -224,6 +243,7 @@ const useChatStore = create<ChatStore>((set, get) => ({
       set((s) => ({
         messages: [...s.messages, aiMsg],
         isLoading: false,
+        activeProcess: [],
         sessionId: nextSessionId,
         context: {
           ...s.context,
@@ -245,10 +265,11 @@ const useChatStore = create<ChatStore>((set, get) => ({
             role: 'assistant',
             content: errorMessage(error),
             timestamp: Date.now(),
-            followups: ['重新提问', '查看整体概览'],
+            followups: ['重新提问'],
           },
         ],
         isLoading: false,
+        activeProcess: [],
       }));
     }
   },
@@ -286,7 +307,8 @@ const useChatStore = create<ChatStore>((set, get) => ({
   clearChat: () => {
     writePersistedSessionId(null);
     set({
-      messages: [createWelcomeMessage()],
+      messages: [],
+      isLoading: true,
       context: { ...initialContext },
       sessionId: null,
       enterpriseId: null,
@@ -299,7 +321,8 @@ const useChatStore = create<ChatStore>((set, get) => ({
   resetLocalChat: () => {
     writePersistedSessionId(null);
     set({
-      messages: [createWelcomeMessage()],
+      messages: [],
+      isLoading: false,
       context: { ...initialContext },
       sessionId: null,
       enterpriseId: null,
@@ -345,12 +368,15 @@ const useChatStore = create<ChatStore>((set, get) => ({
       await get().loadSession(target);
       set({ restored: true, sessionsLoading: false });
       try {
-        const res = await chatApi.send({
-          query: '',
-          session_id: target,
-          followup: { type: 'bootstrap', label: 'bootstrap' },
+        const res = await chatApi.bootstrap(target);
+        set({
+          dialogueState: res.dialogue_state,
+          ui: res.ui,
+          enterpriseId:
+            res.dialogue_state?.scope === 'individual'
+              ? res.dialogue_state.subject?.enterprise_id || null
+              : null,
         });
-        applyDialogueFromRes(set, res);
       } catch {
         /* ignore */
       }
@@ -378,7 +404,7 @@ const useChatStore = create<ChatStore>((set, get) => ({
       set({
         sessionId: detail.session_id,
         enterpriseId: detail.enterprise_id || null,
-        messages: restoredMsgs.length ? restoredMsgs : [createWelcomeMessage()],
+        messages: restoredMsgs.length ? restoredMsgs : [],
       });
     } catch {
       /* ignore */
