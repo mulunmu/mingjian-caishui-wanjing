@@ -439,11 +439,14 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
     async def semantic_planner_node(state: OuterTurnState) -> OuterTurnState:
         started = time.perf_counter()
         await emit_progress("planning", "正在理解语义并规划工具", "LLM 负责方案，系统负责边界")
+        session_record = await run_blocking(session_store.get_session, runtime.session_id) or {}
+        planner_memory = dict(state.get("memory_context") or {})
+        planner_memory["dialogue_state"] = session_record.get("dialogue_state") or {}
         payload = await semantic_nodes.semantic_planner_node(
             db=runtime.db,
             query=state["query"],
             raw_route=state.get("raw_route") or {},
-            memory_context=state.get("memory_context") or {},
+            memory_context=planner_memory,
         )
         finish_agent("semantic_planner_agent", started)
         return {
@@ -673,7 +676,10 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
         result = dict(state.get("result") or {})
         issues = _final_guard_issues(result) if final_guard_enabled() else []
         if final_guard_enabled() and state.get("evidence_critic_status") == "failed":
-            issues.append("evidence_critic_failed")
+            issues.extend(
+                f"evidence_critic:{item}"
+                for item in (state.get("evidence_critic_issues") or ["failed"])
+            )
         budget_ms = agent_budget_ms()
         turn_started = float(state.get("execution_started_at") or time.perf_counter())
         elapsed_ms = (time.perf_counter() - turn_started) * 1000

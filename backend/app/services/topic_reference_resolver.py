@@ -78,7 +78,7 @@ def resolve_topic_candidates(
     top = ranked[0]
     second_score = ranked[1].score if len(ranked) > 1 else 0.0
     gap = top.score - second_score
-    if top.score >= 0.85 and gap >= 0.08:
+    if (top.score >= 0.85 and gap >= 0.08) or (top.score >= 0.58 and gap >= 0.12):
         return TopicResolution(
             status="resolved",
             topic=top,

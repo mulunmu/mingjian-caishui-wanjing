@@ -784,7 +784,7 @@ git commit -m "feat: expose llm plan progress in chat ui"
 - Test: `backend/tests/test_semantic_planner_eval.py`
 - Test: `backend/tests/test_report_plan_eval.py`
 
-- [ ] **Step 1: 建立 200 条语义规划集**
+- [x] **Step 1: 建立 200 条语义规划集**
 
 分类：
 
@@ -798,7 +798,7 @@ git commit -m "feat: expose llm plan progress in chat ui"
 30 条边界、歧义、伪造和权限
 ```
 
-- [ ] **Step 2: 定义验收指标**
+- [x] **Step 2: 定义验收指标**
 
 ```text
 answer_relevance >= 0.98
@@ -810,13 +810,13 @@ topic_rollback_accuracy >= 0.98
 report_block_coverage >= 0.98
 ```
 
-- [ ] **Step 3: 执行评测**
+- [x] **Step 3: 执行评测**
 
 Run: `docker exec 20-backend-1 python scripts/eval_semantic_planner.py --base-url http://127.0.0.1:8000`
 
 Expected: 输出 JSON 和失败案例，不产生补丁式白名单。
 
-- [ ] **Step 4: 回归失败根因**
+- [x] **Step 4: 回归失败根因**
 
 每个失败必须归类为：
 
@@ -828,7 +828,7 @@ Expected: 输出 JSON 和失败案例，不产生补丁式白名单。
 
 同类问题统一修，不写单句正则。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/scripts/eval_semantic_planner.py backend/scripts/eval_topic_rollback.py backend/scripts/eval_report_plan.py backend/tests/test_semantic_planner_eval.py backend/tests/test_report_plan_eval.py

@@ -857,6 +857,10 @@ async def run_primary_turn(
     planner_clarification = topic_clarification or (
         str(planner_meta.get("clarification") or "").strip() or None
     )
+    if topic_clarification:
+        semantic_plan_obj = None
+        planned_composition = None
+        planner_status = "clarify"
     if semantic_plan_obj is not None and semantic_plan_obj.action.value == "analysis":
         if route.route != "analysis":
             route = route.model_copy(

@@ -456,6 +456,12 @@ def _planner_system_prompt(
         for key, values in sorted((allowed_filter_values or {}).items())
     ) or "无"
     context = json.dumps(session_context or {}, ensure_ascii=False)[:1200]
+    continuation_hint = ""
+    if (session_context or {}).get("analysis_continuation_required"):
+        continuation_hint = (
+            "当前处于已有分析会话的延续轮次。除非用户明确问候、拒绝或切换到其他话题，"
+            "否则 action 必须是 analysis，并继承会话中的 analysis_focus、实体和 filters。\n"
+        )
     repair = ""
     if repair_errors:
         repair = "上一版计划未通过校验，必须修复这些问题：\n- " + "\n- ".join(repair_errors) + "\n"
@@ -469,6 +475,7 @@ def _planner_system_prompt(
         f"可用筛选值（只能使用真实值）：{filter_text}\n"
         f"粗路由：{route.route}；domain={route.domain or 'general'}。\n"
         f"会话上下文：{context}\n"
+        f"{continuation_hint}"
         "硬规则：\n"
         "1. tool_id、metric、分析模式和筛选值只能来自目录/真实值；不得发明。\n"
         "2. 分析类 action=analysis，必须给出 1 到 6 个 steps；可选 metric 工具和 operator 工具。\n"
@@ -576,10 +583,12 @@ async def plan_semantic_turn(
         )
         if report.valid:
             if plan.action != "analysis":
-                errors = [
-                    f"action_route_mismatch: analysis execution cannot run {plan.action}"
-                ]
-                continue
+                return SemanticPlanningResult(
+                    status="ok",
+                    plan=plan,
+                    composition_plan=None,
+                    attempts=attempt,
+                )
             validated_plan, composition = semantic_plan_to_composition_plan(
                 plan,
                 modules=modules,

@@ -60,6 +60,26 @@ def test_close_candidates_use_llm_selector():
     assert result.reason == "llm"
 
 
+def test_medium_confidence_clear_gap_resolves_deterministically():
+    called = False
+
+    def selector(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        return {"topic_id": "topic-2"}
+
+    result = resolve_topic_candidates(
+        "回到最开始那个制造真实性问题",
+        [_topic("topic-1", 0.60, "制造真实性"), _topic("topic-2", 0.46, "制造发票")],
+        llm_selector=selector,
+    )
+
+    assert result.status == "resolved"
+    assert result.topic is not None
+    assert result.topic.topic_id == "topic-1"
+    assert called is False
+
+
 def test_close_candidates_without_llm_require_clarification():
     result = resolve_topic_candidates(
         "继续那个",

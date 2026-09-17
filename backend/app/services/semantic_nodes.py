@@ -52,19 +52,12 @@ def _allowed_filter_values(inventory: dict[str, Any]) -> dict[str, set[str]]:
     }
 
 
-def _plan_eligible(route, frame) -> bool:
-    return (
-        route.route == "analysis"
-        or (
-            route.route in {"clarify", "capability"}
-            and bool(frame.entities)
-            and (
-                frame.task_type == "open_overview"
-                or frame.analysis_pattern != "metric_lookup"
-                or bool(frame.metrics)
-            )
-        )
-    )
+def _plan_eligible(route, raw_route: dict[str, Any]) -> bool:
+    dialog_act = raw_route.get("dialog_act") if isinstance(raw_route, dict) else None
+    refusal_kind = (dialog_act or {}).get("refusal_kind") if isinstance(dialog_act, dict) else None
+    if refusal_kind == "fabrication" or route.route == "abuse":
+        return False
+    return route.route not in {"abuse", "unknown_entity", "language_switch"}
 
 
 def _candidate_tool_ids(plan: SemanticPlan | None) -> list[str]:
@@ -99,7 +92,7 @@ async def semantic_planner_node(
 
     route = normalize_route(raw_route, query)
     frame = frame_from_route(route, query=query)
-    if not _plan_eligible(route, frame):
+    if not _plan_eligible(route, raw_route):
         return {
             "planner_status": "skipped",
             "planner_attempts": 0,
@@ -117,6 +110,15 @@ async def semantic_planner_node(
         snapshot = await load_snapshot(db)
         catalog = build_catalog(snapshot)
         inventory = await load_inventory(db, top_n=1)
+        dialogue_state = (
+            (memory_context or {}).get("dialogue_state")
+            if isinstance(memory_context, dict)
+            else None
+        ) or {}
+        active_analysis = bool(
+            dialogue_state.get("analysis_focus")
+            and dialogue_state.get("scope") in {"individual", "cohort"}
+        )
         result = await plan_semantic_turn(
             query=query,
             route=route,
@@ -127,8 +129,34 @@ async def semantic_planner_node(
             session_context={
                 "memory": memory_context or {},
                 "raw_route": raw_route,
+                "dialogue_state": dialogue_state,
+                "analysis_continuation_required": active_analysis,
             },
         )
+        if (
+            active_analysis
+            and result.status == "ok"
+            and result.plan is not None
+            and result.plan.action.value != "analysis"
+        ):
+            retry = await plan_semantic_turn(
+                query=query,
+                route=route,
+                candidate_tools=[],
+                executable_tool_ids=semantic_executor_tool_ids(),
+                modules=catalog,
+                allowed_filter_values=_allowed_filter_values(inventory),
+                session_context={
+                    "memory": memory_context or {},
+                    "raw_route": raw_route,
+                    "dialogue_state": dialogue_state,
+                    "analysis_continuation_required": True,
+                    "continuation_retry": True,
+                },
+                max_attempts=1,
+            )
+            if retry.status == "ok" and retry.plan is not None:
+                result = retry
     except Exception as exc:
         logger.warning("semantic planner node failed closed: %s", exc)
         return {
@@ -219,6 +247,22 @@ async def plan_validator_node(
         catalog = (catalog_builder or build_composition_catalog)(snapshot)
         executable_tool_ids = semantic_executor_tool_ids()
         allowed_filter_values = _allowed_filter_values(inventory)
+        if plan.action != "analysis":
+            report = validate_semantic_plan(
+                plan,
+                executable_tool_ids=executable_tool_ids,
+                modules=catalog,
+                allowed_filter_values=allowed_filter_values,
+            )
+            if report.valid:
+                return {
+                    "planner_status": "ok",
+                    "planner_errors": [],
+                    "planner_clarification": None,
+                    "semantic_plan": plan.model_dump(mode="json"),
+                    "composition_plan": None,
+                    "semantic_candidate_tool_ids": [],
+                }
         validated, composition = semantic_plan_to_composition_plan(
             plan,
             modules=catalog,
