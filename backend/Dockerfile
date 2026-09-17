@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 WORKDIR /app
-ARG INSTALL_ORCHESTRATION=false
+ARG INSTALL_ORCHESTRATION=true
 COPY requirements.txt requirements.lock.txt requirements-orchestration.txt requirements-orchestration.lock.txt ./
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

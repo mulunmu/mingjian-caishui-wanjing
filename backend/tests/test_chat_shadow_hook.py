@@ -7,6 +7,11 @@ import pytest
 from app.api.v1 import chat as chat_api
 
 
+@pytest.fixture(autouse=True)
+def _disable_outer_orchestrator(monkeypatch):
+    monkeypatch.setenv("LANGGRAPH_OUTER_ENABLED", "false")
+
+
 @pytest.mark.asyncio
 async def test_chat_uses_primary_even_when_shadow_is_disabled(monkeypatch):
     from app.services import semantic_primary

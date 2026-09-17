@@ -34,6 +34,7 @@ from app.services.shadow_integration import dialog_act_to_raw_route
 from app.services.sync_runner import run_blocking
 from app.services.topic_memory import (
     compose_memory_context_blocking,
+    looks_like_topic_reference,
     resolve_topic_reference_blocking,
 )
 from app.services.tool_rag import load_tool_snapshot
@@ -122,6 +123,8 @@ def _primary_meta(turn, *, fallback: bool = False, fallback_reason: str | None =
         "fallback": fallback,
         "fallback_reason": fallback_reason,
         "referenced_topic_id": turn.meta.get("referenced_topic_id"),
+        "topic_match_score": turn.meta.get("topic_match_score"),
+        "topic_match_reason": turn.meta.get("topic_match_reason"),
         "semantic_frame": turn.meta.get("semantic_frame"),
         "composition_plan_id": turn.meta.get("composition_plan_id"),
         "composition_elapsed_ms": turn.meta.get("composition_elapsed_ms"),
@@ -361,7 +364,7 @@ async def run_primary_turn(
         )
     effective_query = query
     referenced = None
-    has_topic_reference = bool(_TOPIC_REFERENCE_RE.search(query))
+    has_topic_reference = looks_like_topic_reference(query)
     session_context = await run_blocking(session_store.get_session, session_id)
     memory_context: dict = {}
     if has_topic_reference:
@@ -517,6 +520,8 @@ async def run_primary_turn(
     )
     if referenced is not None:
         turn.meta["referenced_topic_id"] = referenced["topic_id"]
+        turn.meta["topic_match_score"] = referenced.get("match_score")
+        turn.meta["topic_match_reason"] = referenced.get("match_reason")
     if persist:
         await persist_primary_turn(
             db=db,

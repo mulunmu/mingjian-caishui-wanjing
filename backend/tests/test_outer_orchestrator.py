@@ -35,7 +35,7 @@ async def test_disabled_outer_orchestrator_uses_primary_path(monkeypatch):
         called.update(kwargs)
         return {"reply": "primary", "session_id": kwargs["session_id"], "data": {}}
 
-    monkeypatch.delenv("LANGGRAPH_OUTER_ENABLED", raising=False)
+    monkeypatch.setenv("LANGGRAPH_OUTER_ENABLED", "false")
     monkeypatch.setattr(semantic_primary, "run_primary_turn", primary)
     out = await outer_orchestrator.run_outer_turn(
         db=object(),
@@ -93,7 +93,7 @@ async def test_langgraph_parity_and_report_interrupt_resume(monkeypatch):
     monkeypatch.setattr(semantic_primary, "run_primary_turn", primary)
     monkeypatch.setattr(outer_orchestrator.OuterTurnRuntime, "classify", classify)
 
-    monkeypatch.delenv("LANGGRAPH_OUTER_ENABLED", raising=False)
+    monkeypatch.setenv("LANGGRAPH_OUTER_ENABLED", "false")
     direct = await outer_orchestrator.run_outer_turn(
         db=object(),
         session_id="outer-parity",
@@ -122,6 +122,10 @@ async def test_langgraph_parity_and_report_interrupt_resume(monkeypatch):
     )
     assert pending["data"]["primary"]["approval_required"] is True
     assert pending["data"]["primary"]["orchestrator"]["status"] == "approval_required"
+    assert [
+        item["agent"]
+        for item in pending["data"]["primary"]["orchestrator"]["agents"]
+    ] == ["memory_agent", "classification_agent", "planning_agent"]
 
     resumed = await outer_orchestrator.run_outer_turn(
         db=object(),
@@ -132,6 +136,94 @@ async def test_langgraph_parity_and_report_interrupt_resume(monkeypatch):
     )
     assert resumed["reply"] == "报告已生成"
     assert resumed["data"]["primary"]["orchestrator"]["status"] == "completed"
+    agents = resumed["data"]["primary"]["orchestrator"]["agents"]
+    assert [item["agent"] for item in agents] == [
+        "memory_agent",
+        "classification_agent",
+        "planning_agent",
+        "approval_agent",
+        "execution_agent",
+        "verification_agent",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_langgraph_memory_agent_traces_topic_context(monkeypatch):
+    pytest.importorskip("langgraph")
+    from app.services import outer_orchestrator, semantic_primary
+
+    async def primary(**kwargs):
+        return {
+            "reply": "memory answer",
+            "session_id": kwargs["session_id"],
+            "data": {"primary": {"status": "answered", "fallback": False}},
+        }
+
+    async def classify(self, query):
+        del self, query
+        return {"route": "analysis", "domain": "tax"}
+
+    async def load_memory(self, query):
+        del self, query
+        return {"topic_count": 12, "recent_topic_ids": ["topic-1", "topic-2"]}
+
+    monkeypatch.setenv("LANGGRAPH_OUTER_ENABLED", "true")
+    monkeypatch.setattr(semantic_primary, "run_primary_turn", primary)
+    monkeypatch.setattr(outer_orchestrator.OuterTurnRuntime, "classify", classify)
+    monkeypatch.setattr(outer_orchestrator.OuterTurnRuntime, "load_memory", load_memory)
+
+    out = await outer_orchestrator.run_outer_turn(
+        db=object(),
+        session_id="outer-memory-agent",
+        owner=None,
+        query="那个税负的事继续分析",
+        require_approval=False,
+    )
+    agents = out["data"]["primary"]["orchestrator"]["agents"]
+    memory_trace = next(item for item in agents if item["agent"] == "memory_agent")
+    assert memory_trace["reference_detected"] is True
+    assert memory_trace["topic_count"] == 12
+
+
+@pytest.mark.asyncio
+async def test_stale_report_approval_does_not_hijack_unrelated_question(monkeypatch):
+    pytest.importorskip("langgraph")
+    from app.services import outer_orchestrator, semantic_primary
+
+    async def primary(**kwargs):
+        return {
+            "reply": "无关问题正常回答",
+            "session_id": kwargs["session_id"],
+            "data": {"primary": {"status": "answered", "fallback": False}},
+        }
+
+    async def classify(self, query):
+        del self
+        route = "report" if "报告" in query else "greeting"
+        return {"route": route, "domain": route}
+
+    monkeypatch.setenv("LANGGRAPH_OUTER_ENABLED", "true")
+    monkeypatch.setattr(semantic_primary, "run_primary_turn", primary)
+    monkeypatch.setattr(outer_orchestrator.OuterTurnRuntime, "classify", classify)
+
+    session_id = f"outer-stale-{uuid.uuid4().hex}"
+    first = await outer_orchestrator.run_outer_turn(
+        db=object(),
+        session_id=session_id,
+        owner=None,
+        query="生成报告",
+        require_approval=True,
+    )
+    assert first["data"]["primary"]["approval_required"] is True
+
+    second = await outer_orchestrator.run_outer_turn(
+        db=object(),
+        session_id=session_id,
+        owner=None,
+        query="你好，继续聊别的",
+        require_approval=True,
+    )
+    assert second["reply"] == "无关问题正常回答"
 
 
 @pytest.mark.asyncio

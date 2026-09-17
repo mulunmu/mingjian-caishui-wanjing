@@ -2,8 +2,7 @@
 
 ## Verified Candidate
 
-- Git tag: `rag-v2-stage14-accepted-20260917`
-- Commit: `f76f76b`
+- Git tag: `rag-v2-stage15-langgraph-production-20260917`
 - Core dependencies: pinned in `backend/requirements.txt`
 - LangGraph dependencies: pinned in `backend/requirements-orchestration.txt`
 
@@ -12,9 +11,9 @@
 Safe defaults:
 
 ```text
-INSTALL_ORCHESTRATION=false
-LANGGRAPH_OUTER_ENABLED=false
-LANGGRAPH_REPORT_APPROVAL_REQUIRED=false
+INSTALL_ORCHESTRATION=true
+LANGGRAPH_OUTER_ENABLED=true
+LANGGRAPH_REPORT_APPROVAL_REQUIRED=true
 REPORT_BLOCK_TREE_ENABLED=true
 SEMANTIC_PRIMARY_ENABLED=true
 SEMANTIC_PRIMARY_PERCENT=100
@@ -55,6 +54,9 @@ LANGGRAPH_OUTER_ENABLED=false
 
 Then redeploy the core image. Primary dialogue and report generation do not
 depend on LangGraph.
+
+The verified pre-LangGraph rollback image is tagged locally as
+`20-backend-pre-langgraph-20260917`.
 
 ### Report Block Tree
 

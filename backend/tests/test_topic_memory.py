@@ -8,6 +8,7 @@ from app.services.topic_memory import (
     compose_memory_context,
     compose_topic_context,
     list_topics,
+    looks_like_topic_reference,
     resolve_topic_reference,
     rollback_topic,
 )
@@ -154,3 +155,37 @@ def test_ten_turn_reference_and_compressed_memory_context():
     assert "report-3" in memory["report_ids"]
     assert memory["tool_plan"][-1]["step_id"] == "step-12"
     assert memory["recent_topics"][-1]["turn_index"] == 12
+
+
+def test_content_reference_recalls_topic_without_exact_turn_number():
+    engine = _engine()
+    with Session(engine) as session:
+        append_topic(
+            session,
+            session_id="content-memory",
+            summary="增值税税负偏高，需要核查进销项匹配",
+            entities=["ENT017"],
+            filters={},
+            scenario="tax",
+            intent="analysis",
+        )
+        for index in range(2, 13):
+            append_topic(
+                session,
+                session_id="content-memory",
+                summary=f"普通话题 {index}",
+                entities=[f"ENT{index:03d}"],
+                filters={},
+                scenario="warn",
+                intent="analysis",
+            )
+        session.commit()
+        target = resolve_topic_reference(
+            session,
+            "content-memory",
+            "那个税负的事再展开一点",
+        )
+
+    assert looks_like_topic_reference("那个税负的事再展开一点") is True
+    assert target is not None
+    assert "税负" in target.summary

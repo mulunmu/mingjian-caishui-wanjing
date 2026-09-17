@@ -5,15 +5,21 @@ import asyncio
 import importlib.util
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, TypedDict
 
 from app.db.urls import sync_database_url
+from app.db.urls import get_sync_engine
 from app.services import session_store
 from app.services.dialog_act import classify as classify_dialog_act
 from app.services.shadow_integration import dialog_act_to_raw_route
 from app.services.sync_runner import run_blocking
+from app.services.topic_memory import (
+    compose_memory_context_blocking,
+    looks_like_topic_reference,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +32,8 @@ class OuterTurnState(TypedDict, total=False):
     query: str
     approval: bool | None
     approval_required: bool
+    memory_context: dict[str, Any]
+    agent_trace: list[dict[str, Any]]
     raw_route: dict[str, Any]
     result: dict[str, Any]
 
@@ -49,6 +57,19 @@ class OuterTurnRuntime:
             raw_route = {**raw_route, "entities": entities}
         return raw_route
 
+    async def load_memory(self, query: str) -> dict[str, Any]:
+        if not looks_like_topic_reference(query):
+            return {}
+        try:
+            return await run_blocking(
+                compose_memory_context_blocking,
+                get_sync_engine(),
+                self.session_id,
+            )
+        except Exception as exc:
+            logger.warning("outer memory agent unavailable: %s", exc)
+            return {}
+
     async def execute(self, query: str, raw_route: dict[str, Any]) -> dict[str, Any]:
         from app.services.semantic_primary import run_primary_turn
 
@@ -64,7 +85,7 @@ class OuterTurnRuntime:
 
 
 def outer_orchestrator_enabled() -> bool:
-    return os.getenv("LANGGRAPH_OUTER_ENABLED", "false").lower() in {
+    return os.getenv("LANGGRAPH_OUTER_ENABLED", "true").lower() in {
         "1",
         "true",
         "yes",
@@ -72,7 +93,7 @@ def outer_orchestrator_enabled() -> bool:
 
 
 def report_approval_required() -> bool:
-    return os.getenv("LANGGRAPH_REPORT_APPROVAL_REQUIRED", "false").lower() in {
+    return os.getenv("LANGGRAPH_REPORT_APPROVAL_REQUIRED", "true").lower() in {
         "1",
         "true",
         "yes",
@@ -118,7 +139,10 @@ async def _checkpointer_context():
         yield saver
 
 
-def _pending_response(runtime: OuterTurnRuntime) -> dict[str, Any]:
+def _pending_response(
+    runtime: OuterTurnRuntime,
+    agents: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     return {
         "reply": "报告生成需要确认。确认后将执行报告流程。",
         "reply_source": "langgraph_interrupt",
@@ -143,6 +167,7 @@ def _pending_response(runtime: OuterTurnRuntime) -> dict[str, Any]:
                     "engine": "langgraph",
                     "status": "approval_required",
                     "session_id": runtime.session_id,
+                    "agents": list(agents or []),
                 },
             },
             "claims": [],
@@ -181,12 +206,56 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
     from langgraph.graph import END, START, StateGraph
     from langgraph.types import Command, interrupt
 
+    def append_trace(
+        state: OuterTurnState,
+        agent: str,
+        status: str,
+        **details: Any,
+    ) -> list[dict[str, Any]]:
+        trace = list(state.get("agent_trace") or [])
+        trace.append({"agent": agent, "status": status, **details})
+        return trace
+
+    async def memory_node(state: OuterTurnState) -> OuterTurnState:
+        memory_context = await runtime.load_memory(state["query"])
+        return {
+            "memory_context": memory_context,
+            "agent_trace": append_trace(
+                state,
+                "memory_agent",
+                "completed",
+                reference_detected=bool(memory_context),
+                topic_count=memory_context.get("topic_count", 0),
+            ),
+        }
+
     async def classify_node(state: OuterTurnState) -> OuterTurnState:
         raw_route = await runtime.classify(state["query"])
         return {
             "raw_route": raw_route,
-            "approval_required": bool(
-                require_approval and raw_route.get("route") == "report"
+            "agent_trace": append_trace(
+                state,
+                "classification_agent",
+                "completed",
+                route=raw_route.get("route"),
+            ),
+        }
+
+    async def planning_node(state: OuterTurnState) -> OuterTurnState:
+        raw_route = state.get("raw_route") or {}
+        approval_required = bool(
+            require_approval and raw_route.get("route") == "report"
+        )
+        return {
+            "approval_required": approval_required,
+            "agent_trace": append_trace(
+                state,
+                "planning_agent",
+                "completed",
+                approval_required=approval_required,
+                memory_topics=len(
+                    (state.get("memory_context") or {}).get("recent_topic_ids") or []
+                ),
             ),
         }
 
@@ -200,11 +269,26 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
                     "message": "确认生成报告？",
                 }
             )
-        return {"approval": bool(approval)}
+        return {
+            "approval": bool(approval),
+            "agent_trace": append_trace(
+                state,
+                "approval_agent",
+                "completed",
+                approved=bool(approval),
+            ),
+        }
 
     async def execute_node(state: OuterTurnState) -> OuterTurnState:
         result = await runtime.execute(state["query"], state["raw_route"])
-        return {"result": result}
+        return {
+            "result": result,
+            "agent_trace": append_trace(
+                state,
+                "execution_agent",
+                "completed",
+            ),
+        }
 
     async def cancel_node(_: OuterTurnState) -> OuterTurnState:
         return {"result": _cancelled_response(runtime)}
@@ -214,29 +298,43 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
         primary = result.setdefault("data", {}).setdefault("primary", {})
         if primary.get("fallback"):
             raise RuntimeError("outer orchestrator rejected fallback primary response")
+        trace = append_trace(
+            state,
+            "verification_agent",
+            "completed",
+            fallback=bool(primary.get("fallback")),
+        )
         primary["orchestrator"] = {
             "engine": "langgraph",
             "status": "completed",
             "session_id": runtime.session_id,
+            "agents": trace,
         }
-        return {"result": result}
+        return {
+            "result": result,
+            "agent_trace": trace,
+        }
 
-    def after_classify(state: OuterTurnState) -> str:
+    def after_planning(state: OuterTurnState) -> str:
         return "approval" if state.get("approval_required") else "execute"
 
     def after_approval(state: OuterTurnState) -> str:
         return "execute" if state.get("approval") else "cancel"
 
     graph = StateGraph(OuterTurnState)
+    graph.add_node("memory", memory_node)
     graph.add_node("classify", classify_node)
+    graph.add_node("planning", planning_node)
     graph.add_node("approval", approval_node)
     graph.add_node("execute", execute_node)
     graph.add_node("cancel", cancel_node)
     graph.add_node("review", review_node)
-    graph.add_edge(START, "classify")
+    graph.add_edge(START, "memory")
+    graph.add_edge("memory", "classify")
+    graph.add_edge("classify", "planning")
     graph.add_conditional_edges(
-        "classify",
-        after_classify,
+        "planning",
+        after_planning,
         {"approval": "approval", "execute": "execute"},
     )
     graph.add_conditional_edges(
@@ -267,22 +365,31 @@ async def _run_langgraph(
         if pending and effective_approval is None:
             effective_approval = _approval_from_query(query)
         if pending and effective_approval is None:
-            return _pending_response(runtime)
+            # A stale report interrupt must not hijack an unrelated new question.
+            # Start a fresh thread and leave the old interrupt abandoned.
+            config = {
+                "configurable": {
+                    "thread_id": f"{runtime.session_id}:detour:{uuid.uuid4().hex}"
+                }
+            }
+            pending = False
         if pending:
             raw = await app.ainvoke(Command(resume=effective_approval), config=config)
         else:
             raw = await app.ainvoke(
                 {
                     "query": query,
-                    "approval": effective_approval,
-                    "approval_required": False,
-                    "raw_route": {},
+                "approval": effective_approval,
+                "approval_required": False,
+                "memory_context": {},
+                "agent_trace": [],
+                "raw_route": {},
                     "result": {},
                 },
                 config=config,
             )
     if isinstance(raw, dict) and "__interrupt__" in raw:
-        return _pending_response(runtime)
+        return _pending_response(runtime, raw.get("agent_trace"))
     result = (raw or {}).get("result") if isinstance(raw, dict) else None
     return result if isinstance(result, dict) else _pending_response(runtime)
 

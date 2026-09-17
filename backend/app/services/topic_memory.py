@@ -12,6 +12,12 @@ from sqlalchemy.orm import Session
 from app.models.semantic_registry import ConversationTopic
 
 
+_TOPIC_REFERENCE_MARKERS = re.compile(
+    r"上一个|上上个|上上上|回到.*问题|刚才|之前|前面|上面|上述|"
+    r"那个|这个|那件|这件|那次|这次|该问题|该话题|它|其"
+)
+
+
 def _loads(raw: str | None, default):
     try:
         return json.loads(raw) if raw else default
@@ -30,6 +36,31 @@ def _now() -> datetime:
 def _bigrams(text: str) -> set[str]:
     normalized = re.sub(r"\s+", "", (text or "").lower())
     return {normalized[i : i + 2] for i in range(max(0, len(normalized) - 1))}
+
+
+def _reference_bigrams(reference: str) -> set[str]:
+    cleaned = re.sub(
+        r"那个|这个|那件|这件|事情|问题|话题|的事|刚才|之前|前面|"
+        r"上面|上述|继续|再|展开|一下|一点|呢|吧|吗|呀",
+        "",
+        (reference or "").lower(),
+    )
+    return _bigrams(cleaned)
+
+
+def looks_like_topic_reference(reference: str) -> bool:
+    value = (reference or "").strip()
+    if not value:
+        return False
+    if _TOPIC_REFERENCE_MARKERS.search(value):
+        return True
+    return bool(
+        re.search(
+            r"第\s*[0-9一二三四五六七八九十两]+\s*(?:个)?(?:问题|轮|话题)|"
+            r"往前(?:数|回)?\s*[0-9一二三四五六七八九十两]+",
+            value,
+        )
+    )
 
 
 def _topic_id(session_id: str, turn_index: int) -> str:
@@ -191,31 +222,45 @@ def _ordinal_topic(topics: list[ConversationTopic], reference: str):
     return topics[index] if len(topics) >= abs(index) else None
 
 
-def _semantic_topic(topics: list[ConversationTopic], reference: str):
-    reference_grams = _bigrams(reference)
+def resolve_topic_reference_details(
+    session: Session,
+    session_id: str,
+    reference: str,
+) -> dict | None:
+    topics = list_topics(session, session_id)
+    ordinal = _ordinal_topic(topics, reference)
+    if ordinal is not None:
+        return {"topic": ordinal, "score": 1.0, "reason": "ordinal"}
+
+    reference_grams = _reference_bigrams(reference)
     if not reference_grams:
         return None
-    scored = []
+    scored: list[tuple[float, int, str, ConversationTopic]] = []
     for topic in topics:
         text = " ".join(
             [
                 topic.summary,
                 " ".join(_loads(topic.entities_json, [])),
                 " ".join(
-                    f"{k}={v}"
-                    for k, v in _loads(topic.filters_json, {}).items()
+                    f"{key}={value}"
+                    for key, value in _loads(topic.filters_json, {}).items()
                 ),
                 topic.scenario or "",
                 topic.intent or "",
             ]
         )
-        overlap = len(reference_grams & _bigrams(text))
-        if overlap:
-            scored.append((overlap / len(reference_grams), topic.turn_index, topic))
+        overlap = reference_grams & _bigrams(text)
+        if not overlap:
+            continue
+        score = len(overlap) / max(1, len(reference_grams))
+        scored.append((score, topic.turn_index, ",".join(sorted(overlap)), topic))
     if not scored:
         return None
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    return scored[0][2]
+    score, _, reason, topic = scored[0]
+    if score < 0.15:
+        return None
+    return {"topic": topic, "score": round(score, 4), "reason": reason}
 
 
 def resolve_topic_reference(
@@ -223,8 +268,8 @@ def resolve_topic_reference(
     session_id: str,
     reference: str,
 ) -> ConversationTopic | None:
-    topics = list_topics(session, session_id)
-    return _ordinal_topic(topics, reference) or _semantic_topic(topics, reference)
+    match = resolve_topic_reference_details(session, session_id, reference)
+    return match["topic"] if match else None
 
 
 def resolve_topic_reference_blocking(
@@ -233,9 +278,10 @@ def resolve_topic_reference_blocking(
     reference: str,
 ) -> dict | None:
     with Session(engine) as session:
-        topic = resolve_topic_reference(session, session_id, reference)
-        if topic is None:
+        match = resolve_topic_reference_details(session, session_id, reference)
+        if match is None:
             return None
+        topic = match["topic"]
         return {
             "topic_id": topic.topic_id,
             "summary": topic.summary,
@@ -246,6 +292,8 @@ def resolve_topic_reference_blocking(
             "tool_plan": _loads(topic.tool_plan_json, []),
             "claim_ids": _loads(topic.claim_ids_json, []),
             "report_ids": _loads(topic.report_ids_json, []),
+            "match_score": match["score"],
+            "match_reason": match["reason"],
         }
 
 
