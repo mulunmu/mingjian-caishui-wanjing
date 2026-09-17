@@ -318,7 +318,19 @@ def resolve_topic_reference_details(
         return None
     combined.sort(key=lambda item: (item[0], item[1]), reverse=True)
     score, _, reason, topic = combined[0]
-    return {"topic": topic, "score": round(score, 4), "reason": reason}
+    return {
+        "topic": topic,
+        "score": round(score, 4),
+        "reason": reason,
+        "candidates": [
+            {
+                "topic": candidate_topic,
+                "score": round(candidate_score, 4),
+                "reason": candidate_reason,
+            }
+            for candidate_score, _, candidate_reason, candidate_topic in combined[:8]
+        ],
+    }
 
 
 def compress_topic_summaries(
@@ -359,6 +371,56 @@ def resolve_topic_reference(
     return match["topic"] if match else None
 
 
+def _resolve_match_candidates(match: dict | None, reference: str):
+    from app.schemas.topic_state import TopicState
+    from app.services.topic_reference_resolver import resolve_topic_candidates
+
+    candidates = (match or {}).get("candidates") or []
+    if not candidates or (match or {}).get("reason") == "ordinal":
+        return None
+    topic_states = []
+    for item in candidates:
+        topic = item["topic"]
+        tool_plan = _loads(topic.tool_plan_json, [])
+        topic_states.append(
+            TopicState(
+                topic_id=topic.topic_id,
+                session_id=topic.session_id,
+                turn_index=topic.turn_index,
+                parent_topic_id=topic.parent_topic_id,
+                summary=topic.summary or "",
+                entities=_loads(topic.entities_json, []),
+                filters=_loads(topic.filters_json, {}),
+                action=topic.intent or "analysis",
+                scenario=topic.scenario,
+                metrics=[
+                    str(step.get("tool_id") or step.get("metric") or "")
+                    for step in tool_plan
+                    if isinstance(step, dict)
+                    and (step.get("tool_id") or step.get("metric"))
+                ],
+                tool_plan=[step for step in tool_plan if isinstance(step, dict)],
+                claim_ids=_loads(topic.claim_ids_json, []),
+                report_ids=_loads(topic.report_ids_json, []),
+                score=float(item.get("score") or 0.0),
+                match_reason=str(item.get("reason") or ""),
+            )
+        )
+    resolution = resolve_topic_candidates(reference, topic_states)
+    selected = next(
+        (
+            item
+            for item in candidates
+            if resolution.topic is not None
+            and item["topic"].topic_id == resolution.topic.topic_id
+        ),
+        None,
+    )
+    if resolution.status == "resolved" and selected is not None:
+        return {**selected, "score": resolution.confidence, "reason": resolution.reason}
+    return resolution
+
+
 def resolve_topic_reference_blocking(
     engine,
     session_id: str,
@@ -368,6 +430,19 @@ def resolve_topic_reference_blocking(
         match = resolve_topic_reference_details(session, session_id, reference)
         if match is None:
             return None
+        resolved = _resolve_match_candidates(match, reference)
+        if resolved is not None and not (
+            isinstance(resolved, dict) and "topic" in resolved
+        ):
+            if getattr(resolved, "status", None) == "clarify":
+                return {
+                    "needs_clarification": True,
+                    "clarification_question": resolved.clarification_question,
+                    "resolution_reason": resolved.reason,
+                }
+            return None
+        if resolved is not None:
+            match = resolved
         topic = match["topic"]
         return {
             "topic_id": topic.topic_id,
@@ -433,6 +508,17 @@ def compose_memory_context(
         if query and looks_like_topic_reference(query)
         else None
     )
+    reference_clarification = None
+    if reference_match is not None:
+        resolved = _resolve_match_candidates(reference_match, query or "")
+        if resolved is not None and not (
+            isinstance(resolved, dict) and "topic" in resolved
+        ):
+            if getattr(resolved, "status", None) == "clarify":
+                reference_clarification = resolved.clarification_question
+            reference_match = None
+        elif resolved is not None:
+            reference_match = resolved
     return {
         "topic_count": len(topics),
         "summarized_topic_count": len(selected),
@@ -456,6 +542,7 @@ def compose_memory_context(
         "referenced_report_ids": _loads(reference_match["topic"].report_ids_json, []) if reference_match else [],
         "topic_match_score": reference_match["score"] if reference_match else None,
         "topic_match_reason": reference_match["reason"] if reference_match else None,
+        "topic_reference_clarification": reference_clarification,
     }
 
 

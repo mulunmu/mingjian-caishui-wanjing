@@ -546,7 +546,7 @@ git commit -m "feat: add llm-first multi-agent graph"
 - Modify: `backend/app/services/semantic_turn_persistence.py`
 - Test: `backend/tests/test_topic_reference_resolver.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖：
 
@@ -555,7 +555,7 @@ git commit -m "feat: add llm-first multi-agent graph"
 - 问“企业3的，不是企业1”。
 - 模糊引用同时匹配多个 topic 时返回澄清。
 
-- [ ] **Step 2: 实现 TopicState**
+- [x] **Step 2: 实现 TopicState**
 
 字段：
 
@@ -575,21 +575,21 @@ created_at
 status
 ```
 
-- [ ] **Step 3: 实现两阶段解析**
+- [x] **Step 3: 实现两阶段解析**
 
 先由确定性检索缩小候选，再由 LLM 在候选中选择 topic。LLM 不能发明 topic_id。
 
-- [ ] **Step 4: 实现回滚语义**
+- [x] **Step 4: 实现回滚语义**
 
 回滚生成新的 branch state，引用旧 topic 的实体、filters、plan 和 Claim。不得删除原历史，也不得仅按消息索引倒回。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 Run: `docker exec 20-backend-1 python -m pytest -q tests/test_topic_reference_resolver.py tests/test_topic_memory.py tests/test_long_conversation_memory_http.py`
 
 Expected: PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/app/schemas/topic_state.py backend/app/services/topic_reference_resolver.py backend/app/services/topic_memory.py backend/app/services/semantic_turn_persistence.py backend/tests/test_topic_reference_resolver.py

@@ -661,6 +661,7 @@ async def run_primary_turn(
     effective_query = query
     entity_display_names: dict[str, str] = {}
     referenced = None
+    topic_clarification = None
     has_topic_reference = looks_like_topic_reference(query)
     session_context = await run_blocking(session_store.get_session, session_id)
     session_dialogue_state = (
@@ -705,7 +706,19 @@ async def run_primary_turn(
         else None
     )
     custom_act = bool(isinstance(raw_route, dict) and raw_route.get("custom_report"))
-    if has_topic_reference and memory_context.get("referenced_topic_id"):
+    if has_topic_reference and memory_context.get("topic_reference_clarification"):
+        topic_clarification = str(
+            memory_context.get("topic_reference_clarification")
+        ).strip() or "你指的是哪一个话题？请补充更具体的主题或时间。"
+        raw_route = {
+            "route": "clarify",
+            "language": "zh",
+            "entities": [],
+            "needs_tools": False,
+            "needs_clarification": True,
+            "confidence": 0.9,
+        }
+    elif has_topic_reference and memory_context.get("referenced_topic_id"):
         referenced = {
             "topic_id": memory_context["referenced_topic_id"],
             "summary": memory_context.get("referenced_summary"),
@@ -726,6 +739,20 @@ async def run_primary_turn(
             session_id,
             query,
         )
+    if referenced is not None and referenced.get("needs_clarification"):
+        topic_clarification = (
+            str(referenced.get("clarification_question") or "").strip()
+            or "你指的是哪一个话题？请补充更具体的主题或时间。"
+        )
+        referenced = None
+        raw_route = {
+            "route": "clarify",
+            "language": "zh",
+            "entities": [],
+            "needs_tools": False,
+            "needs_clarification": True,
+            "confidence": 0.9,
+        }
     if referenced is not None:
         referenced_intent = referenced.get("intent") or "analysis"
         needs_tools = referenced_intent in {"analysis", "report"}
@@ -822,11 +849,14 @@ async def run_primary_turn(
     planner_meta = planner_meta or {}
     planner_status = str(
         planner_meta.get("status")
+        or ("clarify" if topic_clarification else None)
         or ("ok" if semantic_plan_obj is not None else "disabled_or_unavailable")
     )
     planner_attempts = int(planner_meta.get("attempts") or 0)
     planner_errors = list(planner_meta.get("errors") or [])
-    planner_clarification = str(planner_meta.get("clarification") or "").strip() or None
+    planner_clarification = topic_clarification or (
+        str(planner_meta.get("clarification") or "").strip() or None
+    )
     if semantic_plan_obj is not None and semantic_plan_obj.action.value == "analysis":
         if route.route != "analysis":
             route = route.model_copy(
