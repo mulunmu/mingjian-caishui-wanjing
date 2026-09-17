@@ -50,6 +50,11 @@ class OuterTurnState(TypedDict, total=False):
     semantic_candidate_tool_ids: list[str]
     capability_status: str
     capability_errors: list[str]
+    repair_status: str
+    evidence_critic_status: str
+    evidence_critic_issues: list[str]
+    report_plan_status: str
+    response_composer_status: str
     result: dict[str, Any]
 
 
@@ -483,6 +488,23 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
             ),
         }
 
+    async def plan_repair_node(state: OuterTurnState) -> OuterTurnState:
+        started = time.perf_counter()
+        payload = await semantic_nodes.plan_repair_node(
+            db=runtime.db,
+            semantic_plan=state.get("semantic_plan"),
+            planner_errors=list(state.get("planner_errors") or []),
+        )
+        finish_agent("plan_repair_agent", started)
+        return {
+            **payload,
+            "agent_trace": append_trace(
+                state,
+                "plan_repair_agent",
+                payload.get("repair_status") or "skipped",
+            ),
+        }
+
     async def planning_node(state: OuterTurnState) -> OuterTurnState:
         started = time.perf_counter()
         await emit_progress("planning", "正在制定执行路径", "校验范围、工具和审批要求")
@@ -605,11 +627,53 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
             ),
         }
 
+    async def evidence_critic_node(state: OuterTurnState) -> OuterTurnState:
+        started = time.perf_counter()
+        payload = semantic_nodes.evidence_critic_node(state.get("result") or {})
+        finish_agent("evidence_critic_agent", started)
+        return {
+            **payload,
+            "agent_trace": append_trace(
+                state,
+                "evidence_critic_agent",
+                payload.get("evidence_critic_status") or "completed",
+                issue_count=len(payload.get("evidence_critic_issues") or []),
+            ),
+        }
+
+    async def report_planner_node(state: OuterTurnState) -> OuterTurnState:
+        started = time.perf_counter()
+        payload = semantic_nodes.report_planner_node(state.get("result") or {})
+        finish_agent("report_planner_agent", started)
+        return {
+            **payload,
+            "agent_trace": append_trace(
+                state,
+                "report_planner_agent",
+                payload.get("report_plan_status") or "not_requested",
+            ),
+        }
+
+    async def response_composer_node(state: OuterTurnState) -> OuterTurnState:
+        started = time.perf_counter()
+        payload = semantic_nodes.response_composer_node(state.get("result") or {})
+        finish_agent("response_composer_agent", started)
+        return {
+            **payload,
+            "agent_trace": append_trace(
+                state,
+                "response_composer_agent",
+                payload.get("response_composer_status") or "completed",
+            ),
+        }
+
     async def final_guard_node(state: OuterTurnState) -> OuterTurnState:
         started = time.perf_counter()
         await emit_progress("guard", "正在校验回答", "核对数字、企业、阈值和事实边界")
         result = dict(state.get("result") or {})
         issues = _final_guard_issues(result) if final_guard_enabled() else []
+        if final_guard_enabled() and state.get("evidence_critic_status") == "failed":
+            issues.append("evidence_critic_failed")
         budget_ms = agent_budget_ms()
         turn_started = float(state.get("execution_started_at") or time.perf_counter())
         elapsed_ms = (time.perf_counter() - turn_started) * 1000
@@ -675,10 +739,14 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
     graph.add_node("semantic_planner", semantic_planner_node)
     graph.add_node("capability_retrieval", capability_retrieval_node)
     graph.add_node("plan_validator", plan_validator_node)
+    graph.add_node("plan_repair", plan_repair_node)
     graph.add_node("planning", planning_node)
     graph.add_node("approval", approval_node)
     graph.add_node("execute", execute_node)
     graph.add_node("finance_review", finance_review_node)
+    graph.add_node("evidence_critic", evidence_critic_node)
+    graph.add_node("report_planner", report_planner_node)
+    graph.add_node("response_composer", response_composer_node)
     graph.add_node("final_guard", final_guard_node)
     graph.add_node("cancel", cancel_node)
     graph.add_node("review", review_node)
@@ -687,7 +755,8 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
     graph.add_edge("classify", "semantic_planner")
     graph.add_edge("semantic_planner", "capability_retrieval")
     graph.add_edge("capability_retrieval", "plan_validator")
-    graph.add_edge("plan_validator", "planning")
+    graph.add_edge("plan_validator", "plan_repair")
+    graph.add_edge("plan_repair", "planning")
     graph.add_conditional_edges(
         "planning",
         after_planning,
@@ -698,8 +767,11 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
         after_approval,
         {"execute": "execute", "cancel": "cancel"},
     )
-    graph.add_edge("execute", "finance_review")
-    graph.add_edge("finance_review", "final_guard")
+    graph.add_edge("execute", "evidence_critic")
+    graph.add_edge("evidence_critic", "finance_review")
+    graph.add_edge("finance_review", "report_planner")
+    graph.add_edge("report_planner", "response_composer")
+    graph.add_edge("response_composer", "final_guard")
     graph.add_edge("final_guard", "review")
     graph.add_edge("review", END)
     graph.add_edge("cancel", END)

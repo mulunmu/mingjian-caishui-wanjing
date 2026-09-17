@@ -255,3 +255,131 @@ async def plan_validator_node(
         "composition_plan": composition.model_dump(mode="json"),
         "semantic_candidate_tool_ids": _candidate_tool_ids(validated),
     }
+
+
+def _normalize_filter_aliases(plan: SemanticPlan) -> SemanticPlan:
+    from app.services.semantic_lexicon import _match_industry, _match_province
+
+    def normalize(values: dict[str, list[str]]) -> dict[str, list[str]]:
+        output: dict[str, list[str]] = {}
+        for key, items in (values or {}).items():
+            normalized: list[str] = []
+            for item in items:
+                value = str(item).strip()
+                if key == "industry_l1":
+                    value = _match_industry(value) or value
+                elif key == "province":
+                    value = _match_province(value) or value
+                if value and value not in normalized:
+                    normalized.append(value)
+            if normalized:
+                output[key] = normalized
+        return output
+
+    steps = [
+        step.model_copy(update={"filters": normalize(step.filters)})
+        for step in plan.steps
+    ]
+    return plan.model_copy(
+        update={
+            "filters": normalize(plan.filters),
+            "steps": steps,
+        }
+    )
+
+
+async def plan_repair_node(
+    *,
+    db,
+    semantic_plan: dict[str, Any] | None,
+    planner_errors: list[str] | None = None,
+    snapshot_loader: Callable | None = None,
+    inventory_loader: Callable | None = None,
+    catalog_builder: Callable | None = None,
+) -> dict[str, Any]:
+    """Repair deterministic alias/format issues, then fail closed if unsafe."""
+    if not semantic_plan or not planner_errors:
+        return {"repair_status": "not_needed"}
+    try:
+        plan = _normalize_filter_aliases(SemanticPlan.model_validate(semantic_plan))
+        snapshot = await (snapshot_loader or _default_snapshot_loader)(db)
+        inventory = await (inventory_loader or _default_inventory_loader)(db, top_n=1)
+        catalog = (catalog_builder or build_composition_catalog)(snapshot)
+        validated, composition = semantic_plan_to_composition_plan(
+            plan,
+            modules=catalog,
+            executable_tool_ids=semantic_executor_tool_ids(),
+            allowed_filter_values=_allowed_filter_values(inventory),
+        )
+    except Exception as exc:
+        return {
+            "repair_status": "needs_user_input",
+            "planner_status": "clarify",
+            "planner_errors": [str(exc)],
+            "composition_plan": None,
+        }
+    if validated is None or composition is None:
+        return {
+            "repair_status": "needs_user_input",
+            "planner_status": "clarify",
+            "planner_errors": list(planner_errors),
+            "planner_clarification": "无法自动修复分析方案，请补充更明确的指标、行业或地区。",
+            "composition_plan": None,
+        }
+    return {
+        "repair_status": "repaired",
+        "planner_status": "ok",
+        "planner_errors": [],
+        "planner_clarification": None,
+        "semantic_plan": validated.model_dump(mode="json"),
+        "composition_plan": composition.model_dump(mode="json"),
+        "semantic_candidate_tool_ids": _candidate_tool_ids(validated),
+    }
+
+
+def evidence_critic_node(result: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(result or {})
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    primary = data.get("primary") if isinstance(data.get("primary"), dict) else {}
+    claims = data.get("claims") if isinstance(data.get("claims"), list) else []
+    issues: list[str] = []
+    if not str(payload.get("reply") or "").strip():
+        issues.append("empty_reply")
+    if primary.get("fallback") is not False:
+        issues.append("fallback_response")
+    if primary.get("route") == "analysis" and not claims:
+        issues.append("analysis_without_claims")
+    for index, claim in enumerate(claims):
+        trace = claim.get("trace") if isinstance(claim, dict) else None
+        if not trace or not trace.get("table") or not trace.get("field"):
+            issues.append(f"untraceable_claim:{index}")
+    status = "failed" if issues else "completed"
+    primary["evidence_critic"] = {"status": status, "issues": issues}
+    payload["data"] = {**data, "primary": primary}
+    return {
+        "result": payload,
+        "evidence_critic_status": status,
+        "evidence_critic_issues": issues,
+    }
+
+
+def report_planner_node(result: dict[str, Any]) -> dict[str, Any]:
+    """Mark report planning intent; full ReportPlan is added in Task 10."""
+    payload = dict(result or {})
+    primary = (
+        (payload.get("data") or {}).get("primary")
+        if isinstance(payload.get("data"), dict)
+        else {}
+    ) or {}
+    if primary.get("route") != "report":
+        return {"result": payload, "report_plan_status": "not_requested"}
+    return {"result": payload, "report_plan_status": "deferred"}
+
+
+def response_composer_node(result: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(result or {})
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    primary = data.get("primary") if isinstance(data.get("primary"), dict) else {}
+    primary["response_composer"] = {"status": "completed"}
+    payload["data"] = {**data, "primary": primary}
+    return {"result": payload, "response_composer_status": "completed"}

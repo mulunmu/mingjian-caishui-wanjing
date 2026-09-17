@@ -137,6 +137,7 @@ async def test_langgraph_parity_and_report_interrupt_resume(monkeypatch):
         "semantic_planner_agent",
         "capability_retrieval_agent",
         "plan_validator_agent",
+        "plan_repair_agent",
         "planning_agent",
     ]
 
@@ -156,10 +157,14 @@ async def test_langgraph_parity_and_report_interrupt_resume(monkeypatch):
         "semantic_planner_agent",
         "capability_retrieval_agent",
         "plan_validator_agent",
+        "plan_repair_agent",
         "planning_agent",
         "approval_agent",
         "execution_agent",
+        "evidence_critic_agent",
         "finance_review_agent",
+        "report_planner_agent",
+        "response_composer_agent",
         "final_guard_agent",
         "verification_agent",
     ]

@@ -482,7 +482,7 @@ git commit -m "refactor: build frames from semantic plans"
 - Modify: `backend/app/services/semantic_nodes.py`
 - Test: `backend/tests/test_langgraph_semantic_nodes.py`
 
-- [ ] **Step 1: 写节点级测试**
+- [x] **Step 1: 写节点级测试**
 
 节点：
 
@@ -501,7 +501,7 @@ final_guard_agent
 
 覆盖合法计划、可修复计划、不可修复计划、报告计划和闲聊计划。
 
-- [ ] **Step 2: 实现状态和条件边**
+- [x] **Step 2: 实现状态和条件边**
 
 条件边：
 
@@ -514,21 +514,21 @@ execute -> report_planner  # report action
 execute -> evidence_critic # analysis/conversation action
 ```
 
-- [ ] **Step 3: 加入 checkpoint**
+- [x] **Step 3: 加入 checkpoint**
 
 使用 PostgreSQL checkpointer，Redis 只做短期缓存。每次 plan、validation、execution 和 final result 都写入 checkpoint。
 
-- [ ] **Step 4: 加入预算和并发**
+- [x] **Step 4: 加入预算和并发**
 
 规划、修复、校验串行；RAG、工具 DAG 节点并发。所有节点有超时、重试和取消。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 Run: `docker exec 20-backend-1 python -m pytest -q tests/test_langgraph_semantic_nodes.py tests/test_async_dag_runtime.py tests/test_composition_execution_bridge.py`
 
 Expected: PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/app/services/outer_orchestrator.py backend/app/services/semantic_nodes.py backend/tests/test_langgraph_semantic_nodes.py

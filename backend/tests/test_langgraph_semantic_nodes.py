@@ -160,7 +160,87 @@ def test_langgraph_contains_semantic_planning_stages():
     assert ("classify", "semantic_planner") in edges
     assert ("semantic_planner", "capability_retrieval") in edges
     assert ("capability_retrieval", "plan_validator") in edges
-    assert ("plan_validator", "planning") in edges
+    assert ("plan_validator", "plan_repair") in edges
+    assert ("plan_repair", "planning") in edges
+    assert ("execute", "evidence_critic") in edges
+    assert ("evidence_critic", "finance_review") in edges
+    assert ("finance_review", "report_planner") in edges
+    assert ("report_planner", "response_composer") in edges
+    assert ("response_composer", "final_guard") in edges
+
+
+@pytest.mark.asyncio
+async def test_plan_repair_node_normalizes_filter_aliases():
+    from app.services import semantic_nodes
+
+    plan = SemanticPlan(
+        action="analysis",
+        scope="cohort",
+        filters={"industry_l1": ["制造业"]},
+        metrics=["debt_ratio"],
+        analysis_patterns=["comparison"],
+        comparison_basis="cohort_slice",
+        steps=[
+            SemanticPlanStep(
+                step_id="s1",
+                tool_id="metric_debt_ratio",
+                filters={"industry_l1": ["制造业"]},
+            )
+        ],
+        confidence=0.95,
+    )
+
+    result = await semantic_nodes.plan_repair_node(
+        db=object(),
+        semantic_plan=plan.model_dump(mode="json"),
+        planner_errors=["industry_l1=制造业 is not present in the data inventory"],
+        snapshot_loader=_snapshot_loader,
+        inventory_loader=_inventory_loader,
+        catalog_builder=_catalog,
+    )
+
+    assert result["repair_status"] == "repaired"
+    assert result["semantic_plan"]["filters"]["industry_l1"] == ["制造"]
+    assert result["planner_status"] == "ok"
+
+
+def test_evidence_critic_flags_analysis_without_claims():
+    from app.services import semantic_nodes
+
+    result = semantic_nodes.evidence_critic_node(
+        {
+            "reply": "分析完成",
+            "data": {
+                "primary": {"route": "analysis", "status": "answered", "fallback": False},
+                "claims": [],
+            },
+        }
+    )
+
+    assert result["evidence_critic_status"] == "failed"
+    assert "analysis_without_claims" in result["evidence_critic_issues"]
+
+
+def test_response_composer_preserves_claim_backed_reply():
+    from app.services import semantic_nodes
+
+    payload = {
+        "reply": "资产负债率偏高。",
+        "data": {
+            "primary": {"route": "analysis", "status": "answered", "fallback": False},
+            "claims": [
+                {
+                    "claim": "资产负债率偏高。",
+                    "trace": {"table": "core_metrics", "field": "debt_ratio"},
+                }
+            ],
+        },
+    }
+
+    result = semantic_nodes.response_composer_node(payload)
+
+    assert result["result"]["reply"] == "资产负债率偏高。"
+    assert result["response_composer_status"] == "completed"
 
 
 @pytest.mark.asyncio
