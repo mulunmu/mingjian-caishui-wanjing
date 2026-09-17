@@ -38,6 +38,7 @@ class OuterTurnState(TypedDict, total=False):
     approval_required: bool
     memory_context: dict[str, Any]
     agent_trace: list[dict[str, Any]]
+    execution_started_at: float
     raw_route: dict[str, Any]
     result: dict[str, Any]
 
@@ -69,12 +70,19 @@ class OuterTurnRuntime:
                 compose_memory_context_blocking,
                 get_sync_engine(),
                 self.session_id,
+                query=query,
             )
         except Exception as exc:
             logger.warning("outer memory agent unavailable: %s", exc)
             return {}
 
-    async def execute(self, query: str, raw_route: dict[str, Any]) -> dict[str, Any]:
+    async def execute(
+        self,
+        query: str,
+        raw_route: dict[str, Any],
+        *,
+        memory_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         from app.services.semantic_primary import run_primary_turn
 
         return await run_primary_turn(
@@ -85,6 +93,7 @@ class OuterTurnRuntime:
             raw_route=raw_route,
             enterprise_id=self.enterprise_id,
             user=self.user,
+            memory_context=memory_context,
         )
 
 
@@ -109,6 +118,45 @@ def approval_ttl_seconds() -> int:
         return max(1, int(os.getenv("LANGGRAPH_APPROVAL_TTL_SECONDS", "900")))
     except ValueError:
         return 900
+
+
+def finance_review_enabled() -> bool:
+    return os.getenv("LANGGRAPH_FINANCE_REVIEW_ENABLED", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def final_guard_enabled() -> bool:
+    return os.getenv("LANGGRAPH_FINAL_GUARD_ENABLED", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def agent_budget_ms() -> int:
+    try:
+        return max(1000, int(os.getenv("LANGGRAPH_AGENT_BUDGET_MS", "15000")))
+    except ValueError:
+        return 15000
+
+
+def _final_guard_issues(result: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    reply = str(result.get("reply") or "").strip()
+    primary = ((result.get("data") or {}).get("primary") or {}) if isinstance(result, dict) else {}
+    if not reply:
+        issues.append("empty_reply")
+    if primary.get("fallback") is not False:
+        issues.append("fallback_response")
+    claims = (result.get("data") or {}).get("claims") or []
+    for index, claim in enumerate(claims):
+        trace = claim.get("trace") if isinstance(claim, dict) else None
+        if not trace or not trace.get("table") or not trace.get("field"):
+            issues.append(f"untraceable_claim:{index}")
+    return issues
 
 
 def _approval_expired(values: dict[str, Any]) -> bool:
@@ -372,14 +420,95 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
 
     async def execute_node(state: OuterTurnState) -> OuterTurnState:
         started = time.perf_counter()
-        result = await runtime.execute(state["query"], state["raw_route"])
+        result = await runtime.execute(
+            state["query"],
+            state["raw_route"],
+            memory_context=state.get("memory_context") or {},
+        )
         finish_agent("execution_agent", started)
         return {
             "result": result,
+            "execution_started_at": started,
             "agent_trace": append_trace(
                 state,
                 "execution_agent",
                 "completed",
+            ),
+        }
+
+    async def finance_review_node(state: OuterTurnState) -> OuterTurnState:
+        started = time.perf_counter()
+        result = dict(state.get("result") or {})
+        primary = result.setdefault("data", {}).setdefault("primary", {})
+        status = "skipped"
+        reason = "disabled"
+        interpretation = None
+        if finance_review_enabled():
+            from app.schemas.claim import Claim
+            from app.services import llm_reply
+
+            raw_claims = (result.get("data") or {}).get("claims") or []
+            claims = [Claim.model_validate(item) for item in raw_claims]
+            if not claims:
+                reason = "no_claims"
+            elif not llm_reply.financial_llm_available():
+                reason = "financial_model_unavailable"
+            else:
+                try:
+                    interpretation = await llm_reply.generate_financial_interpretation(
+                        claims,
+                        {
+                            "industry_l1": primary.get("industry_l1"),
+                            "scope": primary.get("scope"),
+                            "scenario": primary.get("domain"),
+                        },
+                    )
+                    status = "completed" if interpretation else "skipped"
+                    reason = None if interpretation else "empty_interpretation"
+                except Exception as exc:
+                    status = "failed"
+                    reason = str(exc)
+        if interpretation:
+            primary["finance_review"] = {"status": status, "interpretation": interpretation}
+        finish_agent(f"finance_review_agent:{status}", started)
+        return {
+            "result": result,
+            "agent_trace": append_trace(
+                state,
+                "finance_review_agent",
+                status,
+                reason=reason,
+                elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+            ),
+        }
+
+    async def final_guard_node(state: OuterTurnState) -> OuterTurnState:
+        started = time.perf_counter()
+        result = dict(state.get("result") or {})
+        issues = _final_guard_issues(result) if final_guard_enabled() else []
+        budget_ms = agent_budget_ms()
+        turn_started = float(state.get("execution_started_at") or time.perf_counter())
+        elapsed_ms = (time.perf_counter() - turn_started) * 1000
+        if final_guard_enabled() and elapsed_ms > budget_ms:
+            issues.append("agent_budget_exceeded")
+        status = "failed" if issues else "completed"
+        finish_agent(f"final_guard_agent:{status}", started)
+        if issues:
+            raise RuntimeError(f"final guard rejected response: {issues}")
+        primary = result.setdefault("data", {}).setdefault("primary", {})
+        primary["final_guard"] = {
+            "status": status,
+            "budget_ms": budget_ms,
+            "elapsed_ms": round(elapsed_ms, 2),
+        }
+        return {
+            "result": result,
+            "agent_trace": append_trace(
+                state,
+                "final_guard_agent",
+                status,
+                budget_ms=budget_ms,
+                elapsed_ms=round(elapsed_ms, 2),
             ),
         }
 
@@ -422,6 +551,8 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
     graph.add_node("planning", planning_node)
     graph.add_node("approval", approval_node)
     graph.add_node("execute", execute_node)
+    graph.add_node("finance_review", finance_review_node)
+    graph.add_node("final_guard", final_guard_node)
     graph.add_node("cancel", cancel_node)
     graph.add_node("review", review_node)
     graph.add_edge(START, "memory")
@@ -437,7 +568,9 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
         after_approval,
         {"execute": "execute", "cancel": "cancel"},
     )
-    graph.add_edge("execute", "review")
+    graph.add_edge("execute", "finance_review")
+    graph.add_edge("finance_review", "final_guard")
+    graph.add_edge("final_guard", "review")
     graph.add_edge("review", END)
     graph.add_edge("cancel", END)
     return graph, Command

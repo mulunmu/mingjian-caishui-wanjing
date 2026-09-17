@@ -353,6 +353,7 @@ async def run_primary_turn(
     enterprise_id: str | None = None,
     user: dict | None = None,
     persist: bool = True,
+    memory_context: dict | None = None,
 ) -> dict:
     segments = split_multi_intent(query)
     if persist and len(segments) >= 2:
@@ -369,27 +370,43 @@ async def run_primary_turn(
     referenced = None
     has_topic_reference = looks_like_topic_reference(query)
     session_context = await run_blocking(session_store.get_session, session_id)
-    memory_context: dict = {}
+    memory_context = memory_context or {}
     if has_topic_reference:
-        try:
-            memory_context = await run_blocking(
-                compose_memory_context_blocking,
-                get_sync_engine(),
-                session_id,
-            )
-        except Exception as exc:
-            logger.warning(
-                "semantic memory context unavailable for session %s: %s",
-                session_id,
-                exc,
-            )
+        if not memory_context:
+            try:
+                memory_context = await run_blocking(
+                    compose_memory_context_blocking,
+                    get_sync_engine(),
+                    session_id,
+                    query=query,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "semantic memory context unavailable for session %s: %s",
+                    session_id,
+                    exc,
+                )
     custom_state = (
         (session_context or {}).get("custom_report")
         if isinstance(session_context, dict)
         else None
     )
     custom_act = False
-    if has_topic_reference:
+    if has_topic_reference and memory_context.get("referenced_topic_id"):
+        referenced = {
+            "topic_id": memory_context["referenced_topic_id"],
+            "summary": memory_context.get("referenced_summary"),
+            "entities": memory_context.get("referenced_entities") or [],
+            "filters": memory_context.get("referenced_filters") or {},
+            "scenario": memory_context.get("referenced_scenario"),
+            "intent": memory_context.get("referenced_intent") or "analysis",
+            "tool_plan": memory_context.get("referenced_tool_plan") or [],
+            "claim_ids": memory_context.get("referenced_claim_ids") or [],
+            "report_ids": memory_context.get("referenced_report_ids") or [],
+            "match_score": memory_context.get("topic_match_score"),
+            "match_reason": memory_context.get("topic_match_reason"),
+        }
+    elif has_topic_reference:
         referenced = await run_blocking(
             resolve_topic_reference_blocking,
             get_sync_engine(),

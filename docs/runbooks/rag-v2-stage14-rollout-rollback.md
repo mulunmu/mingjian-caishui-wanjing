@@ -247,3 +247,50 @@ python -m scripts.verify_semantic_readiness --apply
 
 The current golden set has 77 queries. Required gates are Recall@5 >= 0.90,
 dense coverage >= 0.90, and unsupported leakage = 0.
+
+## Stage 19 Long Memory And Agent Closure
+
+Long-memory switches:
+
+```text
+MEMORY_SEMANTIC_ENABLED=true
+LANGGRAPH_FINANCE_REVIEW_ENABLED=false
+LANGGRAPH_FINAL_GUARD_ENABLED=true
+LANGGRAPH_AGENT_BUDGET_MS=15000
+```
+
+Memory behavior:
+
+```text
+durable ConversationTopic
+-> ordered ordinal references for N-1/N-2/absolute turn
+-> semantic and bigram content reference matching
+-> recent-first de-duplicated summary compression
+-> correction detection without silently changing the current topic
+```
+
+The outer memory Agent result is passed directly into the semantic primary
+executor, avoiding duplicate topic retrieval in the same turn.
+
+Agent behavior:
+
+```text
+memory -> classification -> planning -> approval
+-> execution -> finance_review -> final_guard -> verification
+```
+
+- `finance_review_agent` is skipped when the financial model is absent.
+- `final_guard_agent` rejects empty replies, fallback responses and untraceable Claims.
+- The execution-to-review budget is bounded by `LANGGRAPH_AGENT_BUDGET_MS`.
+- Finance review can add causal interpretation metadata but cannot own numbers or final facts.
+
+Stage 19 gates:
+
+```text
+python -m scripts.run_stage19_long_dialogue --json
+python -m scripts.verify_semantic_readiness --apply
+python -m scripts.audit_module_coverage --strict
+```
+
+The long-dialogue gate requires four 40-turn conversations covering correction,
+content back-reference, N-2 rollback and unrelated intervening turns.

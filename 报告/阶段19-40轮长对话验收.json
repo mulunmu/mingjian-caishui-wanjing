@@ -1,0 +1,36 @@
+{
+  "total": 4,
+  "passed": 4,
+  "failed": 0,
+  "failures": [],
+  "results": [
+    {
+      "name": "tax-correction",
+      "turns": 40,
+      "final_reply": "整体看，该交的税占比不算高，风险不大。\n样本193家，实际交税占营收比例均值1.9。\n建议按行业拆分，看看不同行业差异。\n\n（下方按钮可继续追问）",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "name": "cash-backref",
+      "turns": 40,
+      "final_reply": "整体看，经营现金流是负的，风险偏高。\n样本193家，经营现金流净额均值-71082.2。\n建议先按行业拆分，看看谁拖了后腿。\n\n（下方按钮可继续追问）",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "name": "n2-rollback",
+      "turns": 40,
+      "final_reply": "整体欠债占家底的比例偏高，风险不小。\n样本欠债占家底的比例均值86.2，样本193家。\n建议按行业拆分看，找出偏高行业重点盯。\n\n（下方按钮可继续追问）",
+      "ok": true,
+      "errors": []
+    },
+    {
+      "name": "semantic-content",
+      "turns": 40,
+      "final_reply": "整体看客户数量不算差，均值74.69家。\n样本193家客户，平均每家74.69家客户。\n建议按行业拆分，看看不同行业客户数量差异。\n\n（下方按钮可继续追问）",
+      "ok": true,
+      "errors": []
+    }
+  ]
+}

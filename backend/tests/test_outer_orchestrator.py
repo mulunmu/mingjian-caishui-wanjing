@@ -74,7 +74,12 @@ async def test_langgraph_parity_and_report_interrupt_resume(monkeypatch):
             "session_id": kwargs["session_id"],
             "data": {
                 "primary": {"status": "answered", "fallback": False, "route": "report"},
-                "claims": [{"metric": "report", "value": "ok"}],
+                "claims": [
+                    {
+                        "claim": "报告已生成",
+                        "trace": {"table": "report", "field": "report_id"},
+                    }
+                ],
             },
         }
 
@@ -144,8 +149,42 @@ async def test_langgraph_parity_and_report_interrupt_resume(monkeypatch):
         "planning_agent",
         "approval_agent",
         "execution_agent",
+        "finance_review_agent",
+        "final_guard_agent",
         "verification_agent",
     ]
+
+
+def test_final_guard_rejects_fallback_and_untraceable_claims():
+    from app.services.outer_orchestrator import _final_guard_issues
+
+    issues = _final_guard_issues(
+        {
+            "reply": "ok",
+            "data": {
+                "primary": {"fallback": True},
+                "claims": [{"claim": "无溯源结论"}],
+            },
+        }
+    )
+    assert "fallback_response" in issues
+    assert "untraceable_claim:0" in issues
+
+
+def test_agent_budget_is_bounded(monkeypatch):
+    from app.services.outer_orchestrator import agent_budget_ms
+
+    monkeypatch.setenv("LANGGRAPH_AGENT_BUDGET_MS", "100")
+    assert agent_budget_ms() == 1000
+    monkeypatch.setenv("LANGGRAPH_AGENT_BUDGET_MS", "12000")
+    assert agent_budget_ms() == 12000
+
+
+def test_finance_review_defaults_to_disabled(monkeypatch):
+    from app.services import outer_orchestrator
+
+    monkeypatch.delenv("LANGGRAPH_FINANCE_REVIEW_ENABLED", raising=False)
+    assert outer_orchestrator.finance_review_enabled() is False
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
+import os
 import re
 from datetime import datetime, timezone
 
@@ -15,6 +17,9 @@ from app.models.semantic_registry import ConversationTopic
 _TOPIC_REFERENCE_MARKERS = re.compile(
     r"上一个|上上个|上上上|回到.*问题|刚才|之前|前面|上面|上述|"
     r"那个|这个|那件|这件|那次|这次|该问题|该话题|它|其"
+)
+_TOPIC_CORRECTION_MARKERS = re.compile(
+    r"不对|不是|我说的是|改成|纠正|更正|记错|刚才说的不是"
 )
 
 
@@ -53,6 +58,8 @@ def looks_like_topic_reference(reference: str) -> bool:
     if not value:
         return False
     if _TOPIC_REFERENCE_MARKERS.search(value):
+        return True
+    if _TOPIC_CORRECTION_MARKERS.search(value):
         return True
     return bool(
         re.search(
@@ -226,6 +233,8 @@ def resolve_topic_reference_details(
     session: Session,
     session_id: str,
     reference: str,
+    *,
+    embedder=None,
 ) -> dict | None:
     topics = list_topics(session, session_id)
     ordinal = _ordinal_topic(topics, reference)
@@ -233,8 +242,6 @@ def resolve_topic_reference_details(
         return {"topic": ordinal, "score": 1.0, "reason": "ordinal"}
 
     reference_grams = _reference_bigrams(reference)
-    if not reference_grams:
-        return None
     scored: list[tuple[float, int, str, ConversationTopic]] = []
     for topic in topics:
         text = " ".join(
@@ -254,13 +261,93 @@ def resolve_topic_reference_details(
             continue
         score = len(overlap) / max(1, len(reference_grams))
         scored.append((score, topic.turn_index, ",".join(sorted(overlap)), topic))
-    if not scored:
+    semantic_scores: dict[str, float] = {}
+    if os.getenv("MEMORY_SEMANTIC_ENABLED", "true").lower() in {"1", "true", "yes"}:
+        provider = embedder
+        if provider is None:
+            try:
+                from app.services.embedding_service import FastEmbedProvider
+
+                provider = FastEmbedProvider()
+            except Exception:
+                provider = None
+        if provider is not None and topics:
+            try:
+                texts = [
+                    " ".join(
+                        [
+                            topic.summary,
+                            " ".join(_loads(topic.entities_json, [])),
+                            " ".join(str(v) for v in _loads(topic.filters_json, {}).values()),
+                            topic.scenario or "",
+                            topic.intent or "",
+                        ]
+                    )
+                    for topic in topics
+                ]
+                vectors = provider.embed_documents([reference] + texts)
+                query_vector = vectors[0]
+
+                def _cosine(left: list[float], right: list[float]) -> float:
+                    numerator = sum(a * b for a, b in zip(left, right))
+                    left_norm = math.sqrt(sum(a * a for a in left)) or 1.0
+                    right_norm = math.sqrt(sum(b * b for b in right)) or 1.0
+                    return numerator / (left_norm * right_norm)
+
+                semantic_scores = {
+                    topic.topic_id: _cosine(query_vector, vectors[index + 1])
+                    for index, topic in enumerate(topics)
+                }
+            except Exception:
+                semantic_scores = {}
+
+    combined: list[tuple[float, int, str, ConversationTopic]] = []
+    keyword_by_topic = {topic.topic_id: item for item in scored for topic in [item[3]]}
+    for topic in topics:
+        keyword_item = keyword_by_topic.get(topic.topic_id)
+        keyword_score = keyword_item[0] if keyword_item else 0.0
+        keyword_reason = keyword_item[2] if keyword_item else ""
+        semantic_score = float(semantic_scores.get(topic.topic_id, 0.0))
+        if semantic_score < 0.45:
+            semantic_score = 0.0
+        if semantic_score >= keyword_score and semantic_score > 0:
+            combined.append((semantic_score, topic.turn_index, "semantic", topic))
+        elif keyword_score >= 0.15:
+            combined.append((keyword_score, topic.turn_index, keyword_reason, topic))
+    if not combined:
         return None
-    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    score, _, reason, topic = scored[0]
-    if score < 0.15:
-        return None
+    combined.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    score, _, reason, topic = combined[0]
     return {"topic": topic, "score": round(score, 4), "reason": reason}
+
+
+def compress_topic_summaries(
+    topics: list[ConversationTopic],
+    *,
+    limit: int = 12,
+    max_chars: int = 1600,
+) -> str:
+    """Deterministic layered compression: recent-first, de-duplicated, bounded."""
+    selected = topics[-max(1, limit) :]
+    by_summary: dict[str, tuple[int, str]] = {}
+    for topic in selected:
+        summary = (topic.summary or "").strip()
+        if not summary:
+            continue
+        key = re.sub(r"\s+", "", summary).lower()
+        by_summary[key] = (topic.turn_index, summary)
+    lines = [
+        f"{turn_index}:{summary}"
+        for turn_index, summary in sorted(by_summary.values(), key=lambda item: item[0])
+    ]
+    kept_reversed: list[str] = []
+    used = 0
+    for line in reversed(lines):
+        if kept_reversed and used + len(line) + 1 > max_chars:
+            break
+        kept_reversed.append(line)
+        used += len(line) + 1
+    return "；".join(reversed(kept_reversed))[:max_chars]
 
 
 def resolve_topic_reference(
@@ -297,7 +384,14 @@ def resolve_topic_reference_blocking(
         }
 
 
-def compose_memory_context(session: Session, session_id: str, *, limit: int = 12) -> dict:
+def compose_memory_context(
+    session: Session,
+    session_id: str,
+    *,
+    limit: int = 12,
+    query: str | None = None,
+    embedder=None,
+) -> dict:
     """Compact durable view: summaries plus entity/filter indexes, not raw messages."""
     topics = list_topics(session, session_id)
     selected = topics[-max(1, limit) :]
@@ -333,7 +427,12 @@ def compose_memory_context(session: Session, session_id: str, *, limit: int = 12
                 "intent": topic.intent,
             }
         )
-    summary = "；".join((topic.summary or "").strip() for topic in selected if topic.summary)
+    summary = compress_topic_summaries(topics, limit=limit)
+    reference_match = (
+        resolve_topic_reference_details(session, session_id, query, embedder=embedder)
+        if query and looks_like_topic_reference(query)
+        else None
+    )
     return {
         "topic_count": len(topics),
         "summarized_topic_count": len(selected),
@@ -345,12 +444,37 @@ def compose_memory_context(session: Session, session_id: str, *, limit: int = 12
         "tool_plan": tool_plan,
         "recent_topics": recent_topics,
         "recent_topic_ids": [topic.topic_id for topic in selected],
+        "correction_detected": bool(query and _TOPIC_CORRECTION_MARKERS.search(query)),
+        "referenced_topic_id": reference_match["topic"].topic_id if reference_match else None,
+        "referenced_summary": reference_match["topic"].summary if reference_match else None,
+        "referenced_entities": _loads(reference_match["topic"].entities_json, []) if reference_match else [],
+        "referenced_filters": _loads(reference_match["topic"].filters_json, {}) if reference_match else {},
+        "referenced_scenario": reference_match["topic"].scenario if reference_match else None,
+        "referenced_intent": reference_match["topic"].intent if reference_match else None,
+        "referenced_tool_plan": _loads(reference_match["topic"].tool_plan_json, []) if reference_match else [],
+        "referenced_claim_ids": _loads(reference_match["topic"].claim_ids_json, []) if reference_match else [],
+        "referenced_report_ids": _loads(reference_match["topic"].report_ids_json, []) if reference_match else [],
+        "topic_match_score": reference_match["score"] if reference_match else None,
+        "topic_match_reason": reference_match["reason"] if reference_match else None,
     }
 
 
-def compose_memory_context_blocking(engine, session_id: str, *, limit: int = 12) -> dict:
+def compose_memory_context_blocking(
+    engine,
+    session_id: str,
+    *,
+    limit: int = 12,
+    query: str | None = None,
+    embedder=None,
+) -> dict:
     with Session(engine) as session:
-        return compose_memory_context(session, session_id, limit=limit)
+        return compose_memory_context(
+            session,
+            session_id,
+            limit=limit,
+            query=query,
+            embedder=embedder,
+        )
 
 
 def rollback_topic(
