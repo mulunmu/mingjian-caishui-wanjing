@@ -78,7 +78,8 @@ def test_gate_stays_on_legacy_without_shadow_samples():
     assert any(item.startswith("answer:") for item in report["blockers"])
 
 
-def test_gate_is_ready_for_canary_when_all_checks_pass():
+def test_gate_is_ready_for_canary_when_all_checks_pass(monkeypatch):
+    monkeypatch.setenv("RAG_HYBRID_ENABLED", "false")
     engine = _gate_engine()
     _add_shadow_samples(engine)
     _add_answer_samples(engine)
@@ -88,7 +89,8 @@ def test_gate_is_ready_for_canary_when_all_checks_pass():
     assert report["blockers"] == []
 
 
-def test_gate_blocks_when_planned_tool_is_enabled():
+def test_gate_blocks_when_planned_tool_is_enabled(monkeypatch):
+    monkeypatch.setenv("RAG_HYBRID_ENABLED", "false")
     engine = _gate_engine()
     _add_shadow_samples(engine)
     _add_answer_samples(engine)

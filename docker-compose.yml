@@ -42,7 +42,7 @@ services:
       retries: 10
 
   db:
-    image: postgres:16
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: risk_db
       POSTGRES_USER: risk_user
@@ -104,6 +104,13 @@ services:
       LANGGRAPH_REPORT_APPROVAL_REQUIRED: ${LANGGRAPH_REPORT_APPROVAL_REQUIRED:-true}
       LANGGRAPH_CHECKPOINT_DATABASE_URL: postgresql://risk_user:${POSTGRES_PASSWORD:-risk_pass}@db:5432/risk_db
       REPORT_BLOCK_TREE_ENABLED: ${REPORT_BLOCK_TREE_ENABLED:-true}
+      RAG_HYBRID_ENABLED: ${RAG_HYBRID_ENABLED:-true}
+      RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
+      RAG_EMBEDDING_CACHE_DIR: ${RAG_EMBEDDING_CACHE_DIR:-/app/.fastembed_cache}
+      RAG_EMBEDDING_DIM: ${RAG_EMBEDDING_DIM:-512}
+      RAG_EMBEDDINGS_AUTO_SEED: ${RAG_EMBEDDINGS_AUTO_SEED:-true}
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+      HF_HUB_DISABLE_XET: ${HF_HUB_DISABLE_XET:-1}
       # JWT_SECRET 无代码兜底：必须由 .env 提供（≥32 随机）；AUTH 默认 true（fail-closed）
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
       AUTH_REQUIRED: ${AUTH_REQUIRED:-true}

@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import json
+import os
 from collections import Counter
 
 from sqlalchemy import Engine, func, inspect, select
 from sqlalchemy.orm import Session
 
 from app.models.metric_registry import MetricDefinition
+from app.models.semantic_embedding import SemanticEmbedding
 from app.models.semantic_registry import ThresholdRule, ToolDefinition
 
 
@@ -47,7 +49,11 @@ def build_semantic_readiness_report(
 ) -> dict:
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
-    missing_tables = sorted(REQUIRED_TABLES - tables)
+    required_tables = set(REQUIRED_TABLES)
+    hybrid_enabled = os.getenv("RAG_HYBRID_ENABLED", "false").lower() in {"1", "true", "yes"}
+    if hybrid_enabled:
+        required_tables.add("semantic_embedding")
+    missing_tables = sorted(required_tables - tables)
     topic_columns = (
         {column["name"] for column in inspector.get_columns("conversation_topic")}
         if "conversation_topic" in tables
@@ -62,6 +68,7 @@ def build_semantic_readiness_report(
     threshold_status: dict[str, int] = {}
     planned_enabled_tools: list[str] = []
     unsupported_enabled_tools: list[str] = []
+    embedding_count = 0
     if not missing_tables:
         with Session(engine) as session:
             metric_status = _status_counts(session, MetricDefinition)
@@ -83,6 +90,11 @@ def build_semantic_readiness_report(
                     )
                 )
             )
+            if "semantic_embedding" in tables:
+                embedding_count = int(
+                    session.scalar(select(func.count()).select_from(SemanticEmbedding))
+                    or 0
+                )
 
     failures: list[str] = []
     if missing_tables:
@@ -107,6 +119,10 @@ def build_semantic_readiness_report(
         failures.append(f"planned_tools_enabled:{planned_enabled_tools}")
     if unsupported_enabled_tools:
         failures.append(f"unsupported_tools_enabled:{unsupported_enabled_tools}")
+    if hybrid_enabled and embedding_count < metric_status.get("validated", 0):
+        failures.append(
+            f"tool_embeddings_below_validated:{embedding_count}<{metric_status.get('validated', 0)}"
+        )
 
     return {
         "ok": not failures,
@@ -117,11 +133,13 @@ def build_semantic_readiness_report(
         "threshold_status": threshold_status,
         "planned_enabled_tools": planned_enabled_tools,
         "unsupported_enabled_tools": unsupported_enabled_tools,
+        "embedding_count": embedding_count,
         "counts": {
             "tables": len(REQUIRED_TABLES),
             "validated_metrics": metric_status.get("validated", 0),
             "validated_tools": tool_status.get("validated", 0),
             "validated_thresholds": threshold_status.get("validated", 0),
+            "tool_embeddings": embedding_count,
         },
         "failures": failures,
     }

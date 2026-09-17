@@ -95,7 +95,8 @@ async def test_semantic_composer_clarifies_when_route_requires_clarification():
 
 
 @pytest.mark.asyncio
-async def test_semantic_composer_abstains_without_executable_candidates():
+async def test_semantic_composer_abstains_without_executable_candidates(monkeypatch):
+    monkeypatch.setenv("RAG_HYBRID_ENABLED", "false")
     out = await compose_semantic_turn(
         db=object(),
         session_id="session-1",

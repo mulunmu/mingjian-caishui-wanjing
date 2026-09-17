@@ -15,7 +15,8 @@ from app.schemas.tool_plan import ToolPlan, ToolStep
 from app.services.plan_execution import execute_tool_plan_async
 from app.services.route_normalize import normalize_route
 from app.services.semantic_tool_executors import build_semantic_tool_executors
-from app.services.tool_rag import ToolRagRetriever, ToolSnapshot, load_tool_snapshot
+from app.services.hybrid_tool_rag import retrieve_tools_hybrid
+from app.services.tool_rag import ToolSnapshot, load_tool_snapshot
 from app.services.observability import observe_latency
 
 
@@ -102,8 +103,10 @@ async def compose_semantic_turn(
     )
     retrieval_started = time.perf_counter()
     candidates = (
-        ToolRagRetriever(snapshot).retrieve(
+        await retrieve_tools_hybrid(
+            db,
             query,
+            snapshot=snapshot,
             domain=route.domain,
             top_k=5,
             executable_only=True,

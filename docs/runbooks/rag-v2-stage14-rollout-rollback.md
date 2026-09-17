@@ -195,3 +195,55 @@ Promotion of an unsupported metric is allowed only after adding the missing
 source field, a deterministic executor, boundary tests, aliases, and a passing
 strict audit. Do not turn it back into `planned`; move it directly to
 `validated`.
+
+## Stage 18 Hybrid RAG
+
+PostgreSQL runs from the `pgvector/pgvector:pg16` image with the `vector`
+extension. Validated tools have one versioned embedding row in
+`semantic_embedding` using:
+
+```text
+model=BAAI/bge-small-zh-v1.5
+dimension=512
+index=ix_semantic_embedding_hnsw
+```
+
+Runtime switches:
+
+```text
+RAG_HYBRID_ENABLED=true
+RAG_EMBEDDINGS_AUTO_SEED=true
+RAG_EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
+RAG_EMBEDDING_DIM=512
+HF_ENDPOINT=https://hf-mirror.com
+HF_HUB_DISABLE_XET=1
+```
+
+Retrieval order is:
+
+```text
+validated snapshot
+-> pgvector dense cosine candidates
+-> BM25 lexical candidates
+-> exact/title/alias/domain rules
+-> reciprocal-rank fusion
+-> executable-only filter
+```
+
+If embeddings or pgvector are unavailable, retrieval falls back to the
+deterministic lexical retriever. Rollback without removing data:
+
+```text
+RAG_HYBRID_ENABLED=false
+```
+
+Stage 18 gates:
+
+```text
+python -m scripts.rebuild_tool_embeddings --force
+python -m scripts.audit_stage18_hybrid_retrieval --json
+python -m scripts.verify_semantic_readiness --apply
+```
+
+The current golden set has 77 queries. Required gates are Recall@5 >= 0.90,
+dense coverage >= 0.90, and unsupported leakage = 0.

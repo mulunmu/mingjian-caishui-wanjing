@@ -28,7 +28,8 @@ def _deployment_engine():
     return engine
 
 
-def test_semantic_readiness_passes_after_seed():
+def test_semantic_readiness_passes_after_seed(monkeypatch):
+    monkeypatch.setenv("RAG_HYBRID_ENABLED", "false")
     report = build_semantic_readiness_report(_deployment_engine())
     assert report["ok"] is True
     assert report["missing_tables"] == []
@@ -36,7 +37,8 @@ def test_semantic_readiness_passes_after_seed():
     assert report["counts"]["validated_tools"] >= 60
 
 
-def test_semantic_readiness_rejects_enabled_planned_tool():
+def test_semantic_readiness_rejects_enabled_planned_tool(monkeypatch):
+    monkeypatch.setenv("RAG_HYBRID_ENABLED", "false")
     engine = _deployment_engine()
     with Session(engine) as session:
         tool = session.get(ToolDefinition, "scenario_loan_readiness")

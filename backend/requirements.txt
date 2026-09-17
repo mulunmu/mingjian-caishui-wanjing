@@ -23,3 +23,6 @@ jinja2==3.1.6
 weasyprint==66.0
 redis==5.3.1
 sentry-sdk[fastapi]==2.69.2
+pgvector==0.4.2
+fastembed==0.8.0
+rank-bm25==0.2.2

@@ -71,10 +71,19 @@ async def lifespan(app: FastAPI):
     try:
         from app.db.session import Base
         from app.db.urls import get_sync_engine
+        from app.db.vector_migrations import (
+            create_all_with_vector_fallback,
+            ensure_vector_index,
+        )
         import app.models  # noqa: F401 — 注册 engine_store / core_metrics
 
         eng = get_sync_engine()
-        await asyncio.to_thread(Base.metadata.create_all, eng)
+        _startup_checks["vector_extension"] = await asyncio.to_thread(
+            create_all_with_vector_fallback,
+            eng,
+            Base.metadata,
+        )
+        _startup_checks["vector_index"] = await asyncio.to_thread(ensure_vector_index, eng)
 
         def _ensure_chat_session_columns() -> None:
             """已有库 create_all 不会加列；补 enterprise_id（S1）。"""
@@ -213,6 +222,17 @@ async def lifespan(app: FastAPI):
         _startup_checks["semantic_registry_seeded"] = await asyncio.to_thread(
             seed_semantic_registry
         )
+        if (
+            os.getenv("RAG_HYBRID_ENABLED", "true").lower() in {"1", "true", "yes"}
+            and os.getenv("RAG_EMBEDDINGS_AUTO_SEED", "true").lower() in {"1", "true", "yes"}
+            and _startup_checks.get("vector_extension", {}).get("ok")
+        ):
+            from app.services.tool_embedding_index import build_tool_embedding_index
+
+            _startup_checks["tool_embedding_index"] = await asyncio.to_thread(
+                build_tool_embedding_index,
+                eng,
+            )
     except RuntimeError:
         raise
     except Exception as exc:

@@ -1,5 +1,7 @@
 FROM python:3.12-slim
 WORKDIR /app
+ENV HF_ENDPOINT=https://hf-mirror.com \
+    HF_HUB_DISABLE_XET=1
 ARG INSTALL_ORCHESTRATION=true
 COPY requirements.txt requirements.lock.txt requirements-orchestration.txt requirements-orchestration.lock.txt ./
 RUN apt-get update \
@@ -17,6 +19,7 @@ RUN apt-get update \
        else \
          pip install --no-cache-dir -r requirements.lock.txt; \
        fi
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BAAI/bge-small-zh-v1.5', cache_dir='/app/.fastembed_cache')"
 COPY . .
 # 首次部署时手动执行种子：docker compose run backend python seed_data.py
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

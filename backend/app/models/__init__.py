@@ -10,6 +10,7 @@ from app.models.engine_store import (
     EnterpriseEngineFeatures,
 )
 from app.models.metric_registry import FieldMapping, MetricDefinition
+from app.models.semantic_embedding import SemanticEmbedding
 from app.models.report_blueprint import ReportBlueprintRecord
 from app.models.composition_blueprint import CompositionBlueprintRecord
 from app.models.composition_checkpoint import CompositionExecutionCheckpoint
@@ -42,6 +43,7 @@ __all__ = [
     "ChatSessionRecord",
     "AppUser",
     "MetricDefinition",
+    "SemanticEmbedding",
     "FieldMapping",
     "ReportBlueprintRecord",
     "CompositionBlueprintRecord",
