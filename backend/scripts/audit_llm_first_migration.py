@@ -90,13 +90,15 @@ def build_report() -> dict:
     report_planner_path = APP_ROOT / "services" / "report_planner.py"
     legacy_fallback_path = APP_ROOT / "services" / "legacy_fallback.py"
     outer_orchestrator = APP_ROOT / "services" / "outer_orchestrator.py"
+    semantic_nodes_path = APP_ROOT / "services" / "semantic_nodes.py"
 
     report = {
         "status": "migration_required",
         "route_derived_from_plan": bool(overrides) is False,
         "planner_in_langgraph_node": _contains(
-            outer_orchestrator, "plan_semantic_turn"
-        ),
+            outer_orchestrator, "semantic_nodes.semantic_planner_node"
+        )
+        or _contains(semantic_nodes_path, "plan_semantic_turn"),
         "report_plan_enabled": report_plan_path.exists()
         and report_planner_path.exists(),
         "legacy_fallback_isolated": legacy_fallback_path.exists(),

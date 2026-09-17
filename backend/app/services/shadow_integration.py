@@ -102,31 +102,47 @@ def _domain_from_function(function: str | None) -> str | None:
 def dialog_act_to_raw_route(act, query: str) -> dict[str, Any]:
     from app.services.dialog_act import looks_greeting
 
+    action = "conversation"
     if not act.can_answer:
         if act.refusal_kind == "fabrication":
             route = "refuse"
+            action = "refuse"
         else:
             route = "out_of_domain"
+            action = "refuse"
     elif looks_greeting(query):
         route = "greeting"
+        action = "conversation"
     elif act.act == "product_faq":
         route = "product_faq"
+        action = "conversation"
     elif act.act == "custom_report":
         route = "report"
+        action = "report"
+    elif act.act == "subject_profile":
+        route = "profile"
+        action = "profile"
     elif act.act == "report":
         route = "report"
+        action = "report"
     elif act.act in {"analyze", "drill"}:
         route = "analysis"
+        action = "analysis"
     elif act.act == "bind_subject" or act.confidence < 0.55:
         route = "clarify"
+        action = "clarify"
     elif act.act == "negotiate_scope":
-        route = "capability"
+        route = "inventory"
+        action = "metadata_query"
     else:
         route = "capability"
+        action = "conversation"
     if _looks_abusive(query):
         route = "abuse"
+        action = "conversation"
     elif _looks_unknown_entity(query):
         route = "unknown_entity"
+        action = "clarify"
     elif _looks_language_switch(query) and _SUPPORTED_ENGLISH_RE.search(query or ""):
         route = "language_switch"
     elif _looks_underspecified(query) and route in {"out_of_domain", "refuse", "capability", "clarify"}:
@@ -134,9 +150,11 @@ def dialog_act_to_raw_route(act, query: str) -> dict[str, Any]:
     domain = act.scenario if route in {"analysis", "report"} else None
     return {
         "route": route,
+        "action": action,
         "domain": domain,
         "language": "zh",
         "entities": [act.subject_ref] if getattr(act, "subject_ref", None) else [],
+        "dialog_act": act.model_dump(exclude_none=True),
         "needs_tools": route in {"analysis", "report"},
         "needs_clarification": route == "clarify",
         "confidence": float(act.confidence or 0.5),

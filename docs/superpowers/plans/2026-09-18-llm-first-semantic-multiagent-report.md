@@ -391,7 +391,7 @@ git commit -m "refactor: move semantic planning into langgraph node"
 - Modify: `backend/app/services/shadow_integration.py`
 - Test: `backend/tests/test_route_normalization.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖：
 
@@ -400,13 +400,13 @@ git commit -m "refactor: move semantic planning into langgraph node"
 - `action=analysis` 只表示允许执行分析，不指定指标或模式。
 - `route_hint` 冲突时记录 telemetry，不覆盖 plan action。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `docker exec 20-backend-1 python -m pytest -q tests/test_route_normalization.py`
 
 Expected: FAIL，当前仍有 `_REPORT_REQUEST_RE` 和 `is_industry_distribution_query` 覆盖。
 
-- [ ] **Step 3: 删除 route_normalize 中的语义覆盖**
+- [x] **Step 3: 删除 route_normalize 中的语义覆盖**
 
 仅保留：
 
@@ -415,17 +415,17 @@ Expected: FAIL，当前仍有 `_REPORT_REQUEST_RE` 和 `is_industry_distribution
 - action 与 route_hint 的兼容映射。
 - 缺失槽位标记。
 
-- [ ] **Step 4: 兼容旧 API**
+- [x] **Step 4: 兼容旧 API**
 
 旧 route 名称继续出现在响应中，但由 `action + plan` 派生。前端不因迁移立即改动。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 Run: `docker exec 20-backend-1 python -m pytest -q tests/test_route_normalization.py tests/test_shadow_integration.py tests/test_conversation_policy.py`
 
 Expected: PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/app/services/route_normalize.py backend/app/services/shadow_integration.py backend/tests/test_route_normalization.py
