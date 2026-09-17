@@ -609,7 +609,7 @@ git commit -m "feat: add semantic topic rollback"
 - Test: `backend/tests/test_semantic_planner.py`
 - Test: `backend/tests/test_composition_execution_bridge.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖：
 
@@ -619,7 +619,7 @@ git commit -m "feat: add semantic topic rollback"
 - LLM 选择不存在工具时拒绝。
 - LLM 选择未验证工具时拒绝。
 
-- [ ] **Step 2: 补齐可执行算子**
+- [x] **Step 2: 补齐可执行算子**
 
 优先实现：
 
@@ -636,17 +636,17 @@ operator_root_cause
 operator_summary
 ```
 
-- [ ] **Step 3: 统一算子输入输出**
+- [x] **Step 3: 统一算子输入输出**
 
 每个算子声明输入 port、输出 port、数据来源和对应 Claim metric 前缀。Validator 用同一份 ModuleSpec 校验。
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `docker exec 20-backend-1 python -m pytest -q tests/test_semantic_planner.py tests/test_composition_execution_bridge.py tests/test_dynamic_composition.py tests/test_composition_validator.py`
 
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/app/services/tool_rag.py backend/app/services/hybrid_tool_rag.py backend/app/services/composition_catalog.py backend/app/services/composition_execution_bridge.py backend/app/services/semantic_tool_executors.py backend/tests/test_semantic_planner.py backend/tests/test_composition_execution_bridge.py

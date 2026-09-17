@@ -40,13 +40,19 @@ def _threshold_module(metric_key: str, title: str = "") -> ModuleSpec:
 
 
 def _operator(module_id: str, inputs=None, outputs=None) -> ModuleSpec:
+    input_specs = [PortSpec(**item) for item in (inputs or [])]
+    output_specs = [PortSpec(**item) for item in (outputs or [])]
+    if not any(port.name == "claims" for port in input_specs):
+        input_specs.append(PortSpec(name="claims", data_type="claims", required=False))
+    if not any(port.name == "claims" for port in output_specs):
+        output_specs.append(PortSpec(name="claims", data_type="claims"))
     return ModuleSpec(
         module_id=module_id,
         kind="operator",
         version="1",
         status="validated",
-        inputs=[PortSpec(**item) for item in (inputs or [])],
-        outputs=[PortSpec(**item) for item in (outputs or [])],
+        inputs=input_specs,
+        outputs=output_specs,
         cost=0.1,
     )
 
@@ -249,6 +255,8 @@ def _catalog_from_snapshot(snapshot) -> dict[str, ModuleSpec] | None:
             module = _metric_module(tool.tool_id.removeprefix("metric_"), tool.title)
             module.module_id = tool.tool_id
             module.metadata["aliases"] = list(tool.aliases)
+            module.metadata["scenarios"] = list(tool.scenarios)
+            module.metadata["chapter_links"] = list(tool.chapter_links)
             modules[tool.tool_id] = module
         elif tool.kind == "chapter":
             modules[tool.tool_id] = ModuleSpec(

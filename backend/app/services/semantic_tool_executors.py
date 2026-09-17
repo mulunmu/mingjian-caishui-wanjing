@@ -76,9 +76,22 @@ SUPPORTED_METRIC_KEYS: set[str] = {
 }
 SUPPORTED_METRIC_KEYS.update(STAGE17_METRIC_KEYS)
 
+ANALYSIS_OPERATOR_TOOL_IDS = {
+    "operator_compare_industry",
+    "operator_compare_province",
+    "operator_change_rate",
+    "operator_proportion",
+    "operator_summary",
+    "operator_rank",
+    "operator_trend",
+    "operator_root_cause",
+}
+
 
 def semantic_executor_tool_ids() -> set[str]:
-    return {f"metric_{metric}" for metric in SUPPORTED_METRIC_KEYS}
+    return {f"metric_{metric}" for metric in SUPPORTED_METRIC_KEYS}.union(
+        ANALYSIS_OPERATOR_TOOL_IDS
+    )
 
 
 def _param_list(value: Any) -> list[str]:
@@ -97,7 +110,7 @@ def _build_semantic_query(metric_key: str, params: dict[str, Any]) -> SemanticQu
             filters[key] = values
     entities = _param_list(params.get("entities"))
     entity = params.get("entity")
-    if entity and str(entity).upper().startswith("ENT") and str(entity) not in entities:
+    if entity and str(entity) not in entities:
         entities.append(str(entity))
     return SemanticQuery(
         query_type=QueryType.lookup,
@@ -142,4 +155,11 @@ def build_semantic_tool_executors(
             }
 
         executors[tool_id] = execute
+    from app.services.analysis_operator_executors import (
+        build_analysis_operator_executors,
+    )
+
+    executors.update(
+        build_analysis_operator_executors(db=db, session_id=session_id)
+    )
     return executors
