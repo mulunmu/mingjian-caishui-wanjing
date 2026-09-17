@@ -188,6 +188,55 @@ def test_finance_review_defaults_to_disabled(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_finance_review_agent_completes_without_owning_numbers(monkeypatch):
+    pytest.importorskip("langgraph")
+    from app.services import llm_reply, outer_orchestrator, semantic_primary
+
+    async def primary(**kwargs):
+        return {
+            "reply": "现金流承压。",
+            "session_id": kwargs["session_id"],
+            "data": {
+                "primary": {"status": "answered", "fallback": False},
+                "claims": [
+                    {
+                        "claim": "经营现金流净额为负。",
+                        "value": {"metric": "cash_flow_net", "number": -1, "unit": "元"},
+                        "trace": {"table": "core_metrics", "field": "cash_flow_net"},
+                    }
+                ],
+            },
+        }
+
+    async def classify(self, query):
+        del self, query
+        return {"route": "analysis", "domain": "loan"}
+
+    async def review(claims, context):
+        assert claims[0].claim == "经营现金流净额为负。"
+        return "因为经营现金流为负，所以短期偿债需要谨慎。"
+
+    monkeypatch.setenv("LANGGRAPH_OUTER_ENABLED", "true")
+    monkeypatch.setenv("LANGGRAPH_FINANCE_REVIEW_ENABLED", "true")
+    monkeypatch.setattr(semantic_primary, "run_primary_turn", primary)
+    monkeypatch.setattr(outer_orchestrator.OuterTurnRuntime, "classify", classify)
+    monkeypatch.setattr(llm_reply, "financial_llm_available", lambda: True)
+    monkeypatch.setattr(llm_reply, "generate_financial_interpretation", review)
+
+    out = await outer_orchestrator.run_outer_turn(
+        db=object(),
+        session_id="outer-finance-review",
+        owner=None,
+        query="现金流怎么样",
+        require_approval=False,
+    )
+    primary_payload = out["data"]["primary"]
+    assert primary_payload["finance_review"]["status"] == "completed"
+    assert "偿债" in primary_payload["finance_review"]["interpretation"]
+    assert out["reply"] == "现金流承压。"
+
+
+@pytest.mark.asyncio
 async def test_langgraph_memory_agent_traces_topic_context(monkeypatch):
     pytest.importorskip("langgraph")
     from app.services import outer_orchestrator, semantic_primary

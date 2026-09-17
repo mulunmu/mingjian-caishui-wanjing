@@ -140,11 +140,16 @@ def _llm_financial_params() -> tuple[str, dict]:
 
     优先读 FINANCIAL_LLM_* 环境变量，回退到主 LLM 配置。
     """
-    model = (os.getenv("FINANCIAL_LLM_MODEL") or "").strip()
-    key = (os.getenv("FINANCIAL_LLM_API_KEY") or "").strip()
-    base = (os.getenv("FINANCIAL_LLM_BASE_URL") or "").strip()
+    from app.services.financial_model import load_financial_model_config
+
+    config = load_financial_model_config()
+    model = config.model
+    key = (
+        (os.getenv("FINANCIAL_LLM_API_KEY") or "").strip()
+        or (os.getenv("LLM_API_KEY") or "").strip()
+    )
+    base = config.base_url
     if not model:
-        # 未配置金融模型时回退到主模型
         return _llm_completion_params()
     params: dict = {"api_key": key or (os.getenv("LLM_API_KEY") or "").strip()}
     if base:
@@ -156,9 +161,9 @@ def _llm_financial_params() -> tuple[str, dict]:
 
 def financial_llm_available() -> bool:
     """M1：金融解读层 LLM 是否已配置且可用。"""
-    model = (os.getenv("FINANCIAL_LLM_MODEL") or "").strip()
-    key = (os.getenv("FINANCIAL_LLM_API_KEY") or "").strip()
-    if not model or not key:
+    from app.services.financial_model import load_financial_model_config
+
+    if not load_financial_model_config().available:
         return False
     from app.services import rate_limiter
     return rate_limiter.check_llm_limit()
@@ -205,50 +210,17 @@ async def generate_financial_interpretation(
         f"引擎结论（唯一事实来源）：\n" + "\n".join(f"- {line}" for line in claim_lines[:8])
     )
     try:
-        raw_text: str | None = None
-        # 优先 instructor 结构化
-        try:
-            model, params = _llm_financial_params()
-            import instructor
-            from openai import OpenAI
-
-            api_key = params.get("api_key") or ""
-            base_url = params.get("api_base")
-            client_kwargs: dict = {"api_key": api_key}
-            if base_url:
-                client_kwargs["base_url"] = base_url
-            client = instructor.from_openai(OpenAI(**client_kwargs))
-            plan = client.chat.completions.create(
-                model=model.replace("openai/", "") if model.startswith("openai/") else model,
-                response_model=FinancialInterpPlan,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                max_tokens=300,
-                temperature=0.3,
-            )
-            if plan and plan.sentences:
-                raw_text = "".join(s.strip() for s in plan.sentences if s and s.strip())
-        except Exception as exc:
-            logger.info("financial instructor unavailable, litellm fallback: %s", exc)
-
-        if not raw_text:
-            model, params = _llm_financial_params()
-            import litellm
-
-            response = litellm.completion(
-                model=model,
-                **params,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                max_tokens=300,
-                temperature=0.3,
-                timeout=_llm_timeout_seconds(),
-            )
-            raw_text = _extract_llm_content(response)
+        model, params = _llm_financial_params()
+        plan = await _async_instructor_completion(
+            system,
+            user,
+            FinancialInterpPlan,
+            model_params=(model, params),
+            max_tokens=300,
+            temperature=0.3,
+            max_retries=1,
+        )
+        raw_text = "".join(s.strip() for s in plan.sentences if s and s.strip())
 
         if not raw_text:
             return None

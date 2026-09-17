@@ -294,3 +294,53 @@ python -m scripts.audit_module_coverage --strict
 
 The long-dialogue gate requires four 40-turn conversations covering correction,
 content back-reference, N-2 rollback and unrelated intervening turns.
+
+## Stage 20 Financial Model
+
+Financial model configuration resolution:
+
+```text
+FINANCIAL_LLM_MODEL / FINANCIAL_LLM_API_KEY / FINANCIAL_LLM_BASE_URL
+-> fallback to LLM_MODEL / LLM_API_KEY / LLM_BASE_URL for API baseline only
+```
+
+Default runtime:
+
+```text
+LANGGRAPH_FINANCE_REVIEW_ENABLED=false
+```
+
+The finance review Agent is optional. It may only reinterpret existing Claims,
+cannot emit digits, and cannot modify final facts or the main reply.
+
+API baseline evidence:
+
+```text
+model=deepseek-v4-pro
+source=main_api_baseline
+passed=10/10
+digit_leakage=0
+P50=4996.26ms
+P95=8945.87ms
+```
+
+The latency result fails the every-turn gate, so finance review remains disabled
+for normal dialogue. It may be used for asynchronous report review or after a
+lower-latency local model is validated.
+
+Local deployment gate:
+
+```text
+current GPU=RTX 4060 Laptop 8GB
+current RAM=16GB
+DISC-FinLLM 13B production deployment=not approved
+XuanYuan-6B-Chat-4bit production deployment=not approved; PoC only
+recommended production hardware>=24GB VRAM and >=32GB RAM
+```
+
+Evaluation commands:
+
+```text
+python -m scripts.evaluate_financial_model --json
+python -m scripts.verify_semantic_readiness --apply
+```

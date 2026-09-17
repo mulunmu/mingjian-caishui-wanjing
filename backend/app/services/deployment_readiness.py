@@ -47,6 +47,8 @@ def build_semantic_readiness_report(
     min_validated_tools: int = 60,
     min_validated_thresholds: int = 14,
 ) -> dict:
+    from app.services.financial_model import load_financial_model_config
+
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
     required_tables = set(REQUIRED_TABLES)
@@ -134,6 +136,7 @@ def build_semantic_readiness_report(
         "planned_enabled_tools": planned_enabled_tools,
         "unsupported_enabled_tools": unsupported_enabled_tools,
         "embedding_count": embedding_count,
+        "financial_model": load_financial_model_config().public_dict(),
         "counts": {
             "tables": len(REQUIRED_TABLES),
             "validated_metrics": metric_status.get("validated", 0),
