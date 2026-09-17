@@ -270,7 +270,7 @@ git commit -m "feat: add semantic action policy contract"
 - Modify: `backend/app/services/semantic_planner.py`
 - Test: `backend/tests/test_semantic_plan_v2.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 测试 SemanticPlan 必须支持：
 
@@ -287,17 +287,17 @@ git commit -m "feat: add semantic action policy contract"
 
 断言 `route_hint` 不参与工具选择。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `docker exec 20-backend-1 python -m pytest -q tests/test_semantic_plan_v2.py`
 
 Expected: FAIL，缺少新字段。
 
-- [ ] **Step 3: 扩展 schema**
+- [x] **Step 3: 扩展 schema**
 
 新增字段默认值，保持旧数据可反序列化。`action` 改为 `SemanticAction`，但通过 `field_validator` 兼容旧字符串。
 
-- [ ] **Step 4: 更新规划提示词**
+- [x] **Step 4: 更新规划提示词**
 
 Planner 必须要求：
 
@@ -306,13 +306,13 @@ Planner 必须要求：
 - 不确定时填 `ambiguous=true` 和 `clarification_question`。
 - 任何步骤只能来自真实工具目录。
 
-- [ ] **Step 5: 运行测试和既有 planner 测试**
+- [x] **Step 5: 运行测试和既有 planner 测试**
 
 Run: `docker exec 20-backend-1 python -m pytest -q tests/test_semantic_plan_v2.py tests/test_semantic_planner.py`
 
 Expected: PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/app/schemas/semantic_plan.py backend/app/services/semantic_planner.py backend/tests/test_semantic_plan_v2.py
