@@ -74,7 +74,12 @@ def prepare_html_context(context: dict[str, Any], report_id: str) -> dict[str, A
     chapters = []
     for ch in context.get("chapters") or []:
         ch_copy = dict(ch)
-        ch_copy["chart_data_uri"] = _file_to_data_uri(ch.get("chart_image"))
+        ch_copy["blocks"] = [
+            block
+            for block in ch.get("blocks") or []
+            if str(block.get("status") or "active") == "active"
+        ]
+        ch_copy["chart_data_uri"] = _file_to_data_uri(ch.get("chart_image")) or ch.get("chart_data_uri")
         meta = ch.get("meta") or {}
         score = meta.get("avg_score")
         if score is None:
@@ -88,9 +93,9 @@ def prepare_html_context(context: dict[str, Any], report_id: str) -> dict[str, A
         chapters.append(ch_copy)
     out["chapters"] = chapters
 
-    out["attribution_chart_data_uri"] = _file_to_data_uri(context.get("attribution_chart"))
-    out["radar_chart_data_uri"] = _file_to_data_uri(context.get("radar_chart"))
-    out["benchmark_chart_data_uri"] = _file_to_data_uri(context.get("benchmark_chart"))
+    out["attribution_chart_data_uri"] = _file_to_data_uri(context.get("attribution_chart")) or context.get("attribution_chart_data_uri")
+    out["radar_chart_data_uri"] = _file_to_data_uri(context.get("radar_chart")) or context.get("radar_chart_data_uri")
+    out["benchmark_chart_data_uri"] = _file_to_data_uri(context.get("benchmark_chart")) or context.get("benchmark_chart_data_uri")
     out["cover_frame_data_uri"] = _cover_frame_uri(context.get("scenario"))
 
     attr = context.get("attribution") or {}

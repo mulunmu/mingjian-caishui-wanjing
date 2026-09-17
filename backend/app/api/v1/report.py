@@ -1,5 +1,6 @@
 import logging
 import re
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
@@ -20,6 +21,8 @@ from app.services.slice_report import (
     preview_enterprise_report_html,
     preview_slice_report_html,
     read_report_snapshot,
+    rerender_report_pdf,
+    update_report_snapshot,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,6 +75,25 @@ class EmailReportRequest(BaseModel):
     recipient: EmailStr
     scenario: str = "general"
     session_id: str | None = None
+
+
+class BlockUpdateRequest(BaseModel):
+    locked: bool | None = None
+    position: int | None = None
+    status: Literal["active", "removed"] | None = None
+
+
+class BlockRestoreRequest(BaseModel):
+    version: int
+
+
+def _require_report_snapshot(report_id: str, user: dict | None) -> dict:
+    if not can_access_report(report_id, user, auth_required=auth_service.AUTH_REQUIRED):
+        raise HTTPException(status_code=403, detail="无权访问该报告")
+    snapshot = read_report_snapshot(report_id)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="报告不存在或未生成快照")
+    return snapshot
 
 
 def _owner_email(user: dict | None) -> str | None:
@@ -361,6 +383,109 @@ async def preview_slice_report(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"报告预览失败: {exc}") from exc
     return HTMLResponse(html)
+
+
+@router.get("/{report_id}/blocks")
+async def list_report_blocks(
+    report_id: str,
+    _user: dict | None = Depends(require_plan("subscriber")),
+):
+    snapshot = _require_report_snapshot(report_id, _user)
+    blocks = []
+    for chapter in snapshot.get("chapters") or []:
+        for block in chapter.get("blocks") or []:
+            blocks.append(
+                {
+                    **block,
+                    "chapter_key": chapter.get("function") or "synthesis",
+                    "chapter_title": chapter.get("title") or "",
+                    "versions": (snapshot.get("block_versions") or {}).get(block.get("block_id"), []),
+                }
+            )
+    return {"report_id": report_id, "block_tree_version": snapshot.get("block_tree_version") or "", "blocks": blocks}
+
+
+@router.patch("/{report_id}/blocks/{block_id}")
+async def update_report_block(
+    report_id: str,
+    block_id: str,
+    body: BlockUpdateRequest,
+    _user: dict | None = Depends(require_plan("subscriber")),
+):
+    _require_report_snapshot(report_id, _user)
+    from app.services.report_block_editor import lock_block, move_block, remove_block
+
+    def mutate(snapshot: dict) -> dict:
+        if body.locked is not None:
+            lock_block(snapshot, block_id, body.locked)
+        if body.position is not None:
+            move_block(snapshot, block_id, body.position)
+        if body.status == "removed":
+            remove_block(snapshot, block_id)
+        return snapshot
+
+    try:
+        updated = update_report_snapshot(report_id, mutate)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if updated is None:
+        raise HTTPException(status_code=404, detail="报告不存在或未生成快照")
+    render = rerender_report_pdf(report_id, updated)
+    detail = build_report_detail(report_id, updated)
+    detail["render"] = render
+    return detail
+
+
+@router.post("/{report_id}/blocks/{block_id}/regenerate")
+async def regenerate_report_block(
+    report_id: str,
+    block_id: str,
+    _user: dict | None = Depends(require_plan("subscriber")),
+):
+    _require_report_snapshot(report_id, _user)
+    from app.services.report_block_editor import regenerate_block
+
+    try:
+        updated = update_report_snapshot(report_id, lambda snapshot: (regenerate_block(snapshot, block_id), snapshot)[1])
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if updated is None:
+        raise HTTPException(status_code=404, detail="报告不存在或未生成快照")
+    render = rerender_report_pdf(report_id, updated)
+    detail = build_report_detail(report_id, updated)
+    detail["render"] = render
+    return detail
+
+
+@router.post("/{report_id}/blocks/{block_id}/restore")
+async def restore_report_block(
+    report_id: str,
+    block_id: str,
+    body: BlockRestoreRequest,
+    _user: dict | None = Depends(require_plan("subscriber")),
+):
+    _require_report_snapshot(report_id, _user)
+    from app.services.report_block_editor import restore_block_version
+
+    try:
+        updated = update_report_snapshot(
+            report_id,
+            lambda snapshot: (restore_block_version(snapshot, block_id, body.version), snapshot)[1],
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if updated is None:
+        raise HTTPException(status_code=404, detail="报告不存在或未生成快照")
+    render = rerender_report_pdf(report_id, updated)
+    detail = build_report_detail(report_id, updated)
+    detail["render"] = render
+    return detail
 
 
 @router.get("/{report_id}")

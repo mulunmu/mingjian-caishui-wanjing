@@ -117,10 +117,10 @@ def test_snapshot_api_and_html_share_same_block_tree(tmp_path, monkeypatch):
     slice_report.write_report_snapshot("block-tree-test", context)
     snapshot = slice_report.read_report_snapshot("block-tree-test")
     assert snapshot is not None
-    assert snapshot["block_tree_version"] == "1"
+    assert snapshot["block_tree_version"] == "2"
 
     detail = slice_report.build_report_detail("block-tree-test", snapshot)
-    assert detail["block_tree_version"] == "1"
+    assert detail["block_tree_version"] == "2"
     api_blocks = detail["chapters"][0]["blocks"]
     snapshot_blocks = snapshot["chapters"][0]["blocks"]
     assert api_blocks == snapshot_blocks
@@ -132,3 +132,20 @@ def test_snapshot_api_and_html_share_same_block_tree(tmp_path, monkeypatch):
     html = build_report_html(snapshot, "block-tree-test")
     for block in api_blocks:
         assert block["paragraph"] in html
+
+
+def test_snapshot_embeds_chart_assets_for_block_rerender(tmp_path, monkeypatch):
+    monkeypatch.setattr(slice_report, "REPORTS_DIR", tmp_path)
+    chart = tmp_path / "chart.png"
+    chart.write_bytes(b"png-bytes")
+    context = {
+        "scenario": "slice",
+        "title": "图表",
+        "chapters": [],
+        "radar_chart": str(chart),
+    }
+    slice_report.write_report_snapshot("chart-snapshot", context)
+    snapshot = slice_report.read_report_snapshot("chart-snapshot")
+    assert snapshot is not None
+    assert snapshot["radar_chart_data_uri"].startswith("data:image/png;base64,")
+    assert "radar_chart" not in snapshot

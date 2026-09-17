@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import re
 import shutil
+import threading
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -55,6 +58,8 @@ from app.services.report_templates import (
 from app.services.sync_runner import run_blocking
 
 logger = logging.getLogger(__name__)
+_SNAPSHOT_LOCKS: dict[str, threading.RLock] = {}
+_SNAPSHOT_LOCKS_GUARD = threading.Lock()
 
 REPORTS_DIR = Path(__file__).resolve().parents[2] / "reports"
 
@@ -132,10 +137,31 @@ def write_report_snapshot(report_id: str, context: dict[str, Any]) -> None:
     """
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     path = REPORTS_DIR / f"{report_id}.context.json"
-    payload = _strip_chart_paths(context)
+    snapshot_context = dict(context)
+    for key in ("radar_chart", "attribution_chart", "benchmark_chart"):
+        file_path = snapshot_context.get(key)
+        if file_path and Path(file_path).is_file():
+            snapshot_context[f"{key}_data_uri"] = (
+                "data:image/png;base64,"
+                + base64.b64encode(Path(file_path).read_bytes()).decode("ascii")
+            )
+    chapters_copy = []
+    for chapter in snapshot_context.get("chapters") or []:
+        chapter_copy = dict(chapter)
+        chart_path = chapter_copy.get("chart_image")
+        if chart_path and Path(chart_path).is_file():
+            chapter_copy["chart_data_uri"] = (
+                "data:image/png;base64,"
+                + base64.b64encode(Path(chart_path).read_bytes()).decode("ascii")
+            )
+        chapters_copy.append(chapter_copy)
+    snapshot_context["chapters"] = chapters_copy
+    payload = _strip_chart_paths(snapshot_context)
     if payload.get("chapters"):
-        payload.setdefault("block_tree_version", "1")
-    path.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
+        payload["block_tree_version"] = "2"
+    tmp_path = path.with_name(path.name + ".tmp")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
+    tmp_path.replace(path)
 
 
 def read_report_snapshot(report_id: str) -> dict[str, Any] | None:
@@ -148,6 +174,40 @@ def read_report_snapshot(report_id: str) -> dict[str, Any] | None:
         return None
 
 
+def _snapshot_lock(report_id: str) -> threading.RLock:
+    with _SNAPSHOT_LOCKS_GUARD:
+        return _SNAPSHOT_LOCKS.setdefault(report_id, threading.RLock())
+
+
+def update_report_snapshot(report_id: str, mutator) -> dict[str, Any] | None:
+    """Atomically mutate one report snapshot within the current process."""
+    with _snapshot_lock(report_id):
+        current = read_report_snapshot(report_id)
+        if current is None:
+            return None
+        updated = mutator(deepcopy(current))
+        if not isinstance(updated, dict):
+            raise ValueError("snapshot mutator must return a report snapshot")
+        write_report_snapshot(report_id, updated)
+        return updated
+
+
+def rerender_report_pdf(report_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Render the current block tree back to the report PDF."""
+    output_path = REPORTS_DIR / f"{report_id}.pdf"
+    try:
+        from app.services.report_html import generate_pdf_weasyprint, weasyprint_available
+
+        if not weasyprint_available():
+            return {"ok": False, "reason": "weasyprint_unavailable"}
+        html = build_report_html(snapshot, report_id)
+        generate_pdf_weasyprint(html, output_path)
+        return {"ok": True, "renderer": "weasyprint", "path": str(output_path)}
+    except Exception as exc:
+        logger.warning("report block re-render failed for %s: %s", report_id, exc)
+        return {"ok": False, "reason": str(exc)}
+
+
 def _slice_chapter(idx: int, ch: dict[str, Any]) -> dict[str, Any]:
     """切片报告章节 → 前端结构化章节。结论=声明串联，证据链=声明 trace。"""
     claims = ch.get("claims") or []
@@ -157,6 +217,13 @@ def _slice_chapter(idx: int, ch: dict[str, Any]) -> dict[str, Any]:
         t = c.get("trace") or {}
         if t.get("table") and t.get("field"):
             evidence.append(f"{t['table']}.{t['field']}")
+    from app.services.report_blocks import normalize_report_block
+
+    blocks = [
+        normalize_report_block(block, chapter_key=str(ch.get("function") or "synthesis"), index=i)
+        for i, block in enumerate(ch.get("blocks") or [])
+        if str(block.get("status") or "active") == "active"
+    ]
     return {
         "id": str(idx),
         "title": ch.get("title") or "",
@@ -164,7 +231,7 @@ def _slice_chapter(idx: int, ch: dict[str, Any]) -> dict[str, Any]:
         "conclusion": conclusion,
         "evidence_chain": evidence,
         "narration": ch.get("narration") or "",
-        "blocks": list(ch.get("blocks") or []),
+        "blocks": blocks,
     }
 
 

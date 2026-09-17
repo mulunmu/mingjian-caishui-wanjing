@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import hashlib
 from typing import Any
 
 
@@ -94,10 +95,44 @@ def _block_title(block_kind: str, metric: str) -> str:
     return _metric_title(metric)
 
 
+def block_content_hash(block: dict[str, Any]) -> str:
+    content = "|".join(
+        [
+            str(block.get("type") or ""),
+            str(block.get("title") or ""),
+            str(block.get("paragraph") or ""),
+            str(block.get("metric") or ""),
+            str(block.get("number") if block.get("number") is not None else ""),
+            str(block.get("unit") or ""),
+            str(block.get("trace") or ""),
+        ]
+    )
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def normalize_report_block(
+    block: dict[str, Any],
+    *,
+    chapter_key: str,
+    index: int,
+) -> dict[str, Any]:
+    out = dict(block)
+    out["block_id"] = str(
+        out.get("block_id")
+        or f"{normalize_chapter_key(chapter_key)}-{index + 1}-{out.get('type') or 'metric_paragraph'}"
+    )
+    out["version"] = int(out.get("version") or 1)
+    out["status"] = str(out.get("status") or "active")
+    out["locked"] = bool(out.get("locked") or False)
+    out.setdefault("source_claim_index", None)
+    out["content_hash"] = str(out.get("content_hash") or block_content_hash(out))
+    return out
+
+
 def build_chapter_blocks(chapter: dict[str, Any]) -> list[dict[str, Any]]:
     chapter_key = str(chapter.get("function") or "synthesis")
     blocks: list[dict[str, Any]] = []
-    for claim in chapter.get("claims") or []:
+    for index, claim in enumerate(chapter.get("claims") or []):
         paragraph = _claim_text(claim)
         if not paragraph:
             continue
@@ -110,7 +145,8 @@ def build_chapter_blocks(chapter: dict[str, Any]) -> list[dict[str, Any]]:
             else "metric_paragraph"
         )
         blocks.append(
-            {
+            normalize_report_block(
+                {
                 "type": block_kind,
                 "title": _block_title(block_kind, metric),
                 "paragraph": paragraph,
@@ -122,18 +158,27 @@ def build_chapter_blocks(chapter: dict[str, Any]) -> list[dict[str, Any]]:
                     if trace.get("table") and trace.get("field")
                     else ""
                 ),
-            }
+                "source_claim_index": index,
+                },
+                chapter_key=chapter_key,
+                index=index,
+            )
         )
     narration = str(chapter.get("narration") or "").strip()
     if narration:
         blocks.append(
-            {
+            normalize_report_block(
+                {
                 "type": "synthesis_paragraph",
                 "title": "综合研判",
                 "paragraph": narration,
                 "metric": "",
                 "trace": "",
-            }
+                "source_claim_index": None,
+                },
+                chapter_key=chapter_key,
+                index=len(blocks),
+            )
         )
     return blocks
 

@@ -344,3 +344,34 @@ Evaluation commands:
 python -m scripts.evaluate_financial_model --json
 python -m scripts.verify_semantic_readiness --apply
 ```
+
+## Stage 21 Report Block Editor
+
+Report snapshots use `block_tree_version=2`. Each active paragraph block stores:
+
+```text
+block_id
+version
+content_hash
+status
+locked
+source_claim_index
+```
+
+Mutation endpoints:
+
+```text
+GET   /api/v1/report/{report_id}/blocks
+PATCH /api/v1/report/{report_id}/blocks/{block_id}
+POST  /api/v1/report/{report_id}/blocks/{block_id}/regenerate
+POST  /api/v1/report/{report_id}/blocks/{block_id}/restore
+```
+
+Supported actions are lock/unlock, reorder, soft-delete and restore. Regeneration
+can only rebuild from the original Claim index; the API never accepts arbitrary
+paragraph text. Locked blocks cannot be regenerated, moved or removed.
+
+Snapshots embed chart assets as data URIs before removing filesystem paths so
+block edits can re-render PDF without losing charts. API, HTML and PDF render the
+same active blocks in the same order; removed blocks remain in revision history
+but are not rendered.
