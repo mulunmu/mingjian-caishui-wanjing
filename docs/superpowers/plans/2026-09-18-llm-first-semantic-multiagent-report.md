@@ -194,7 +194,7 @@ git commit -m "test: add llm-first migration audit"
 - Create: `backend/app/services/semantic_policy.py`
 - Test: `backend/tests/test_semantic_action_policy.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖以下 action：
 
@@ -212,13 +212,13 @@ assert SemanticAction.REFUSE.value == "refuse"
 
 测试 policy 只根据 action、safety、permission、tool availability 决定行为，不读取 query 关键词。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `docker exec 20-backend-1 python -m pytest -q tests/test_semantic_action_policy.py`
 
 Expected: FAIL with `ModuleNotFoundError: app.schemas.semantic_action`。
 
-- [ ] **Step 3: 实现 Action**
+- [x] **Step 3: 实现 Action**
 
 ```python
 from enum import Enum
@@ -234,7 +234,7 @@ class SemanticAction(str, Enum):
     REFUSE = "refuse"
 ```
 
-- [ ] **Step 4: 实现 Policy Resolver**
+- [x] **Step 4: 实现 Policy Resolver**
 
 `semantic_policy.resolve_policy(action, *, safety, permissions, tools_available)` 返回：
 
@@ -248,13 +248,13 @@ class SemanticAction(str, Enum):
 }
 ```
 
-- [ ] **Step 5: 运行测试并通过**
+- [x] **Step 5: 运行测试并通过**
 
 Run: `docker exec 20-backend-1 python -m pytest -q tests/test_semantic_action_policy.py`
 
 Expected: PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/app/schemas/semantic_action.py backend/app/services/semantic_policy.py backend/tests/test_semantic_action_policy.py

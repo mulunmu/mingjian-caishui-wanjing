@@ -2,6 +2,11 @@
 from app.schemas.claim import Claim, ClaimBundle, ClaimTrace, ClaimValue, filter_claims
 from app.schemas.custom_report import CustomReportSpec, CustomReportTurn
 from app.schemas.semantic_query import CompareTarget, QueryType, SemanticQuery, SortSpec, TimeRange
+from app.schemas.semantic_action import (
+    SafetyLevel,
+    SemanticAction,
+    SemanticPolicyDecision,
+)
 
 __all__ = [
     "Claim",
@@ -16,4 +21,7 @@ __all__ = [
     "SemanticQuery",
     "SortSpec",
     "TimeRange",
+    "SafetyLevel",
+    "SemanticAction",
+    "SemanticPolicyDecision",
 ]
