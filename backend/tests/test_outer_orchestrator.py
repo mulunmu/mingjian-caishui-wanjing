@@ -117,7 +117,7 @@ async def test_langgraph_parity_and_report_interrupt_resume(monkeypatch):
     assert parity["reply"] == direct["reply"]
     assert parity["data"]["claims"] == direct["data"]["claims"]
 
-    session_id = "outer-approval"
+    session_id = f"outer-approval-{uuid.uuid4().hex}"
     pending = await outer_orchestrator.run_outer_turn(
         db=object(),
         session_id=session_id,
@@ -131,7 +131,14 @@ async def test_langgraph_parity_and_report_interrupt_resume(monkeypatch):
     assert [
         item["agent"]
         for item in pending["data"]["primary"]["orchestrator"]["agents"]
-    ] == ["memory_agent", "classification_agent", "planning_agent"]
+    ] == [
+        "memory_agent",
+        "classification_agent",
+        "semantic_planner_agent",
+        "capability_retrieval_agent",
+        "plan_validator_agent",
+        "planning_agent",
+    ]
 
     resumed = await outer_orchestrator.run_outer_turn(
         db=object(),
@@ -146,6 +153,9 @@ async def test_langgraph_parity_and_report_interrupt_resume(monkeypatch):
     assert [item["agent"] for item in agents] == [
         "memory_agent",
         "classification_agent",
+        "semantic_planner_agent",
+        "capability_retrieval_agent",
+        "plan_validator_agent",
         "planning_agent",
         "approval_agent",
         "execution_agent",
@@ -153,6 +163,49 @@ async def test_langgraph_parity_and_report_interrupt_resume(monkeypatch):
         "final_guard_agent",
         "verification_agent",
     ]
+
+
+@pytest.mark.asyncio
+async def test_custom_report_conversation_skips_premature_approval(monkeypatch):
+    pytest.importorskip("langgraph")
+    from app.services import outer_orchestrator, semantic_primary
+
+    async def primary(**kwargs):
+        return {
+            "reply": "先和我确认这份报告要关注哪些模块。",
+            "session_id": kwargs["session_id"],
+            "data": {
+                "primary": {"status": "answered", "fallback": False, "route": "report"},
+                "claims": [],
+            },
+        }
+
+    async def classify(self, query):
+        del self, query
+        return {
+            "route": "report",
+            "domain": "report",
+            "language": "zh",
+            "entities": [],
+            "needs_tools": False,
+            "needs_clarification": False,
+            "confidence": 0.99,
+            "custom_report": True,
+        }
+
+    monkeypatch.setenv("LANGGRAPH_OUTER_ENABLED", "true")
+    monkeypatch.setattr(semantic_primary, "run_primary_turn", primary)
+    monkeypatch.setattr(outer_orchestrator.OuterTurnRuntime, "classify", classify)
+    out = await outer_orchestrator.run_outer_turn(
+        db=object(),
+        session_id="custom-report-no-premature-approval",
+        owner=None,
+        query="我要定制一份风控报告",
+        require_approval=True,
+    )
+    assert out["reply"] == "先和我确认这份报告要关注哪些模块。"
+    assert out["data"]["primary"].get("approval_required") is not True
+    assert out["data"]["primary"]["orchestrator"]["status"] == "completed"
 
 
 def test_final_guard_rejects_fallback_and_untraceable_claims():

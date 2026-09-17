@@ -1,0 +1,257 @@
+"""LLM-first semantic planning nodes used by the outer LangGraph."""
+from __future__ import annotations
+
+import logging
+from typing import Any, Callable
+
+from app.schemas.semantic_plan import SemanticPlan
+from app.services import llm_reply
+from app.services.composition_catalog import build_composition_catalog
+from app.services.semantic_frame import frame_from_route
+from app.services.semantic_planner import (
+    plan_semantic_turn,
+    semantic_plan_to_composition_plan,
+    semantic_planner_enabled,
+    validate_semantic_plan,
+)
+from app.services.semantic_tool_executors import semantic_executor_tool_ids
+
+
+logger = logging.getLogger(__name__)
+
+
+async def _default_snapshot_loader(db):
+    from app.services.tool_rag import load_tool_snapshot
+
+    return await load_tool_snapshot(db)
+
+
+async def _default_inventory_loader(db, top_n: int = 1):
+    from app.services import inventory_scope
+
+    return await inventory_scope.load_inventory(db, top_n=top_n)
+
+
+def _allowed_filter_values(inventory: dict[str, Any]) -> dict[str, set[str]]:
+    return {
+        "industry_l1": {
+            str(item.get("industry_l1")).strip()
+            for item in inventory.get("industries") or []
+            if item.get("industry_l1")
+        },
+        "province": {
+            str(item.get("province")).strip()
+            for item in inventory.get("provinces") or []
+            if item.get("province") and item.get("province") != "未标注"
+        },
+        "city": {
+            str(item.get("city")).strip()
+            for item in inventory.get("cities") or []
+            if item.get("city")
+        },
+    }
+
+
+def _plan_eligible(route, frame) -> bool:
+    return (
+        route.route == "analysis"
+        or (
+            route.route in {"clarify", "capability"}
+            and bool(frame.entities)
+            and (
+                frame.task_type == "open_overview"
+                or frame.analysis_pattern != "metric_lookup"
+                or bool(frame.metrics)
+            )
+        )
+    )
+
+
+def _candidate_tool_ids(plan: SemanticPlan | None) -> list[str]:
+    if plan is None:
+        return []
+    return [step.tool_id for step in plan.steps]
+
+
+async def semantic_planner_node(
+    *,
+    db,
+    query: str,
+    raw_route: dict[str, Any],
+    memory_context: dict[str, Any] | None = None,
+    snapshot_loader: Callable | None = None,
+    inventory_loader: Callable | None = None,
+    catalog_builder: Callable | None = None,
+) -> dict[str, Any]:
+    """Produce a SemanticPlan without executing tools."""
+    if not semantic_planner_enabled() or not llm_reply.llm_available():
+        return {
+            "planner_status": "disabled_or_unavailable",
+            "planner_attempts": 0,
+            "planner_errors": [],
+            "planner_clarification": None,
+            "semantic_plan": None,
+            "composition_plan": None,
+            "semantic_candidate_tool_ids": [],
+        }
+
+    from app.services.route_normalize import normalize_route
+
+    route = normalize_route(raw_route, query)
+    frame = frame_from_route(route, query=query)
+    if not _plan_eligible(route, frame):
+        return {
+            "planner_status": "skipped",
+            "planner_attempts": 0,
+            "planner_errors": [],
+            "planner_clarification": None,
+            "semantic_plan": None,
+            "composition_plan": None,
+            "semantic_candidate_tool_ids": [],
+        }
+
+    load_snapshot = snapshot_loader or _default_snapshot_loader
+    load_inventory = inventory_loader or _default_inventory_loader
+    build_catalog = catalog_builder or build_composition_catalog
+    try:
+        snapshot = await load_snapshot(db)
+        catalog = build_catalog(snapshot)
+        inventory = await load_inventory(db, top_n=1)
+        result = await plan_semantic_turn(
+            query=query,
+            route=route,
+            candidate_tools=[],
+            executable_tool_ids=semantic_executor_tool_ids(),
+            modules=catalog,
+            allowed_filter_values=_allowed_filter_values(inventory),
+            session_context={
+                "memory": memory_context or {},
+                "raw_route": raw_route,
+            },
+        )
+    except Exception as exc:
+        logger.warning("semantic planner node failed closed: %s", exc)
+        return {
+            "planner_status": "clarify",
+            "planner_attempts": 0,
+            "planner_errors": [str(exc)],
+            "planner_clarification": "暂时无法确认分析目标，请补充企业、行业或地区和具体指标。",
+            "semantic_plan": None,
+            "composition_plan": None,
+            "semantic_candidate_tool_ids": [],
+        }
+
+    if result.status == "ok" and result.plan is not None:
+        return {
+            "planner_status": "ok",
+            "planner_attempts": result.attempts,
+            "planner_errors": list(result.errors),
+            "planner_clarification": None,
+            "semantic_plan": result.plan.model_dump(mode="json"),
+            "composition_plan": (
+                result.composition_plan.model_dump(mode="json")
+                if result.composition_plan is not None
+                else None
+            ),
+            "semantic_candidate_tool_ids": _candidate_tool_ids(result.plan),
+        }
+    return {
+        "planner_status": result.status,
+        "planner_attempts": result.attempts,
+        "planner_errors": list(result.errors),
+        "planner_clarification": result.clarification_question,
+        "semantic_plan": None,
+        "composition_plan": None,
+        "semantic_candidate_tool_ids": [],
+    }
+
+
+async def capability_retrieval_node(
+    *,
+    db,
+    semantic_plan: dict[str, Any] | None,
+    snapshot_loader: Callable | None = None,
+    inventory_loader: Callable | None = None,
+    catalog_builder: Callable | None = None,
+) -> dict[str, Any]:
+    """Check whether the semantic plan references live capabilities and values."""
+    if not semantic_plan:
+        return {"capability_status": "skipped", "capability_errors": []}
+    try:
+        plan = SemanticPlan.model_validate(semantic_plan)
+        snapshot = await (snapshot_loader or _default_snapshot_loader)(db)
+        inventory = await (inventory_loader or _default_inventory_loader)(db, top_n=1)
+        catalog = (catalog_builder or build_composition_catalog)(snapshot)
+        report = validate_semantic_plan(
+            plan,
+            executable_tool_ids=semantic_executor_tool_ids(),
+            modules=catalog,
+            allowed_filter_values=_allowed_filter_values(inventory),
+        )
+    except Exception as exc:
+        return {
+            "capability_status": "invalid",
+            "capability_errors": [str(exc)],
+            "semantic_candidate_tool_ids": [],
+        }
+    return {
+        "capability_status": "valid" if report.valid else "invalid",
+        "capability_errors": [error.message for error in report.errors],
+        "semantic_candidate_tool_ids": _candidate_tool_ids(plan),
+    }
+
+
+async def plan_validator_node(
+    *,
+    db,
+    semantic_plan: dict[str, Any] | None,
+    snapshot_loader: Callable | None = None,
+    inventory_loader: Callable | None = None,
+    catalog_builder: Callable | None = None,
+) -> dict[str, Any]:
+    """Validate the plan and materialize the executable composition DAG."""
+    if not semantic_plan:
+        return {"planner_status": "skipped", "composition_plan": None}
+    try:
+        plan = SemanticPlan.model_validate(semantic_plan)
+        snapshot = await (snapshot_loader or _default_snapshot_loader)(db)
+        inventory = await (inventory_loader or _default_inventory_loader)(db, top_n=1)
+        catalog = (catalog_builder or build_composition_catalog)(snapshot)
+        executable_tool_ids = semantic_executor_tool_ids()
+        allowed_filter_values = _allowed_filter_values(inventory)
+        validated, composition = semantic_plan_to_composition_plan(
+            plan,
+            modules=catalog,
+            executable_tool_ids=executable_tool_ids,
+            allowed_filter_values=allowed_filter_values,
+        )
+        if validated is None or composition is None:
+            report = validate_semantic_plan(
+                plan,
+                executable_tool_ids=executable_tool_ids,
+                modules=catalog,
+                allowed_filter_values=allowed_filter_values,
+            )
+            return {
+                "planner_status": "clarify",
+                "planner_errors": [error.message for error in report.errors],
+                "planner_clarification": plan.clarification_question
+                or "分析方案暂时无法执行，请补充指标或缩小分析范围。",
+                "composition_plan": None,
+            }
+    except Exception as exc:
+        logger.warning("semantic plan validator failed closed: %s", exc)
+        return {
+            "planner_status": "clarify",
+            "planner_errors": [str(exc)],
+            "planner_clarification": "分析方案暂时无法校验，请换一种更具体的问法。",
+            "composition_plan": None,
+        }
+    return {
+        "planner_status": "ok",
+        "planner_errors": [],
+        "planner_clarification": None,
+        "semantic_plan": validated.model_dump(mode="json"),
+        "composition_plan": composition.model_dump(mode="json"),
+        "semantic_candidate_tool_ids": _candidate_tool_ids(validated),
+    }

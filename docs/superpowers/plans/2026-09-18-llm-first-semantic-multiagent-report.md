@@ -329,7 +329,7 @@ git commit -m "feat: extend semantic plan contract"
 - Test: `backend/tests/test_langgraph_semantic_nodes.py`
 - Test: `backend/tests/test_semantic_primary.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 构造 LangGraph state，断言顺序为：
 
@@ -339,13 +339,13 @@ memory -> semantic_planner -> capability_retrieval -> plan_validator -> execute
 
 断言 `semantic_plan`、`composition_plan`、`planner_errors` 都在 state 中传递。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `docker exec 20-backend-1 python -m pytest -q tests/test_langgraph_semantic_nodes.py`
 
 Expected: FAIL，当前 planner 仍藏在 execute 内部。
 
-- [ ] **Step 3: 扩展 OuterTurnState**
+- [x] **Step 3: 扩展 OuterTurnState**
 
 增加：
 
@@ -357,25 +357,25 @@ planner_attempts: int
 policy_decision: dict[str, Any]
 ```
 
-- [ ] **Step 4: 新增 `semantic_planner_node`**
+- [x] **Step 4: 新增 `semantic_planner_node`**
 
 节点调用 `plan_semantic_turn`，只负责产生计划和错误，不执行工具。
 
-- [ ] **Step 5: 新增 `capability_retrieval_node` 和 `plan_validation_node`**
+- [x] **Step 5: 新增 `capability_retrieval_node` 和 `plan_validation_node`**
 
 检索节点返回候选工具、真实行业和地区值。校验节点调用 `validate_semantic_plan`，合法进入执行，不合法进入 repair 或 clarify。
 
-- [ ] **Step 6: 从 `run_primary_turn` 移除 planner 调用**
+- [x] **Step 6: 从 `run_primary_turn` 移除 planner 调用**
 
 `run_primary_turn` 只接收已验证的 `semantic_plan` 和 `composition_plan`，不再自行决定 planner eligibility。
 
-- [ ] **Step 7: 运行测试**
+- [x] **Step 7: 运行测试**
 
 Run: `docker exec 20-backend-1 python -m pytest -q tests/test_langgraph_semantic_nodes.py tests/test_semantic_primary.py tests/test_outer_orchestrator.py`
 
 Expected: PASS。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add backend/app/services/outer_orchestrator.py backend/app/services/semantic_nodes.py backend/app/services/semantic_primary.py backend/tests/test_langgraph_semantic_nodes.py

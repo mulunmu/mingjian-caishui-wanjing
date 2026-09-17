@@ -14,10 +14,11 @@ from typing import Any, TypedDict
 
 from app.db.urls import sync_database_url
 from app.db.urls import get_sync_engine
-from app.services import session_store
+from app.services import semantic_nodes, session_store
 from app.services.dialog_act import classify as classify_dialog_act
 from app.services.shadow_integration import dialog_act_to_raw_route
 from app.services.sync_runner import run_blocking
+from app.services.progress import emit_progress
 from app.services.observability import get_trace_id, increment_metric, observe_latency
 from app.services.topic_memory import (
     compose_memory_context_blocking,
@@ -40,6 +41,15 @@ class OuterTurnState(TypedDict, total=False):
     agent_trace: list[dict[str, Any]]
     execution_started_at: float
     raw_route: dict[str, Any]
+    semantic_plan: dict[str, Any] | None
+    composition_plan: dict[str, Any] | None
+    planner_status: str
+    planner_attempts: int
+    planner_errors: list[str]
+    planner_clarification: str | None
+    semantic_candidate_tool_ids: list[str]
+    capability_status: str
+    capability_errors: list[str]
     result: dict[str, Any]
 
 
@@ -55,6 +65,8 @@ class OuterTurnRuntime:
         session_context = await run_blocking(session_store.get_session, self.session_id)
         act = await classify_dialog_act(query, session_context or {})
         raw_route = dialog_act_to_raw_route(act, query)
+        if getattr(act, "act", None) == "custom_report":
+            raw_route["custom_report"] = True
         if self.enterprise_id:
             entities = list(raw_route.get("entities") or [])
             if self.enterprise_id not in entities:
@@ -82,6 +94,9 @@ class OuterTurnRuntime:
         raw_route: dict[str, Any],
         *,
         memory_context: dict[str, Any] | None = None,
+        semantic_plan: dict[str, Any] | None = None,
+        composition_plan: dict[str, Any] | None = None,
+        planner_meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         from app.services.semantic_primary import run_primary_turn
 
@@ -94,6 +109,9 @@ class OuterTurnRuntime:
             enterprise_id=self.enterprise_id,
             user=self.user,
             memory_context=memory_context,
+            semantic_plan=semantic_plan,
+            composition_plan=composition_plan,
+            planner_meta=planner_meta,
         )
 
 
@@ -318,6 +336,41 @@ def _cancelled_response(runtime: OuterTurnRuntime) -> dict[str, Any]:
     }
 
 
+def _semantic_clarification_response(
+    runtime: OuterTurnRuntime,
+    state: OuterTurnState,
+) -> dict[str, Any]:
+    question = str(state.get("planner_clarification") or "").strip() or (
+        "我还不能确定分析目标。请补充企业、行业或地区，以及想查看的指标。"
+    )
+    return {
+        "reply": question,
+        "reply_source": "semantic_planner",
+        "analysis_mode": "llm",
+        "parse_source": "semantic_langgraph",
+        "intent": "clarify",
+        "function": "general",
+        "dimension": "overall",
+        "session_id": runtime.session_id,
+        "followups": [],
+        "data": {
+            "primary": {
+                "status": "clarify",
+                "fallback": False,
+                "route": "clarify",
+                "semantic_planner_status": "clarify",
+                "semantic_planner_attempts": state.get("planner_attempts") or 0,
+                "semantic_planner_errors": list(state.get("planner_errors") or []),
+                "semantic_plan": state.get("semantic_plan"),
+                "semantic_candidate_tool_ids": list(
+                    state.get("semantic_candidate_tool_ids") or []
+                ),
+            },
+            "claims": [],
+        },
+    }
+
+
 def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
     from langgraph.graph import END, START, StateGraph
     from langgraph.types import Command, interrupt
@@ -349,6 +402,7 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
 
     async def memory_node(state: OuterTurnState) -> OuterTurnState:
         started = time.perf_counter()
+        await emit_progress("memory", "正在读取会话上下文", "恢复实体、话题和最近结论")
         memory_context = await runtime.load_memory(state["query"])
         finish_agent("memory_agent", started)
         return {
@@ -364,6 +418,7 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
 
     async def classify_node(state: OuterTurnState) -> OuterTurnState:
         started = time.perf_counter()
+        await emit_progress("intent", "正在识别问题意图", "判断这是知识、分析、报告还是其他会话")
         raw_route = await runtime.classify(state["query"])
         finish_agent("classification_agent", started)
         return {
@@ -376,11 +431,66 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
             ),
         }
 
+    async def semantic_planner_node(state: OuterTurnState) -> OuterTurnState:
+        started = time.perf_counter()
+        await emit_progress("planning", "正在理解语义并规划工具", "LLM 负责方案，系统负责边界")
+        payload = await semantic_nodes.semantic_planner_node(
+            db=runtime.db,
+            query=state["query"],
+            raw_route=state.get("raw_route") or {},
+            memory_context=state.get("memory_context") or {},
+        )
+        finish_agent("semantic_planner_agent", started)
+        return {
+            **payload,
+            "agent_trace": append_trace(
+                state,
+                "semantic_planner_agent",
+                payload.get("planner_status") or "skipped",
+                tool_count=len(payload.get("semantic_candidate_tool_ids") or []),
+            ),
+        }
+
+    async def capability_retrieval_node(state: OuterTurnState) -> OuterTurnState:
+        started = time.perf_counter()
+        payload = await semantic_nodes.capability_retrieval_node(
+            db=runtime.db,
+            semantic_plan=state.get("semantic_plan"),
+        )
+        finish_agent("capability_retrieval_agent", started)
+        return {
+            **payload,
+            "agent_trace": append_trace(
+                state,
+                "capability_retrieval_agent",
+                payload.get("capability_status") or "skipped",
+            ),
+        }
+
+    async def plan_validator_node(state: OuterTurnState) -> OuterTurnState:
+        started = time.perf_counter()
+        payload = await semantic_nodes.plan_validator_node(
+            db=runtime.db,
+            semantic_plan=state.get("semantic_plan"),
+        )
+        finish_agent("plan_validator_agent", started)
+        return {
+            **payload,
+            "agent_trace": append_trace(
+                state,
+                "plan_validator_agent",
+                payload.get("planner_status") or "skipped",
+            ),
+        }
+
     async def planning_node(state: OuterTurnState) -> OuterTurnState:
         started = time.perf_counter()
+        await emit_progress("planning", "正在制定执行路径", "校验范围、工具和审批要求")
         raw_route = state.get("raw_route") or {}
         approval_required = bool(
-            require_approval and raw_route.get("route") == "report"
+            require_approval
+            and raw_route.get("route") == "report"
+            and not raw_route.get("custom_report")
         )
         finish_agent("planning_agent", started)
         return {
@@ -420,11 +530,22 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
 
     async def execute_node(state: OuterTurnState) -> OuterTurnState:
         started = time.perf_counter()
-        result = await runtime.execute(
-            state["query"],
-            state["raw_route"],
-            memory_context=state.get("memory_context") or {},
-        )
+        await emit_progress("execution", "正在执行分析", "调用确定性工具并生成可追溯结论")
+        if state.get("planner_status") == "clarify":
+            result = _semantic_clarification_response(runtime, state)
+        else:
+            result = await runtime.execute(
+                state["query"],
+                state["raw_route"],
+                memory_context=state.get("memory_context") or {},
+                semantic_plan=state.get("semantic_plan"),
+                composition_plan=state.get("composition_plan"),
+                planner_meta={
+                    "status": state.get("planner_status"),
+                    "attempts": state.get("planner_attempts") or 0,
+                    "errors": list(state.get("planner_errors") or []),
+                },
+            )
         finish_agent("execution_agent", started)
         return {
             "result": result,
@@ -438,6 +559,8 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
 
     async def finance_review_node(state: OuterTurnState) -> OuterTurnState:
         started = time.perf_counter()
+        if finance_review_enabled():
+            await emit_progress("finance_review", "正在进行金融语义复核")
         result = dict(state.get("result") or {})
         primary = result.setdefault("data", {}).setdefault("primary", {})
         status = "skipped"
@@ -484,6 +607,7 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
 
     async def final_guard_node(state: OuterTurnState) -> OuterTurnState:
         started = time.perf_counter()
+        await emit_progress("guard", "正在校验回答", "核对数字、企业、阈值和事实边界")
         result = dict(state.get("result") or {})
         issues = _final_guard_issues(result) if final_guard_enabled() else []
         budget_ms = agent_budget_ms()
@@ -548,6 +672,9 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
     graph = StateGraph(OuterTurnState)
     graph.add_node("memory", memory_node)
     graph.add_node("classify", classify_node)
+    graph.add_node("semantic_planner", semantic_planner_node)
+    graph.add_node("capability_retrieval", capability_retrieval_node)
+    graph.add_node("plan_validator", plan_validator_node)
     graph.add_node("planning", planning_node)
     graph.add_node("approval", approval_node)
     graph.add_node("execute", execute_node)
@@ -557,7 +684,10 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
     graph.add_node("review", review_node)
     graph.add_edge(START, "memory")
     graph.add_edge("memory", "classify")
-    graph.add_edge("classify", "planning")
+    graph.add_edge("classify", "semantic_planner")
+    graph.add_edge("semantic_planner", "capability_retrieval")
+    graph.add_edge("capability_retrieval", "plan_validator")
+    graph.add_edge("plan_validator", "planning")
     graph.add_conditional_edges(
         "planning",
         after_planning,
