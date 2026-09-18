@@ -120,4 +120,5 @@ start.bat frontend
 - 当前实施计划：`docs/superpowers/plans/2026-09-18-llm-first-semantic-multiagent-report.md`
 - 阶段 23 验收：`报告/阶段23-LLM-first迁移验收.md`
 - 发布与回滚：`docs/runbooks/rag-v2-stage14-rollout-rollback.md`
+- 后续规划与验证：`规划与验证/README.md`
 - 产品与业务规范：`项目3.0企划书.md`、`红线要求.md`、`企划书/`
