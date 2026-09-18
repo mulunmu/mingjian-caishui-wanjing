@@ -39,14 +39,13 @@ SEMANTIC_SYMBOLS: dict[str, tuple[str, ...]] = {
 def _defined_names(tree: ast.AST) -> set[str]:
     names: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name):
-            names.add(node.id)
-        elif isinstance(node, ast.Attribute):
-            names.add(node.attr)
-        elif isinstance(node, ast.ImportFrom):
-            names.update(alias.asname or alias.name for alias in node.names)
-        elif isinstance(node, ast.Import):
-            names.update(alias.asname or alias.name for alias in node.names)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
     return names
 
 

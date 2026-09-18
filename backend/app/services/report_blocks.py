@@ -38,7 +38,6 @@ _TREND_METRICS = {
 _COMPARISON_RE = re.compile(r"对比|相比|高于|低于|高于均值|低于均值|同业|行业均值|差距|优于|劣于")
 _TREND_RE = re.compile(r"同比|环比|趋势|上升|下降|增长|回落|增速|变化")
 
-
 def report_block_tree_enabled() -> bool:
     return os.getenv("REPORT_BLOCK_TREE_ENABLED", "true").lower() in {
         "1",
@@ -110,6 +109,38 @@ def block_content_hash(block: dict[str, Any]) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def report_block_fingerprint(block: dict[str, Any], *, chapter_key: str = "") -> str:
+    """Stable semantic identity for cross-chapter de-duplication.
+
+    A value repeated in an executive summary, a metric chapter and a benchmark
+    chapter is still one Claim. The fingerprint keeps the first occurrence and
+    turns later copies into explicit references instead of duplicated prose.
+    """
+    value = block.get("value") if isinstance(block.get("value"), dict) else {}
+    number = block.get("number", value.get("number") if value else None)
+    unit = block.get("unit") or value.get("unit") or ""
+    metric = block.get("metric") or value.get("metric") or ""
+    scope = block.get("scope") or block.get("scope_key") or ""
+    scenario = block.get("scenario") or ""
+    period = block.get("period") or ""
+    threshold = block.get("threshold") or ""
+    paragraph = re.sub(r"\s+", "", str(block.get("paragraph") or ""))[:160]
+    payload = "|".join(
+        [
+            str(block.get("type") or ""),
+            str(metric),
+            str(number if number is not None else ""),
+            str(unit),
+            str(scenario),
+            str(period),
+            str(threshold),
+            str(scope),
+            paragraph,
+        ]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def normalize_report_block(
     block: dict[str, Any],
     *,
@@ -126,11 +157,15 @@ def normalize_report_block(
     out["locked"] = bool(out.get("locked") or False)
     out.setdefault("source_claim_index", None)
     out["content_hash"] = str(out.get("content_hash") or block_content_hash(out))
+    out["semantic_fingerprint"] = str(
+        out.get("semantic_fingerprint") or report_block_fingerprint(out, chapter_key=chapter_key)
+    )
     return out
 
 
 def build_chapter_blocks(chapter: dict[str, Any]) -> list[dict[str, Any]]:
     chapter_key = str(chapter.get("function") or "synthesis")
+    requested_patterns = [str(item) for item in (chapter.get("analysis_patterns") or [])]
     blocks: list[dict[str, Any]] = []
     for index, claim in enumerate(chapter.get("claims") or []):
         paragraph = _claim_text(claim)
@@ -139,7 +174,21 @@ def build_chapter_blocks(chapter: dict[str, Any]) -> list[dict[str, Any]]:
         value = claim.get("value") or {}
         metric = _claim_metric(claim)
         trace = claim.get("trace") or {}
-        block_kind = (
+        preferred_kind = None
+        if "trend" in requested_patterns and _TREND_RE.search(paragraph):
+            preferred_kind = "trend_paragraph"
+        elif any(
+            item in requested_patterns
+            for item in ("comparison", "benchmark", "ranking", "contribution", "stratification", "structure", "distribution")
+        ) and _COMPARISON_RE.search(paragraph):
+            preferred_kind = "comparison_paragraph"
+        elif "anomaly" in requested_patterns and re.search(r"异常|预警|超阈|命中|可疑|偏离", paragraph):
+            preferred_kind = "comparison_paragraph"
+        elif "attribution" in requested_patterns and re.search(r"原因|归因|驱动|拖累|由.*导致", paragraph):
+            preferred_kind = "synthesis_paragraph"
+        if preferred_kind and not supports_block_kind(chapter_key, preferred_kind):
+            preferred_kind = None
+        block_kind = preferred_kind or (
             block_kind_for_claim(chapter_key, claim)
             if report_block_tree_enabled()
             else "metric_paragraph"
@@ -159,6 +208,8 @@ def build_chapter_blocks(chapter: dict[str, Any]) -> list[dict[str, Any]]:
                     else ""
                 ),
                 "source_claim_index": index,
+                "scope": chapter.get("scope") or chapter.get("scope_key"),
+                "scenario": chapter.get("scenario") or chapter_key,
                 },
                 chapter_key=chapter_key,
                 index=index,
@@ -175,12 +226,33 @@ def build_chapter_blocks(chapter: dict[str, Any]) -> list[dict[str, Any]]:
                 "metric": "",
                 "trace": "",
                 "source_claim_index": None,
+                "scope": chapter.get("scope") or chapter.get("scope_key"),
+                "scenario": chapter.get("scenario") or chapter_key,
                 },
                 chapter_key=chapter_key,
                 index=len(blocks),
             )
         )
     return blocks
+
+
+def dedupe_report_blocks_across_chapters(chapters: list[dict[str, Any]]) -> dict[str, str]:
+    """Mark later semantic duplicates while preserving their trace to the owner."""
+    owners: dict[str, str] = {}
+    for chapter in chapters or []:
+        for block in chapter.get("blocks") or []:
+            fingerprint = str(
+                block.get("semantic_fingerprint")
+                or report_block_fingerprint(block, chapter_key=str(chapter.get("function") or ""))
+            )
+            block["semantic_fingerprint"] = fingerprint
+            owner = owners.get(fingerprint)
+            if owner and str(block.get("status") or "active") == "active":
+                block["status"] = "duplicate"
+                block["duplicate_of"] = owner
+            elif not owner:
+                owners[fingerprint] = str(block.get("block_id") or fingerprint)
+    return owners
 
 
 def validate_report_block_kinds(

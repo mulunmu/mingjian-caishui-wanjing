@@ -10,6 +10,7 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ReportCenter from './pages/ReportCenter';
+import CustomReportPage from './pages/CustomReportPage';
 import FraudPage from './pages/FraudPage';
 import AuthenticityPage from './pages/AuthenticityPage';
 import EnterprisePage from './pages/EnterprisePage';
@@ -102,6 +103,14 @@ export default function App() {
                 element={
                   <ProtectedRoute>
                     <ReportCenter />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/report/custom"
+                element={
+                  <ProtectedRoute>
+                    <CustomReportPage />
                   </ProtectedRoute>
                 }
               />

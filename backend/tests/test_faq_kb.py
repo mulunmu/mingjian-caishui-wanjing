@@ -48,6 +48,13 @@ def test_match_faq_import_intent_has_action():
     assert report_meta["actions"][0]["target"] == "/report"
 
 
+def test_analysis_methodology_questions_are_covered():
+    assert match_faq("我想分析企业的财务我该怎么做?")["id"] == "analysis_finance"
+    assert match_faq("税务怎么分析？")["id"] == "analysis_tax"
+    assert match_faq("发票风险怎么查")["id"] == "analysis_invoice"
+    assert match_faq("收入真实性怎么查")["id"] == "analysis_authenticity"
+
+
 def test_build_faq_fallback_no_value():
     claims, meta = build_faq_claims("zzz无关问题")
     assert claims[0].value is None

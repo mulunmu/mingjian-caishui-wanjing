@@ -879,17 +879,22 @@ async def get_slice_attribution(
     avg_overall = sum(float(r.get("overall_score") or 0) for r in results) / len(results)
     weak_dims = [DIMENSION_LABELS[k] for k in DIMENSION_WEIGHTS if dim_avg[k] < 45]
 
-    scope = f"{zh_industry(industry_l1)}行业" if industry_l1 else f"全样本（{len(results)}家）"
-    if province:
-        scope = f"{province}·{scope}" if industry_l1 else f"{province}（{len(results)}家）"
+    single_subject = sample_n == 1 and not industry_l1 and not province
+    if single_subject:
+        scope = "该企业主体"
+    else:
+        scope = f"{zh_industry(industry_l1)}行业" if industry_l1 else f"全样本（{len(results)}家）"
+        if province:
+            scope = f"{province}·{scope}" if industry_l1 else f"{province}（{len(results)}家）"
     risk = _risk_level(avg_overall)
+    risk_label = "风险判断" if single_subject else "群体风险判断"
     if drag_factors:
         top = "、".join(d["item"] for d in drag_factors[:3])
-        summary = f"{scope}群体风险判断「{risk}」，高频拖累因素：{top}。"
+        summary = f"{scope}{risk_label}「{risk}」，高频拖累因素：{top}。"
     elif weak_dims:
-        summary = f"{scope}群体风险判断「{risk}」，{'、'.join(weak_dims[:3])}维度整体偏弱。"
+        summary = f"{scope}{risk_label}「{risk}」，{'、'.join(weak_dims[:3])}维度整体偏弱。"
     else:
-        summary = f"{scope}群体风险判断「{risk}」，各维度表现中等，建议关注核心指标。"
+        summary = f"{scope}{risk_label}「{risk}」，各维度表现中等，建议关注核心指标。"
 
     dimensions = {
         key: {

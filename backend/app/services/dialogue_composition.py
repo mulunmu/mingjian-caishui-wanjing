@@ -44,6 +44,8 @@ _CONTENT_BY_TASK = {
     "diagnosis": "content_metric_claim",
     "drilldown": "content_metric_claim",
     "multi_metric": "content_metric_claim",
+    "open_overview": "content_metric_claim",
+    "distribution": "content_comparison",
     "metric_lookup": "content_metric_claim",
     "memory": "content_memory",
 }

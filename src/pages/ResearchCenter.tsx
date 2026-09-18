@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, memo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import useChatStore from '@/stores/chatStore';
 import ChatPanel from '@/components/chat/ChatPanel';
 import { ResearchAssistantCharacter } from '@/components/ui/ResearchAssistantCharacter';
@@ -37,6 +37,7 @@ const AssistantDock = memo(function AssistantDock({
 
 export default function ResearchCenter() {
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     sendMessage,
     isLoading,
@@ -50,6 +51,8 @@ export default function ResearchCenter() {
   const ingestModalOpen = useChatStore((s) => s.ingestModalOpen);
   const closeIngestModal = useChatStore((s) => s.closeIngestModal);
   const openIngestModal = useChatStore((s) => s.openIngestModal);
+  const pickerRequested = useChatStore((s) => s.pickerRequested);
+  const consumeScopePicker = useChatStore((s) => s.consumeScopePicker);
 
   const [inputValue, setInputValue] = useState('');
   const [assistantState, setAssistantState] = useState<'idle' | 'typing' | 'answering'>('idle');
@@ -58,6 +61,7 @@ export default function ResearchCenter() {
   const [showAllEnterprises, setShowAllEnterprises] = useState(false);
   const [pickerHighlight, setPickerHighlight] = useState(false);
   const bootRef = useRef(false);
+  const customIntentSentRef = useRef(false);
 
   // 首屏 bootstrap：从后端拉 scope UI（不静默绑企业）
   useEffect(() => {
@@ -65,6 +69,14 @@ export default function ResearchCenter() {
     bootRef.current = true;
     void bootstrapSession();
   }, [bootstrapSession]);
+
+  useEffect(() => {
+    const state = location.state as { startCustomReport?: boolean } | null;
+    if (!state?.startCustomReport || customIntentSentRef.current) return;
+    customIntentSentRef.current = true;
+    window.history.replaceState({}, document.title, location.pathname);
+    void sendMessage('我要定制一份风控报告');
+  }, [location.pathname, location.state, sendMessage]);
 
   useEffect(() => {
     riskApi
@@ -85,9 +97,7 @@ export default function ResearchCenter() {
   }, [enterpriseQuery]);
 
   const [searchParams, setSearchParams] = useSearchParams();
-  const customParam = searchParams.get('custom');
   const ingestParam = searchParams.get('ingest');
-  const customSentRef = useRef(false);
 
   useEffect(() => {
     if (ingestParam === '1') {
@@ -97,18 +107,6 @@ export default function ResearchCenter() {
   }, [ingestParam, openIngestModal, setSearchParams]);
 
   useEffect(() => {
-    if (customParam === '1') {
-      if (!customSentRef.current && !isLoading) {
-        customSentRef.current = true;
-        sendMessage('我要定制一份风控报告');
-        setSearchParams({}, { replace: true });
-      }
-    } else {
-      customSentRef.current = false;
-    }
-  }, [customParam, isLoading, sendMessage, setSearchParams]);
-
-  useEffect(() => {
     if (isLoading) {
       setAssistantState('answering');
     } else {
@@ -116,6 +114,12 @@ export default function ResearchCenter() {
       return () => clearTimeout(timer);
     }
   }, [isLoading]);
+
+  useEffect(() => {
+    if (!pickerRequested) return;
+    setPickerHighlight(true);
+    consumeScopePicker();
+  }, [pickerRequested, consumeScopePicker]);
 
   const handleInputChange = useCallback((value: string) => {
     setInputValue(value);

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -9,6 +9,8 @@ from app.schemas.tool_rag import ToolCandidate
 
 RouteKind = Literal[
     "analysis",
+    "inventory",
+    "profile",
     "greeting",
     "capability",
     "product_faq",
@@ -29,6 +31,7 @@ class ConversationRoute(BaseModel):
     safety: Literal["normal", "deescalate", "block"] = "normal"
     domain: Literal["loan", "rating", "warn", "audit", "report", "general"] | None = None
     entities: list[str] = Field(default_factory=list)
+    filters: dict[str, Any] = Field(default_factory=dict)
     needs_tools: bool = False
     needs_clarification: bool = False
     confidence: float = Field(default=0.95, ge=0.0, le=1.0)
@@ -56,6 +59,18 @@ class ConversationPolicyRegistry:
             execute_tools=False,
             allow_analysis=False,
             knowledge_namespace="capability",
+        ),
+        "inventory": ConversationPolicy(
+            response_mode="inventory",
+            retrieve_candidates=False,
+            execute_tools=False,
+            allow_analysis=False,
+        ),
+        "profile": ConversationPolicy(
+            response_mode="profile",
+            retrieve_candidates=False,
+            execute_tools=False,
+            allow_analysis=False,
         ),
         "product_faq": ConversationPolicy(
             response_mode="product_faq",

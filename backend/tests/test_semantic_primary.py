@@ -358,3 +358,57 @@ def test_structured_multi_metric_frame_promotes_weak_route():
     assert promoted.route == "analysis"
     assert promoted.needs_tools is True
     assert promoted.needs_clarification is False
+
+
+def test_semantic_plan_route_overrides_stale_raw_route():
+    from app.schemas.semantic_plan import SemanticPlan
+    from app.services import semantic_primary
+
+    route = ConversationRoute(route="inventory")
+    raw_route = {
+        "route": "inventory",
+        "action": "metadata_query",
+        "entities": [],
+        "filters": {},
+    }
+    plan = SemanticPlan(
+        action="conversation",
+        route_hint="capability",
+        confidence=0.92,
+    )
+
+    raw_route, route = semantic_primary.apply_semantic_plan_route(
+        route=route,
+        raw_route=raw_route,
+        plan=plan,
+    )
+
+    assert raw_route["route"] == "capability"
+    assert "action" not in raw_route
+    assert raw_route["needs_tools"] is False
+    assert route.route == "capability"
+    assert route.needs_tools is False
+
+
+def test_plan_analysis_focus_is_persistable_for_followups():
+    from app.schemas.semantic_plan import SemanticPlan, SemanticPlanStep
+    from app.services import semantic_primary
+
+    plan = SemanticPlan(
+        action="analysis",
+        scope="cohort",
+        filters={"industry_l1": ["其他"]},
+        steps=[
+            SemanticPlanStep(
+                step_id="s1",
+                tool_id="metric_authenticity_score",
+                filters={"industry_l1": ["其他"]},
+            )
+        ],
+        confidence=0.9,
+    )
+
+    focus = semantic_primary.plan_analysis_focus(plan)
+
+    assert focus["industry_l1"] == "其他"
+    assert focus["industry_l1_values"] == ["其他"]

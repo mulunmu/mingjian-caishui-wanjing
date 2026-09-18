@@ -45,6 +45,7 @@ def empty_dialogue_state() -> dict[str, Any]:
         "scenario": None,
         "inventory_focus": None,
         "analysis_focus": None,
+        "industry_focus": None,
         "focus_history": [],  # M2 焦点栈
     }
 
@@ -99,13 +100,22 @@ def normalize_dialogue_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     else:
         state["inventory_focus"] = None
     af = raw.get("analysis_focus")
-    if isinstance(af, dict) and (af.get("industry_l1") or af.get("province")):
-        state["analysis_focus"] = {
-            "industry_l1": af.get("industry_l1"),
-            "province": af.get("province"),
+    ifocus = raw.get("industry_focus") if isinstance(raw.get("industry_focus"), dict) else af
+    if isinstance(ifocus, dict) and (
+        ifocus.get("industry_l1") or ifocus.get("industry_l1_values") or ifocus.get("province")
+    ):
+        normalized_focus = {
+            "industry_l1": ifocus.get("industry_l1"),
+            "province": ifocus.get("province"),
         }
+        values = ifocus.get("industry_l1_values")
+        if isinstance(values, list) and len(values) > 1:
+            normalized_focus["industry_l1_values"] = [str(v) for v in values if v]
+        state["analysis_focus"] = normalized_focus
+        state["industry_focus"] = normalized_focus
     else:
         state["analysis_focus"] = None
+        state["industry_focus"] = None
     # M2：焦点栈校验
     raw_fh = raw.get("focus_history")
     if isinstance(raw_fh, list):
@@ -246,6 +256,9 @@ def switch_scope(
         out["scope"] = "unbound"
         out["subject"] = None
         out["scenario"] = None
+        out["inventory_focus"] = None
+        out["analysis_focus"] = None
+        out["industry_focus"] = None
     elif target == "cohort":
         out["scope"] = "cohort"
         out["subject"] = None
@@ -355,10 +368,19 @@ def ui_bundle(state: dict[str, Any], *, sample_count: int | None = None) -> dict
             fu.item(type="query", label="按行业拆风险等级", params={"required_scope": "cohort"}),
             fu.item(type="navigate", label="生成报告", target="report_generate"),
         ]
+        focus = state.get("analysis_focus") or {}
+        focus_values = focus.get("industry_l1_values") or (
+            [focus.get("industry_l1")] if focus.get("industry_l1") else []
+        )
+        focus_text = " / ".join(str(v) for v in focus_values if v)
         scope_bar = {
-            "label": f"全库 · {n} 家",
+            "label": f"全库 · {n} 家" + (f" · {focus_text}" if focus_text else ""),
             "scope": "cohort",
-            "hint": "换一家个体 / 重新选范围",
+            "hint": (
+                f"当前行业切片：{focus_text}；换行业直接说行业名"
+                if focus_text
+                else "换一家个体 / 重新选范围"
+            ),
         }
 
     return {
@@ -401,12 +423,15 @@ def state_public(state: dict[str, Any]) -> dict[str, Any]:
         "subject": s.get("subject"),
         "scenario": s.get("scenario"),
         "inventory_focus": s.get("inventory_focus"),
+        "analysis_focus": s.get("analysis_focus"),
+        "industry_focus": s.get("industry_focus"),
     }
 
 def merge_analysis_focus(
     state: dict[str, Any],
     *,
     industry_l1: str | None = None,
+    industry_l1_values: list[str] | None = None,
     province: str | None = None,
     clear: bool = False,
 ) -> dict[str, Any]:
@@ -414,13 +439,22 @@ def merge_analysis_focus(
     state = normalize_dialogue_state(state)
     if clear:
         state["analysis_focus"] = None
+        state["industry_focus"] = None
         return state
-    if industry_l1 or province:
+    if industry_l1 or industry_l1_values or province:
         prev = state.get("analysis_focus") if isinstance(state.get("analysis_focus"), dict) else {}
-        state["analysis_focus"] = {
-            "industry_l1": industry_l1 if industry_l1 is not None else prev.get("industry_l1"),
+        focus = {
+            "industry_l1": (
+                (industry_l1_values[0] if industry_l1_values else industry_l1)
+                if (industry_l1_values or industry_l1 is not None)
+                else prev.get("industry_l1")
+            ),
             "province": province if province is not None else prev.get("province"),
         }
+        if industry_l1_values and len(industry_l1_values) > 1:
+            focus["industry_l1_values"] = list(industry_l1_values)
+        state["analysis_focus"] = focus
+        state["industry_focus"] = focus
         # M2：焦点入栈
         history = state.get("focus_history") or []
         now = time.time()
@@ -430,6 +464,44 @@ def merge_analysis_focus(
             history.append({"kind": "province", "value": province, "ts": now})
         state["focus_history"] = history[-20:]
     return state
+
+
+def detect_query_focus(query: str | None) -> dict[str, Any]:
+    """Detect an explicit industry/province slice in the current question.
+
+    This turns industry into a first-class dialogue slot instead of leaving it as
+    disposable query text. The values remain data-driven through the lexicon's
+    canonical aliases and are filtered against the real dataset downstream.
+    """
+    from app.services.semantic_lexicon import _INDUSTRY_KW, _match_industry, _match_province
+
+    text = query or ""
+    matched: list[tuple[int, str]] = []
+    for keyword, canonical in _INDUSTRY_KW:
+        pos = text.find(keyword)
+        if pos >= 0:
+            matched.append((pos, canonical))
+    values: list[str] = []
+    for _, value in sorted(matched, key=lambda item: item[0]):
+        if value not in values:
+            values.append(value)
+    return {
+        "industry_l1": values[0] if values else _match_industry(text),
+        "industry_l1_values": values or None,
+        "province": _match_province(text),
+    }
+
+
+def merge_query_focus(state: dict[str, Any], query: str | None) -> dict[str, Any]:
+    focus = detect_query_focus(query)
+    if focus.get("industry_l1") or focus.get("industry_l1_values") or focus.get("province"):
+        return merge_analysis_focus(
+            state,
+            industry_l1=focus.get("industry_l1"),
+            industry_l1_values=focus.get("industry_l1_values"),
+            province=focus.get("province"),
+        )
+    return normalize_dialogue_state(state)
 
 
 def resolve_focus_from_history(

@@ -5,13 +5,19 @@ import pytest
 
 def pytest_configure(config):
     # 单测默认关闭鉴权，避免模块 import 时 AUTH_REQUIRED 代码默认 true 拖垮契约测试
-    os.environ.setdefault("AUTH_REQUIRED", "false")
+    # TestClient contract tests exercise anonymous read paths; production keeps
+    # AUTH_REQUIRED=true from the deployment environment. Force the test value
+    # so an inherited production setting cannot make the suite environment-dependent.
+    os.environ["AUTH_REQUIRED"] = "false"
     # 测试会跨多个 TestClient/事件循环复用全局 async engine；NullPool 避免
     # 连接绑定到已关闭循环。生产环境仍使用默认 QueuePool。
     os.environ.setdefault("DB_POOL_DISABLED", "true")
     # Stage 9 后活动入口为 fail-closed；契约测试默认启用 semantic primary。
     os.environ.setdefault("SEMANTIC_PRIMARY_ENABLED", "true")
     os.environ.setdefault("SEMANTIC_PRIMARY_PERCENT", "100")
+    # Planner integration is exercised with explicit monkeypatching; keep the
+    # broad contract suite deterministic and offline by default.
+    os.environ["SEMANTIC_PLANNER_ENABLED"] = "false"
     config.addinivalue_line("markers", "llm: optional LLM integration (requires LLM_API_KEY)")
 
 

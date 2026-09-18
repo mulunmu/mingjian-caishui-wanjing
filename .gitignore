@@ -57,3 +57,7 @@ backend/_downloaded.txt
 企划书/*.pdf
 
 _staging_risk_db.dump
+
+# Local acceptance screenshots
+/task11-*.png
+/task13-*.png

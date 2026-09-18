@@ -60,7 +60,9 @@ def test_bluf_tracks_differ_by_scenario():
     assert "可批" in loan["bluf"] and "附加条件" in loan["bluf"]
     assert "可授信占比" in rating["bluf"]
     assert "Top 异常信号" in warn["bluf"] or "异常信号" in warn["bluf"]
-    assert "优先查" in audit["bluf"]
+    assert "优先核查" in audit["bluf"]
+    assert "发票、纳税申报表和销售合同" in audit["bluf"]
+    assert "占 3.0%" in audit["bluf"]
     # 四场景 BLUF 不得同质
     blufs = {loan["bluf"], rating["bluf"], warn["bluf"], audit["bluf"]}
     assert len(blufs) == 4

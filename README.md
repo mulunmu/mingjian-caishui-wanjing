@@ -113,3 +113,11 @@ start.bat frontend
 - `GET /report/{id}/download` - 下载报告
 
 完整 API 文档: http://localhost:8000/docs
+
+## 文档入口
+
+- 当前架构：`docs/superpowers/specs/2026-09-17-current-architecture.md`
+- 当前实施计划：`docs/superpowers/plans/2026-09-18-llm-first-semantic-multiagent-report.md`
+- 阶段 23 验收：`报告/阶段23-LLM-first迁移验收.md`
+- 发布与回滚：`docs/runbooks/rag-v2-stage14-rollout-rollback.md`
+- 产品与业务规范：`项目3.0企划书.md`、`红线要求.md`、`企划书/`

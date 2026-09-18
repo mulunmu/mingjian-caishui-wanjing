@@ -27,6 +27,7 @@ from app.schemas.semantic_plan import (
     SemanticPlanValidationReport,
 )
 from app.services import llm_reply
+from app.services.rollout import is_selected, normalize_percent
 from app.services.semantic_frame_from_plan import frame_from_plan
 from app.services.analysis_patterns import ANALYSIS_PATTERNS, COMPARISON_BASIS
 from app.services.composition_validator import validate_composition_plan
@@ -53,9 +54,74 @@ _COMPARISON_BASIS_ALIASES = {
     "same_industry": "peer",
 }
 
+_ACTION_ROUTE_HINTS = {
+    "metadata_query": {"inventory"},
+    "profile": {"profile"},
+    "report": {"report"},
+    "conversation": {
+        "greeting",
+        "capability",
+        "product_faq",
+        "feedback",
+        "language_switch",
+        "abuse",
+    },
+    "clarify": {"clarify"},
+    "refuse": {"refuse", "out_of_domain"},
+}
+_DEFAULT_ROUTE_HINTS = {
+    "analysis": "analysis",
+    "metadata_query": "inventory",
+    "profile": "profile",
+    "report": "report",
+    "conversation": "capability",
+    "clarify": "clarify",
+    "refuse": "refuse",
+}
+
 
 def semantic_planner_enabled() -> bool:
     return os.getenv("SEMANTIC_PLANNER_ENABLED", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def semantic_planner_percent() -> float:
+    return normalize_percent(os.getenv("SEMANTIC_PLANNER_PERCENT", "100"))
+
+
+def semantic_planner_selected(session_id: str | None) -> bool:
+    return is_selected(session_id or "anonymous", semantic_planner_percent())
+
+
+def semantic_planner_langgraph_node_enabled() -> bool:
+    return os.getenv("SEMANTIC_PLAN_LANGGRAPH_NODE_ENABLED", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def semantic_report_plan_enabled() -> bool:
+    return os.getenv("SEMANTIC_REPORT_PLAN_ENABLED", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def semantic_topic_resolver_enabled() -> bool:
+    return os.getenv("SEMANTIC_TOPIC_RESOLVER_ENABLED", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def semantic_legacy_route_fallback_enabled() -> bool:
+    return os.getenv("SEMANTIC_LEGACY_ROUTE_FALLBACK", "true").lower() in {
         "1",
         "true",
         "yes",
@@ -136,6 +202,18 @@ def _has_cycle(steps: list[SemanticPlanStep]) -> bool:
     return any(visit(node) for node in dependencies)
 
 
+def compatible_route_kind(plan: SemanticPlan) -> str:
+    """Return the compatibility route owned by a validated semantic action."""
+    action = plan.action.value if hasattr(plan.action, "value") else str(plan.action)
+    if action == "analysis":
+        return "analysis"
+    hint = str(plan.route_hint or "").strip().lower()
+    allowed = _ACTION_ROUTE_HINTS.get(action, set())
+    if hint in allowed:
+        return hint
+    return _DEFAULT_ROUTE_HINTS.get(action, "clarify")
+
+
 def validate_semantic_plan(
     plan: SemanticPlan,
     *,
@@ -170,6 +248,26 @@ def validate_semantic_plan(
             )
         if len(steps) > _MAX_ANALYSIS_STEPS:
             errors.append(_issue("plan_too_large", f"analysis plan exceeds {_MAX_ANALYSIS_STEPS} steps"))
+    elif plan.action == "metadata_query" and (
+        steps or plan.metrics or plan.comparison_basis or plan.analysis_patterns
+    ):
+        errors.append(
+            _issue(
+                "action_plan_mismatch",
+                "metadata_query cannot contain analysis steps, metrics, patterns or comparison basis",
+            )
+        )
+
+    action = plan.action.value if hasattr(plan.action, "value") else str(plan.action)
+    route_hint = str(plan.route_hint or "").strip().lower()
+    allowed_route_hints = _ACTION_ROUTE_HINTS.get(action)
+    if route_hint and allowed_route_hints is not None and route_hint not in allowed_route_hints:
+        errors.append(
+            _issue(
+                "action_route_mismatch",
+                f"route_hint={route_hint} is not valid for action={action}",
+            )
+        )
 
     step_ids = [step.step_id for step in steps]
     if len(set(step_ids)) != len(step_ids):
@@ -480,6 +578,13 @@ def _planner_system_prompt(
         "1. tool_id、metric、分析模式和筛选值只能来自目录/真实值；不得发明。\n"
         "2. 分析类 action=analysis，必须给出 1 到 6 个 steps；可选 metric 工具和 operator 工具。\n"
         "3. 需要对比多个对象时，用多个 step，各自绑定真实 filters；不要只选一个指标后假装完成了组合。\n"
+        "3b. 对两个及以上行业、地区、企业或指标进行对比时，action 必须是 analysis；"
+        "metadata_query 只用于列出或统计可用行业、地区、企业等元数据，不能承载风险分析。\n"
+        "3c. action 与 route_hint 必须匹配：analysis→analysis；metadata_query→inventory；"
+        "profile→profile；report→report；conversation→greeting/capability/product_faq/feedback/language_switch/abuse；"
+        "clarify→clarify；refuse→refuse/out_of_domain。询问“系统能做什么、有哪些功能、功能说明”时，"
+        "action=conversation、route_hint=capability；天气、外部公共信息等超纲问题用 "
+        "action=refuse、route_hint=out_of_domain；要求编造数据用 action=refuse、route_hint=refuse。\n"
         "4. metrics 填 step 对应的 metric_key，不带 metric_ 前缀。analysis_patterns 使用上面的英文键。\n"
         "4a. operator step 必须通过 depends_on 指向已有 step；组合关系只能是目录中真实存在的端口。\n"
         "4b. comparison_basis 只能使用上面的对比基准英文键；按行业/地区分组对比用 cohort_slice，同行对比用 peer。\n"

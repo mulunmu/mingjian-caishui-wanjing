@@ -58,6 +58,39 @@ async def test_semantic_planner_node_skips_when_feature_disabled(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_semantic_planner_fails_closed_without_legacy_fallback(monkeypatch):
+    from app.services import semantic_nodes
+
+    monkeypatch.setattr(
+        semantic_nodes, "semantic_planner_langgraph_node_enabled", lambda: False
+    )
+    monkeypatch.setattr(
+        semantic_nodes, "semantic_legacy_route_fallback_enabled", lambda: False
+    )
+    result = await semantic_nodes.semantic_planner_node(
+        db=object(),
+        session_id="session-1",
+        query="分析企业1",
+        raw_route={"route": "analysis", "entities": ["企业1"]},
+    )
+
+    assert result["planner_status"] == "clarify"
+    assert result["semantic_plan"] is None
+    assert result["planner_errors"] == [
+        "semantic_planner_unavailable_without_legacy_route_fallback"
+    ]
+
+
+def test_report_planner_respects_feature_flag(monkeypatch):
+    from app.services import semantic_nodes
+
+    monkeypatch.setattr(semantic_nodes, "semantic_report_plan_enabled", lambda: False)
+    result = semantic_nodes.report_planner_node({"data": {"primary": {"route": "report"}}})
+
+    assert result["report_plan_status"] == "disabled"
+
+
+@pytest.mark.asyncio
 async def test_semantic_planner_node_returns_plan_and_composition(monkeypatch):
     from app.services import semantic_nodes
 

@@ -328,6 +328,10 @@ async def plan_custom_report(
 ):
     from app.services.custom_report import proposed_blocks
     from app.services.report_planner import build_report_plan
+    from app.services.semantic_planner import semantic_report_plan_enabled
+
+    if not semantic_report_plan_enabled():
+        raise HTTPException(status_code=503, detail="语义报告计划功能暂不可用。")
 
     spec = _normalized_custom_spec(body.spec)
     return {

@@ -13,6 +13,7 @@ import ScatterChart from '@/components/charts/ScatterChart';
 interface ConclusionCardProps {
   conclusion: string;
   chart?: ChartConfig;
+  visuals?: ChartConfig[];
   followups: string[];
   followupItems?: FollowUpItem[];
   actions?: ChatAction[];
@@ -48,6 +49,7 @@ function ChartRenderer({ chart }: { chart: ChartConfig }) {
 export default function ConclusionCard({
   conclusion,
   chart,
+  visuals,
   followups,
   followupItems,
   actions,
@@ -70,15 +72,19 @@ export default function ConclusionCard({
         <div className="flex-1 p-4">
           <p className="text-warm-800 text-sm leading-relaxed">{conclusion}</p>
 
-          {chart && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3, duration: 0.4 }}
-              className="mt-3"
-            >
-              <ChartRenderer chart={chart} />
-            </motion.div>
+          {((visuals && visuals.length > 0) || chart) && (
+            <div className="mt-3 space-y-3">
+              {(visuals && visuals.length > 0 ? visuals : chart ? [chart] : []).map((item, index) => (
+                <motion.div
+                  key={`${item.type}-${item.title || index}`}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 + index * 0.08, duration: 0.35 }}
+                >
+                  <ChartRenderer chart={item} />
+                </motion.div>
+              ))}
+            </div>
           )}
 
           {actions && actions.length > 0 && (

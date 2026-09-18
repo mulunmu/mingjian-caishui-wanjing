@@ -33,6 +33,7 @@ _CHECKPOINT_SETUP_DSNS: set[str] = set()
 
 
 class OuterTurnState(TypedDict, total=False):
+    session_id: str
     query: str
     approval: bool | None
     approval_requested_at: str
@@ -80,7 +81,9 @@ class OuterTurnRuntime:
         return raw_route
 
     async def load_memory(self, query: str) -> dict[str, Any]:
-        if not looks_like_topic_reference(query):
+        from app.services.semantic_planner import semantic_topic_resolver_enabled
+
+        if not semantic_topic_resolver_enabled() or not looks_like_topic_reference(query):
             return {}
         try:
             return await run_blocking(
@@ -444,6 +447,7 @@ def _compile_graph(runtime: OuterTurnRuntime, *, require_approval: bool):
         planner_memory["dialogue_state"] = session_record.get("dialogue_state") or {}
         payload = await semantic_nodes.semantic_planner_node(
             db=runtime.db,
+            session_id=state.get("session_id") or runtime.session_id,
             query=state["query"],
             raw_route=state.get("raw_route") or {},
             memory_context=planner_memory,
@@ -818,6 +822,7 @@ async def _run_langgraph(
             approval_requested_at = datetime.now(timezone.utc).isoformat()
             raw = await app.ainvoke(
                 {
+                    "session_id": runtime.session_id,
                     "query": query,
                     "approval": effective_approval,
                     "approval_requested_at": approval_requested_at,

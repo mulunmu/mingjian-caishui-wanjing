@@ -1,0 +1,93 @@
+{
+  "passed": true,
+  "batch_id": "20260917172750",
+  "cases": [
+    {
+      "case": "industry_status",
+      "route": "analysis",
+      "task_type": "distribution",
+      "analysis_pattern": "distribution",
+      "focus": [
+        "制造"
+      ],
+      "plan_id": "plan-open-overview-81d86668a624",
+      "comparison_claim_count": 0
+    },
+    {
+      "case": "industry_invoice_fraud",
+      "route": "analysis",
+      "task_type": "distribution",
+      "analysis_pattern": "distribution",
+      "focus": [
+        "批发零售"
+      ],
+      "plan_id": "plan-open-overview-cc1f4c57143b",
+      "comparison_claim_count": 0
+    },
+    {
+      "case": "multi_industry_compare",
+      "route": "analysis",
+      "task_type": "comparison",
+      "analysis_pattern": "comparison",
+      "focus": [
+        "制造",
+        "IT软件"
+      ],
+      "plan_id": null,
+      "comparison_claim_count": 25
+    },
+    {
+      "case": "industry_focus_first",
+      "route": "analysis",
+      "task_type": "distribution",
+      "analysis_pattern": "structure",
+      "focus": [
+        "制造"
+      ],
+      "plan_id": "plan-open-overview-9190015917a0",
+      "comparison_claim_count": 0
+    },
+    {
+      "case": "industry_sticky_followup",
+      "route": "analysis",
+      "task_type": "distribution",
+      "analysis_pattern": "structure",
+      "focus": [
+        "制造"
+      ],
+      "plan_id": "plan-open-overview-b96bb85e1de5",
+      "comparison_claim_count": 0
+    },
+    {
+      "case": "industry_explicit_switch",
+      "route": "analysis",
+      "task_type": "distribution",
+      "analysis_pattern": "distribution",
+      "focus": [
+        "IT软件"
+      ],
+      "plan_id": "plan-open-overview-20280075d64a",
+      "comparison_claim_count": 0
+    },
+    {
+      "case": "industry_after_reset",
+      "route": "analysis",
+      "task_type": "distribution",
+      "analysis_pattern": "distribution",
+      "focus": [
+        "制造"
+      ],
+      "plan_id": "plan-open-overview-81d86668a624",
+      "comparison_claim_count": 0
+    },
+    {
+      "case": "industry_inventory",
+      "route": "analysis",
+      "task_type": "distribution",
+      "analysis_pattern": "distribution",
+      "focus": [],
+      "plan_id": "plan-open-overview-be8cf96248b1",
+      "comparison_claim_count": 0
+    }
+  ]
+}

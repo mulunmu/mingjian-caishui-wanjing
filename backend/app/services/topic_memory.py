@@ -198,6 +198,8 @@ def _ordinal_number(token: str) -> int:
 
 
 def _ordinal_topic(topics: list[ConversationTopic], reference: str):
+    if any(marker in reference for marker in ("最开始", "最初", "开头", "起初")):
+        return topics[0] if topics else None
     if "上上上" in reference:
         index = -3
     elif "上上个" in reference:

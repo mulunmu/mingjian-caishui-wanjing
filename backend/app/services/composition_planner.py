@@ -1,6 +1,7 @@
 """Deterministic planner that materializes reusable composition patterns."""
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from app.schemas.composition import (
@@ -12,6 +13,26 @@ from app.schemas.composition import (
 )
 from app.services.composition_patterns import PATTERNS, PatternRole
 from app.services.composition_validator import validate_composition_plan
+
+
+DYNAMIC_ANALYSIS_PATTERNS = frozenset(
+    {
+        "comparison",
+        "trend",
+        "structure",
+        "distribution",
+        "ranking",
+        "contribution",
+        "attribution",
+        "anomaly",
+        "correlation",
+        "stratification",
+        "benchmark",
+        "scenario",
+        "drilldown",
+        "overview",
+    }
+)
 
 
 def _select_module(
@@ -141,7 +162,110 @@ def build_multi_metric_plan(
         plan_id=f"plan-multi-metric-{'-'.join(metrics)}",
         nodes=nodes,
         output_node_ids=[node.node_id for node in nodes],
-        metadata={"pattern": "multi_metric_lookup", "metrics": metrics},
+        metadata={
+            "pattern": "multi_metric_lookup",
+            "strategy": "explicit_multi_metric_dag",
+            "metrics": metrics,
+            "selected_tool_ids": module_ids,
+        },
+    )
+    report = validate_composition_plan(plan, modules)
+    return plan if report.valid else None
+
+
+def _select_dynamic_candidates(
+    *,
+    candidates: list[str],
+    modules: dict[str, ModuleSpec],
+    max_nodes: int,
+) -> list[str]:
+    """Select a deterministic, scenario-diverse set of executable metric modules."""
+    eligible: list[str] = []
+    seen: set[str] = set()
+    for module_id in candidates:
+        module = modules.get(module_id)
+        if module is None or module.status != "validated" or module.kind != "metric":
+            continue
+        if module_id in seen:
+            continue
+        seen.add(module_id)
+        eligible.append(module_id)
+
+    if len(eligible) <= max_nodes:
+        return eligible
+
+    selected: list[str] = []
+    covered_scenarios: set[str] = set()
+    for module_id in eligible:
+        scenarios = {
+            str(item) for item in (modules[module_id].metadata.get("scenarios") or [])
+        }
+        if scenarios and scenarios <= covered_scenarios:
+            continue
+        if scenarios & covered_scenarios:
+            continue
+        selected.append(module_id)
+        covered_scenarios.update(scenarios)
+        if len(selected) >= max_nodes:
+            return selected
+
+    for module_id in eligible:
+        if module_id not in selected:
+            selected.append(module_id)
+        if len(selected) >= max_nodes:
+            break
+    return selected
+
+
+def build_open_overview_plan(
+    *,
+    frame: Any,
+    candidates: list[str],
+    modules: dict[str, ModuleSpec],
+    max_nodes: int = 6,
+) -> CompositionPlan | None:
+    """Build a candidate-driven graph for open-ended entity overview questions."""
+    selected_ids = _select_dynamic_candidates(
+        candidates=list(candidates or []),
+        modules=modules,
+        max_nodes=max(2, int(max_nodes or 2)),
+    )
+    if len(selected_ids) < 2:
+        return None
+
+    entities = list(_frame_value(frame, "entities", []) or [])
+    filters = dict(_frame_value(frame, "filters", {}) or {})
+    common_bindings: dict[str, Any] = {
+        "query": " ".join(
+            modules[module_id].metadata.get("title") or module_id
+            for module_id in selected_ids
+        ),
+        **filters,
+    }
+    if entities:
+        common_bindings["entity"] = entities[0]
+
+    nodes = [
+        CompositionNode(
+            node_id=f"metric_{index}",
+            module_id=module_id,
+            input_bindings=dict(common_bindings),
+            cost_estimate=modules[module_id].cost,
+        )
+        for index, module_id in enumerate(selected_ids, 1)
+    ]
+    digest = hashlib.sha256("\n".join(selected_ids).encode("utf-8")).hexdigest()[:12]
+    plan = CompositionPlan(
+        plan_id=f"plan-open-overview-{digest}",
+        nodes=nodes,
+        output_node_ids=[node.node_id for node in nodes],
+        metadata={
+            "pattern": "dynamic_open_overview",
+            "strategy": "dynamic_candidate_graph",
+            "candidate_tool_ids": list(candidates or []),
+            "selected_tool_ids": selected_ids,
+            "max_nodes": max_nodes,
+        },
     )
     report = validate_composition_plan(plan, modules)
     return plan if report.valid else None
@@ -154,8 +278,33 @@ def plan_from_frame(
     modules: dict[str, ModuleSpec],
 ) -> CompositionPlan | None:
     task_type = _frame_value(frame, "task_type", "metric_lookup")
+    analysis_pattern = _frame_value(frame, "analysis_pattern", "")
     if task_type == "multi_metric":
         return build_multi_metric_plan(frame=frame, candidates=candidates, modules=modules)
+    if task_type == "open_overview" or analysis_pattern == "overview":
+        return build_open_overview_plan(
+            frame=frame,
+            candidates=candidates,
+            modules=modules,
+        )
+    if (
+        analysis_pattern in DYNAMIC_ANALYSIS_PATTERNS
+        or analysis_pattern.startswith("composite:")
+        or task_type in {
+        "distribution",
+        "ranking",
+        "contribution",
+        "correlation",
+        "benchmark",
+        "scenario",
+        }
+    ):
+        return build_open_overview_plan(
+            frame=frame,
+            candidates=candidates,
+            modules=modules,
+            max_nodes=4 if analysis_pattern in {"trend", "ranking", "drilldown"} else 6,
+        )
     pattern = {
         "comparison": "metric_threshold_compare",
         "trend": "trend_then_drilldown",

@@ -157,6 +157,7 @@ export interface EnterpriseOption {
   display_name: string;
   industry_l1: string;
   province: string;
+  city?: string;
 }
 
 export const riskApi = {
@@ -208,15 +209,6 @@ export const riskApi = {
     return normalizeAuthenticityBatch(raw);
   },
 
-  /** 演示样机数据（仅显式 mock 模式调用，live 页禁止静默回落） */
-  getMockSample: (): Promise<Record<string, unknown>> =>
-    client.get('/risk/mock/sample'),
-
-  getFraudDemo: (): Promise<Record<string, unknown>> =>
-    client.get('/risk/fraud/demo'),
-
-  getAuthenticityDemo: (): Promise<Record<string, unknown>> =>
-    client.get('/risk/authenticity/demo'),
 };
 
 /** 指标字典 API */

@@ -17,6 +17,9 @@ class CustomReportSpec(BaseModel):
     title: str = "定制风控报告"
     tone: str | None = None  # 语气提示（可选，未用则回退 custom 语气）
     purpose: str = ""  # 用户诉求的原文摘要
+    # 模块级分析方式：{module_key: [trend, benchmark, anomaly, ...]}
+    # 只决定报告组织方式，不产生任何数字。
+    chapter_analyses: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class CustomReportTurn(BaseModel):

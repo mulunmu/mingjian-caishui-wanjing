@@ -65,18 +65,37 @@ def _function(turn: SemanticTurnResult) -> str:
     return "general"
 
 
-def _dialogue_state(turn: SemanticTurnResult, entities: list[str]) -> dict[str, Any]:
+def _dialogue_state(
+    turn: SemanticTurnResult,
+    entities: list[str],
+    prior_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     from app.services import scope_state as ss
 
-    state = ss.empty_dialogue_state()
+    state = ss.normalize_dialogue_state(prior_state)
     if entities:
-        return ss.switch_scope(
+        display_names = turn.meta.get("entity_display_names") or {}
+        display_name = display_names.get(entities[0]) or entities[0]
+        state = ss.switch_scope(
             state,
             target="individual",
-            subject={"enterprise_id": entities[0], "display_name": entities[0]},
+            subject={"enterprise_id": entities[0], "display_name": display_name},
         )
-    if turn.route.route in {"analysis", "report"}:
-        return ss.switch_scope(state, target="cohort")
+    elif turn.route.route in {"analysis", "report"}:
+        state = ss.switch_scope(state, target="cohort")
+    focus = turn.meta.get("analysis_focus")
+    if isinstance(focus, dict) and (focus.get("industry_l1") or focus.get("province")):
+        state = ss.merge_analysis_focus(
+            state,
+            industry_l1=focus.get("industry_l1"),
+            province=focus.get("province"),
+        )
+    inventory_focus = turn.meta.get('inventory_focus')
+    if isinstance(inventory_focus, dict):
+        state['inventory_focus'] = dict(inventory_focus)
+    profile = turn.meta.get('profile_subject')
+    if isinstance(profile, dict) and profile.get('enterprise_id'):
+        state = ss.switch_scope(state, target='individual', subject={'enterprise_id': profile['enterprise_id'], 'display_name': profile.get('display_name') or profile['enterprise_id']})
     return state
 
 
@@ -87,6 +106,7 @@ async def persist_primary_turn(
     owner: str | None,
     query: str,
     turn: SemanticTurnResult,
+    dialogue_state: dict[str, Any] | None = None,
 ) -> None:
     del db
     params = _plan_params(turn)
@@ -114,7 +134,7 @@ async def persist_primary_turn(
         owner=owner,
         reply=turn.reply,
         followups=list(turn.followups),
-        dialogue_state=_dialogue_state(turn, entities),
+        dialogue_state=_dialogue_state(turn, entities, dialogue_state),
         custom_report=turn.meta.get("custom_report_state"),
     )
     if not stored:

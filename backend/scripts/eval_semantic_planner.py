@@ -27,22 +27,31 @@ def build_semantic_cases() -> list[SemanticEvalCase]:
     provinces = ["广东", "江苏", "山西", "浙江", "山东"]
     metrics = ["资产负债率", "现金流", "净利率", "纳税准时率", "真实性得分", "发票风险"]
     cases: list[SemanticEvalCase] = []
-    for index, industry in enumerate(industries * 8, start=1):
+    for index, industry in enumerate(industries * 20, start=1):
         cases.append(SemanticEvalCase(f"metadata-{index}", f"{industry}有哪些企业？", "metadata_query", "inventory"))
-    for index, province in enumerate(provinces * 7, start=1):
+    for index, province in enumerate(provinces * 20, start=1):
         cases.append(SemanticEvalCase(f"region-{index}", f"{province}有哪些行业？", "metadata_query", "inventory"))
-    for enterprise in range(1, 31):
+    for enterprise in range(1, 194):
         cases.append(SemanticEvalCase(f"profile-{enterprise}", f"企业{enterprise}的地区和行业是什么？", "profile", "profile"))
-    for enterprise in range(1, 41):
-        metric = metrics[(enterprise - 1) % len(metrics)]
-        cases.append(SemanticEvalCase(f"analysis-{enterprise}", f"企业{enterprise}的{metric}怎么样？", "analysis", "analysis"))
-    for index, industry in enumerate(industries * 5, start=1):
+    for enterprise in range(1, 194):
+        for offset in range(3):
+            metric = metrics[(enterprise + offset - 1) % len(metrics)]
+            cases.append(SemanticEvalCase(f"analysis-{enterprise}-{offset}", f"企业{enterprise}的{metric}怎么样？", "analysis", "analysis"))
+    for index, industry in enumerate(industries * 10, start=1):
         cases.append(SemanticEvalCase(f"compare-{index}", f"{industry}和{industries[index % len(industries)]}的风险对比", "analysis", "analysis"))
-    for index in range(1, 21):
+    for index in range(1, 51):
         cases.append(SemanticEvalCase(f"report-{index}", f"生成一份包含财务、税务和真实性的风险报告 {index}", "report", "report"))
-    for index, query in enumerate(["你好", "谢谢", "你能做什么？", "系统有哪些功能？", "天气怎么样？", "帮我编一个营收"], start=1):
+    conversation_routes = [
+        ("你好", "greeting"),
+        ("谢谢", "greeting"),
+        ("你能做什么？", "capability"),
+        ("系统有哪些功能？", "capability"),
+        ("天气怎么样？", "out_of_domain"),
+        ("帮我编一个营收", "refuse"),
+    ]
+    for index, (query, route) in enumerate(conversation_routes, start=1):
         action = "conversation" if index <= 4 else "refuse"
-        cases.append(SemanticEvalCase(f"conversation-{index}", query, action, action))
+        cases.append(SemanticEvalCase(f"conversation-{index}", query, action, route))
     return cases
 
 
@@ -69,7 +78,10 @@ def _passes(case: SemanticEvalCase, response: dict) -> tuple[bool, list[str]]:
 
 async def run_evaluation(args) -> dict:
     token = login(args.base_url, args.email, args.password)
-    cases = build_semantic_cases()[: args.limit]
+    cases = build_semantic_cases()
+    if getattr(args, "case_prefix", ""):
+        cases = [case for case in cases if case.case_id.startswith(args.case_prefix)]
+    cases = cases[: args.limit]
     failures = []
     passed = 0
     semaphore = asyncio.Semaphore(max(1, args.concurrency))
@@ -102,6 +114,7 @@ def main(argv=None) -> int:
     parser.add_argument("--email", default="admin@example.com")
     parser.add_argument("--password", default="admin123")
     parser.add_argument("--limit", type=int, default=200)
+    parser.add_argument("--case-prefix", default="")
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--output", default="")
     args = parser.parse_args(argv)

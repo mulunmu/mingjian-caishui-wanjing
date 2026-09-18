@@ -23,12 +23,17 @@ from app.services.dialogue_composition import build_dialogue_composition_plan
 from app.services.non_analysis_replies import build_non_analysis_turn
 from app.services.observability import get_trace_id
 from app.services.rollout import is_selected, normalize_percent
-from app.services.route_normalize import is_industry_distribution_query, normalize_route
+from app.services.route_normalize import normalize_route
+from app.services import legacy_fallback
 from app.services.composition_execution_bridge import execute_metric_composition
 from app.services.analysis_patterns import ANALYSIS_PATTERNS
 from app.services.hybrid_tool_rag import retrieve_tools_hybrid
 from app.services.semantic_frame_from_plan import frame_from_plan
 from app.schemas.semantic_plan import SemanticPlan
+from app.services.semantic_planner import (
+    compatible_route_kind,
+    semantic_topic_resolver_enabled,
+)
 from app.services.semantic_answer_composer import (
     compose_semantic_turn,
     resolve_enterprise_entities,
@@ -58,6 +63,84 @@ logger = logging.getLogger(__name__)
 
 class PrimaryContractError(RuntimeError):
     """Raised when a primary handler violates the formal-response contract."""
+
+
+def apply_semantic_plan_route(
+    *,
+    route: ConversationRoute,
+    raw_route: dict,
+    plan: SemanticPlan,
+) -> tuple[dict, ConversationRoute]:
+    """Let a validated semantic action own the compatibility route."""
+    target = compatible_route_kind(plan)
+    entities = [str(item).strip() for item in (plan.entities or []) if str(item).strip()]
+    if not entities:
+        entities = list(route.entities or [])
+
+    filters = dict(raw_route.get("filters") or {})
+    for key, values in (plan.filters or {}).items():
+        normalized = [str(item).strip() for item in values if str(item).strip()]
+        if normalized:
+            filters[key] = normalized[0] if len(normalized) == 1 else normalized
+
+    analysis_route = target in {"analysis", "report"}
+    updates = {
+        "route": target,
+        "entities": entities,
+        "filters": filters,
+        "needs_tools": analysis_route,
+        "needs_clarification": target == "clarify",
+        "confidence": max(float(route.confidence or 0.0), float(plan.confidence or 0.0)),
+    }
+    if target == "analysis" and not route.domain:
+        updates["domain"] = "general"
+
+    next_route = route.model_copy(update=updates)
+    next_raw_route = {
+        **raw_route,
+        "route": target,
+        "entities": entities,
+        "filters": filters,
+        "needs_tools": analysis_route,
+        "needs_clarification": target == "clarify",
+        "confidence": updates["confidence"],
+    }
+    # normalize_route() still understands the legacy action alias. Once a
+    # SemanticPlan owns compatibility routing, that stale alias must not
+    # re-normalize an explicit route such as out_of_domain back to refuse.
+    next_raw_route.pop("action", None)
+    if target == "analysis":
+        next_raw_route["domain"] = next_route.domain or "general"
+    return next_raw_route, next_route
+
+
+def plan_analysis_focus(plan: SemanticPlan) -> dict[str, Any]:
+    """Extract explicit slice focus from a semantic plan for subsequent turns."""
+    values: dict[str, list[str]] = {}
+    for key, items in (plan.filters or {}).items():
+        normalized = [str(item).strip() for item in items if str(item).strip()]
+        if normalized:
+            values[key] = normalized
+    for step in plan.steps or []:
+        for key, items in (step.filters or {}).items():
+            normalized = [str(item).strip() for item in items if str(item).strip()]
+            if normalized:
+                merged = list(values.get(key) or [])
+                for item in normalized:
+                    if item not in merged:
+                        merged.append(item)
+                values[key] = merged
+
+    focus: dict[str, Any] = {}
+    industries = values.get("industry_l1") or []
+    if industries:
+        focus["industry_l1"] = industries[0] if len(industries) == 1 else None
+        focus["industry_l1_values"] = industries
+    provinces = values.get("province") or []
+    if provinces:
+        focus["province"] = provinces[0] if len(provinces) == 1 else None
+        focus["province_values"] = provinces
+    return focus
 
 
 def promote_route_with_frame(route, frame):
@@ -94,50 +177,6 @@ _OPEN_OVERVIEW_FALLBACK_TOOL_IDS = (
     "metric_finance_score",
     "metric_red_invoice_cnt",
 )
-
-_PATTERN_CANDIDATE_PRIORITY = {
-    "stratification": (
-        "metric_industry_score",
-        "metric_credit_level",
-        "metric_overall_score",
-        "metric_tax_health_score",
-        "metric_authenticity_score",
-        "metric_invoice_score",
-    ),
-    "ranking": (
-        "metric_overall_score",
-        "metric_credit_level",
-        "metric_industry_score",
-        "metric_fraud_composite_score",
-    ),
-    "trend": (
-        "metric_revenue_yoy",
-        "metric_profit_yoy",
-        "metric_tax_on_time_rate",
-        "metric_change_cnt",
-    ),
-    "benchmark": (
-        "metric_peer_industry_percentile",
-        "metric_industry_score",
-        "metric_overall_score",
-    ),
-    "anomaly": (
-        "metric_red_invoice_cnt",
-        "metric_tax_arrears_cnt",
-        "metric_revenue_deviation",
-        "metric_suspicious_count",
-    ),
-}
-
-
-def _prioritize_candidates(
-    candidate_tool_ids: list[str], analysis_pattern: str
-) -> list[str]:
-    priority = list(_PATTERN_CANDIDATE_PRIORITY.get(analysis_pattern, ()))
-    return [tool_id for tool_id in priority if tool_id in candidate_tool_ids] + [
-        tool_id for tool_id in candidate_tool_ids if tool_id not in priority
-    ]
-
 
 async def _build_profile_turn(*, db, route, policy, dialog_act, current_eid: str | None):
     payload = await inventory_scope.subject_profile_answer(db, subject_ref=dialog_act.get('subject_ref'), current_eid=current_eid)
@@ -662,7 +701,9 @@ async def run_primary_turn(
     entity_display_names: dict[str, str] = {}
     referenced = None
     topic_clarification = None
-    has_topic_reference = looks_like_topic_reference(query)
+    has_topic_reference = (
+        semantic_topic_resolver_enabled() and looks_like_topic_reference(query)
+    )
     session_context = await run_blocking(session_store.get_session, session_id)
     session_dialogue_state = (
         session_context.get("dialogue_state")
@@ -817,7 +858,8 @@ async def run_primary_turn(
             },
         }
     if raw_route.get('route') not in {'inventory', 'profile'} and (
-        is_industry_distribution_query(query) or is_industry_distribution_query(effective_query)
+        legacy_fallback.is_industry_distribution_query(query)
+        or legacy_fallback.is_industry_distribution_query(effective_query)
     ):
         enterprise_id = None
         raw_route = {
@@ -861,6 +903,41 @@ async def run_primary_turn(
         semantic_plan_obj = None
         planned_composition = None
         planner_status = "clarify"
+    if semantic_plan_obj is not None and planner_status == "ok":
+        raw_route, route = apply_semantic_plan_route(
+            route=route,
+            raw_route=raw_route,
+            plan=semantic_plan_obj,
+        )
+        if route.route == "inventory" and semantic_plan_obj.scope == "system":
+            enterprise_id = None
+            raw_route = {**raw_route, "entities": []}
+            focused_dialogue_state = scope_state.switch_scope(
+                focused_dialogue_state,
+                target="cohort",
+            )
+            analysis_focus = {}
+        if semantic_plan_obj.action.value == "analysis":
+            plan_focus = plan_analysis_focus(semantic_plan_obj)
+            if plan_focus:
+                analysis_focus = {**analysis_focus, **plan_focus}
+                focused_dialogue_state = {
+                    **focused_dialogue_state,
+                    "scope": "cohort" if semantic_plan_obj.scope == "cohort" else focused_dialogue_state.get("scope", "cohort"),
+                    "analysis_focus": analysis_focus,
+                    "industry_focus": analysis_focus,
+                }
+        policy = ConversationPolicyRegistry.resolve(route)
+        frame = frame_from_route(route, query=effective_query)
+        if route.route == "inventory" and semantic_plan_obj.scope == "system":
+            frame = frame.model_copy(
+                update={
+                    "task_type": "distribution",
+                    "analysis_pattern": "stratification",
+                    "analysis_components": ["stratification", "distribution"],
+                    "subject_scope": "cohort",
+                }
+            )
     if semantic_plan_obj is not None and semantic_plan_obj.action.value == "analysis":
         if route.route != "analysis":
             route = route.model_copy(
@@ -1041,7 +1118,7 @@ async def run_primary_turn(
                 ]
                 if len(candidate_tool_ids) < (pattern_spec.min_candidates if pattern_spec else 2):
                     candidate_tool_ids = _open_overview_fallback_tool_ids(snapshot)
-                candidate_tool_ids = _prioritize_candidates(
+                candidate_tool_ids = legacy_fallback.prioritize_candidates(
                     candidate_tool_ids, frame.analysis_pattern
                 )
                 await emit_progress(

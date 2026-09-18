@@ -7,6 +7,10 @@ import pytest
 from app.schemas.conversation_route import ConversationPolicyRegistry, ConversationRoute
 from app.schemas.semantic_frame import SemanticFrame
 from app.services.composition_execution_bridge import execute_metric_composition
+from app.schemas.claim import Claim, ClaimTrace, ClaimValue
+from app.services.composition_execution_bridge import (
+    _comparison_claims_from_semantic_nodes,
+)
 from app.services.tool_rag import RagTool, ToolSnapshot
 
 
@@ -47,6 +51,12 @@ async def test_execute_metric_composition_merges_parallel_claims(monkeypatch):
                     "confidence": "computed",
                 }],
                 "followups": [f"continue-{metric}"],
+                "meta": {
+                    "charts": {
+                        "type": "bar",
+                        "data": {"labels": ["A"], "series": [{"name": metric, "values": [1]}]},
+                    }
+                },
             }
 
         return {"metric_debt_ratio": execute, "metric_cash_flow_net": execute}
@@ -73,6 +83,7 @@ async def test_execute_metric_composition_merges_parallel_claims(monkeypatch):
     assert out.meta["composition_plan_id"].startswith("plan-multi-metric")
     assert out.meta["composition_total_cost"] == 2.0
     assert out.reply == "已合并两项指标"
+    assert out.meta["charts"][0]["type"] == "bar"
 
 
 @pytest.mark.asyncio
@@ -132,3 +143,28 @@ async def test_execute_metric_composition_keeps_partial_results(monkeypatch):
     assert out is not None
     assert len(out.claims) == 1
     assert out.meta["composition_failed_nodes"]
+
+
+def test_semantic_node_comparison_builds_cross_group_claim():
+    claims = []
+    for group, number in (("制造", 52), ("IT软件", 11)):
+        claims.append(
+            Claim(
+                claim=f"{group} suspicious_count {number}",
+                value=ClaimValue(metric="suspicious_count", number=number, unit="家"),
+                trace=ClaimTrace(table="core_metrics", field="suspicious_count", query_id="Q"),
+                confidence="computed",
+                evidence_chain=[f"semantic_group_industry_l1={group}"],
+            )
+        )
+
+    out = _comparison_claims_from_semantic_nodes(
+        claims,
+        group_by="industry_l1",
+        groups=["制造", "IT软件"],
+    )
+
+    assert len(out) == 1
+    assert out[0].value is not None
+    assert out[0].value.metric == "compare_suspicious_count"
+    assert "制造 52家" in out[0].claim

@@ -9,6 +9,10 @@ from app.services import llm_reply
 from app.services.composition_catalog import build_composition_catalog
 from app.services.semantic_frame import frame_from_route
 from app.services.semantic_planner import (
+    semantic_legacy_route_fallback_enabled,
+    semantic_planner_langgraph_node_enabled,
+    semantic_planner_selected,
+    semantic_report_plan_enabled,
     plan_semantic_turn,
     semantic_plan_to_composition_plan,
     semantic_planner_enabled,
@@ -69,6 +73,7 @@ def _candidate_tool_ids(plan: SemanticPlan | None) -> list[str]:
 async def semantic_planner_node(
     *,
     db,
+    session_id: str | None = None,
     query: str,
     raw_route: dict[str, Any],
     memory_context: dict[str, Any] | None = None,
@@ -77,7 +82,25 @@ async def semantic_planner_node(
     catalog_builder: Callable | None = None,
 ) -> dict[str, Any]:
     """Produce a SemanticPlan without executing tools."""
-    if not semantic_planner_enabled() or not llm_reply.llm_available():
+    planner_available = (
+        semantic_planner_langgraph_node_enabled()
+        and semantic_planner_enabled()
+        and semantic_planner_selected(session_id)
+        and llm_reply.llm_available()
+    )
+    if not planner_available:
+        if not semantic_legacy_route_fallback_enabled():
+            return {
+                "planner_status": "clarify",
+                "planner_attempts": 0,
+                "planner_errors": [
+                    "semantic_planner_unavailable_without_legacy_route_fallback"
+                ],
+                "planner_clarification": "语义规划服务暂不可用，请稍后重试或换一种更具体的问法。",
+                "semantic_plan": None,
+                "composition_plan": None,
+                "semantic_candidate_tool_ids": [],
+            }
         return {
             "planner_status": "disabled_or_unavailable",
             "planner_attempts": 0,
@@ -409,6 +432,8 @@ def evidence_critic_node(result: dict[str, Any]) -> dict[str, Any]:
 
 def report_planner_node(result: dict[str, Any]) -> dict[str, Any]:
     """Mark report planning intent; full ReportPlan is added in Task 10."""
+    if not semantic_report_plan_enabled():
+        return {"result": dict(result or {}), "report_plan_status": "disabled"}
     payload = dict(result or {})
     primary = (
         (payload.get("data") or {}).get("primary")

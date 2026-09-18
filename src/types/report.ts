@@ -111,6 +111,56 @@ export interface ReportParams {
   province?: string;
 }
 
+export interface CustomReportSpec {
+  chapters: string[];
+  industry_l1?: string | null;
+  province?: string | null;
+  enterprises: string[];
+  title: string;
+  tone?: string | null;
+  purpose: string;
+  chapter_analyses: Record<string, string[]>;
+}
+
+export interface CustomReportCatalog {
+  chapters: Array<{
+    key: string;
+    title: string;
+    description: string;
+    category: string;
+    base_chapter: string;
+    default_dimension: string;
+    keywords: string[];
+    kpis: Array<Record<string, unknown>>;
+    analysis_patterns: string[];
+  }>;
+  analysis_patterns: Array<{
+    key: string;
+    label: string;
+    description: string;
+    task_type: string;
+    block_kind: string;
+    requires_time: boolean;
+    min_candidates: number;
+  }>;
+  comparison_basis: Array<{ key: string; label: string }>;
+}
+
+export interface CustomReportPlan {
+  ok: boolean;
+  spec: CustomReportSpec;
+  blocks: Array<{
+    order: number;
+    chapter_key: string;
+    title: string;
+    description: string;
+    category: string;
+    dimension: string;
+    analysis_patterns: string[];
+    status: string;
+  }>;
+}
+
 /** 邮件发送参数（适配后端） */
 export interface EmailReportParams {
   recipient: string;

@@ -88,3 +88,70 @@ def test_route_hint_never_changes_tool_selection():
     assert validated is not None
     assert composition is not None
     assert [node.module_id for node in composition.nodes] == ["metric_debt_ratio"]
+
+
+def test_metadata_action_cannot_carry_analysis_payload():
+    from app.services.semantic_planner import validate_semantic_plan
+
+    plan = SemanticPlan(
+        action="metadata_query",
+        metrics=["overall_score"],
+        analysis_patterns=["comparison"],
+        steps=[SemanticPlanStep(step_id="s1", tool_id="metric_debt_ratio")],
+        confidence=0.9,
+    )
+
+    report = validate_semantic_plan(
+        plan,
+        executable_tool_ids={"metric_debt_ratio"},
+        modules=_modules(),
+    )
+
+    assert report.valid is False
+    assert any(error.code == "action_plan_mismatch" for error in report.errors)
+
+
+def test_non_analysis_action_rejects_incompatible_route_hint():
+    from app.services.semantic_planner import validate_semantic_plan
+
+    plan = SemanticPlan(
+        action="conversation",
+        route_hint="inventory",
+        confidence=0.9,
+    )
+
+    report = validate_semantic_plan(
+        plan,
+        executable_tool_ids={"metric_debt_ratio"},
+        modules=_modules(),
+    )
+
+    assert report.valid is False
+    assert any(error.code == "action_route_mismatch" for error in report.errors)
+
+
+def test_compatible_route_is_owned_by_non_analysis_action():
+    from app.services.semantic_planner import compatible_route_kind
+
+    conversation = SemanticPlan(
+        action="conversation",
+        route_hint="capability",
+        confidence=0.9,
+    )
+    out_of_domain = SemanticPlan(
+        action="refuse",
+        route_hint="out_of_domain",
+        confidence=0.9,
+    )
+
+    assert compatible_route_kind(conversation) == "capability"
+    assert compatible_route_kind(out_of_domain) == "out_of_domain"
+
+
+def test_planner_rollout_percent_is_deterministic(monkeypatch):
+    from app.services.semantic_planner import semantic_planner_selected
+
+    monkeypatch.setenv("SEMANTIC_PLANNER_PERCENT", "0")
+    assert semantic_planner_selected("session-1") is False
+    monkeypatch.setenv("SEMANTIC_PLANNER_PERCENT", "100")
+    assert semantic_planner_selected("session-1") is True

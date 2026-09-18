@@ -6,6 +6,8 @@ import pytest
 
 from app.schemas.claim import Claim, ClaimTrace, ClaimValue
 from app.services.semantic_answer_composer import compose_semantic_turn, resolve_enterprise_entities
+from app.services.semantic_answer_composer import _prefer_dimension_candidate
+from app.schemas.tool_rag import ToolCandidate
 from app.services.semantic_registry_seed import seed_semantic_registry
 from app.services.tool_rag import load_tool_snapshot_sync
 from tests.test_semantic_registry_seed import _engine
@@ -15,6 +17,15 @@ def _snapshot():
     engine = _engine()
     seed_semantic_registry(engine)
     return load_tool_snapshot_sync(engine)
+
+
+def test_industry_dimension_prefers_industry_score_tool():
+    candidates = [
+        ToolCandidate(tool_id="metric_credit_level", kind="composite_metric", title="", description="", score=1),
+        ToolCandidate(tool_id="metric_industry_score", kind="composite_metric", title="", description="", score=0.5),
+    ]
+    ordered = _prefer_dimension_candidate(candidates, {"filters": {"dimension": "industry"}})
+    assert ordered[0].tool_id == "metric_industry_score"
 
 
 @pytest.mark.asyncio

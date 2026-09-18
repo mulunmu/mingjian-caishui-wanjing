@@ -6,6 +6,7 @@ import pytest
 
 from app.schemas.claim import Claim, ClaimTrace, ClaimValue
 from app.schemas.conversation_route import ConversationPolicy
+from app.schemas.semantic_query import QueryType, SemanticQuery
 from app.schemas.tool_plan import ToolPlan, ToolStep
 from app.services.plan_execution import PlanValidationError, execute_tool_plan_async
 from app.services.semantic_registry_seed import seed_semantic_registry
@@ -35,6 +36,49 @@ def _policy() -> ConversationPolicy:
 def test_numeric_core_metric_is_supported():
     assert "metric_debt_ratio" in semantic_executor_tool_ids()
     assert "metric_tax_arrears_cnt" in semantic_executor_tool_ids()
+
+
+def test_resolved_opaque_entity_is_forwarded_to_semantic_query():
+    from app.services.semantic_tool_executors import _build_semantic_query
+
+    sq = _build_semantic_query(
+        "debt_ratio",
+        {"entity": "0039fa8febbd8593f36ec19219685382", "query": "企业1资产负债率"},
+    )
+    assert sq.entities == ["0039fa8febbd8593f36ec19219685382"]
+
+
+@pytest.mark.asyncio
+async def test_metric_dispatcher_passes_entity_scope_to_builder(monkeypatch):
+    captured: dict = {}
+
+    async def fake_authenticity(
+        db,
+        industry_l1=None,
+        *,
+        province=None,
+        enterprise_ids=None,
+    ):
+        captured["enterprise_ids"] = enterprise_ids
+        return [], {}
+
+    from app.services import judgment_service
+
+    monkeypatch.setattr(
+        judgment_service,
+        "build_authenticity_claims",
+        fake_authenticity,
+    )
+    sq = SemanticQuery(
+        query_type=QueryType.lookup,
+        metrics=["authenticity_score"],
+        entities=["0039fa8febbd8593f36ec19219685382"],
+        source="corrected",
+    )
+
+    await judgment_service._metric_dispatcher(object(), sq, "authenticity_score")
+
+    assert captured["enterprise_ids"] == ["0039fa8febbd8593f36ec19219685382"]
 
 
 @pytest.mark.asyncio

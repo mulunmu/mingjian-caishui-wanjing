@@ -1,4 +1,4 @@
-"""GET /risk/mock/sample 与 mock 汇总"""
+"""Mock 汇总数据结构（仅底层测试样本，不暴露生产 API）。"""
 import sys
 import os
 
@@ -15,15 +15,3 @@ def test_mock_sample_bundle_shape():
     assert "display_label" in bundle["enterprises"][0]
     assert bundle["summary"]["sample_count"] == len(MOCK_ENTERPRISES)
     assert isinstance(bundle["warnings"], list)
-
-
-def test_mock_sample_api():
-    from fastapi.testclient import TestClient
-    from app.main import app
-
-    client = TestClient(app)
-    resp = client.get("/api/v1/risk/mock/sample")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["source"] == "mock"
-    assert len(data["enterprises"]) == 10

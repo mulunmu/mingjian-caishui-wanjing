@@ -100,3 +100,44 @@ async def test_chat_passes_report_approval_to_outer_orchestrator(monkeypatch):
     )
     assert out["reply"] == "resumed"
     assert run.await_args.kwargs["approval"] is True
+
+
+@pytest.mark.asyncio
+async def test_chat_returns_scope_and_chart_from_primary(monkeypatch):
+    from app.services import semantic_primary
+    from app.services import session_store
+
+    monkeypatch.setenv("SEMANTIC_PRIMARY_ENABLED", "true")
+    monkeypatch.setenv("SEMANTIC_PRIMARY_PERCENT", "100")
+    monkeypatch.setattr(
+        semantic_primary,
+        "run_primary_turn",
+        AsyncMock(
+            return_value={
+                "reply": "行业分布",
+                "session_id": "s1",
+                "charts": {"type": "bar", "data": {"labels": ["制造"], "series": []}},
+                "data": {"primary": {"status": "answered", "fallback": False}},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        session_store,
+        "get_session",
+        lambda _: {
+            "dialogue_state": {
+                "scope": "individual",
+                "subject": {"enterprise_id": "ENT1", "display_name": "企业1"},
+                "scenario": "warn",
+            }
+        },
+    )
+
+    out = await chat_api.chat(
+        body=chat_api.ChatRequest(query="行业分布", session_id="s1"),
+        db=AsyncMock(),
+        _user=None,
+    )
+    assert out["dialogue_state"]["scope"] == "individual"
+    assert out["ui"]["scope_bar"]["enterprise_id"] == "ENT1"
+    assert out["charts"]["type"] == "bar"

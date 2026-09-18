@@ -254,7 +254,7 @@ export default function ReportCenter() {
             生成报告
           </button>
           <button
-            onClick={() => navigate('/research?custom=1')}
+            onClick={() => navigate('/report/custom')}
             className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-amber/30 text-amber text-xs hover:bg-amber-50 transition-colors"
           >
             <Sparkles className="w-3.5 h-3.5" />
@@ -527,7 +527,7 @@ export default function ReportCenter() {
                 </div>
               ) : previewBlobUrl ? (
                 <iframe
-                  src={previewBlobUrl}
+                  src={`${previewBlobUrl}#page=1&zoom=page-width`}
                   className="w-full h-full border-0"
                   title="报告预览"
                   referrerPolicy="no-referrer"
@@ -550,7 +550,7 @@ export default function ReportCenter() {
         onConfirm={handleWizardConfirm}
         busy={generatingScenario !== null}
         error={generateError}
-        onOpenCustom={() => navigate('/research?custom=1')}
+        onOpenCustom={() => navigate('/report/custom')}
       />
 
       <UpgradeModal

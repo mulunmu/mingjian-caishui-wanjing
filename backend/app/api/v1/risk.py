@@ -11,7 +11,7 @@ from app.db.session import get_db
 from app.models.core_metrics import CoreMetrics
 from app.models.financials import EnterpriseFinancials
 from app.models.profiles import EnterpriseInvoiceProfile, EnterpriseTaxProfile
-from app.services import assessment, mock_data
+from app.services import assessment
 from app.services import fraud_engine, authenticity_engine, insight_engine
 from app.services import financial_benchmarks
 from app.services import subscription_service
@@ -200,12 +200,6 @@ async def list_warnings(
         ) from exc
 
 
-@router.get("/mock/sample")
-async def mock_sample_bundle(_user: dict | None = Depends(get_current_user_optional)):
-    """演示/mock 模式统一样机包（与 mock_data.py 同源）。"""
-    return mock_data.get_mock_sample_bundle()
-
-
 @router.get("/summary")
 async def dashboard_summary(
     top_n: int = Query(10, ge=1, le=50, description="异常企业 TopN"),
@@ -258,6 +252,7 @@ async def list_enterprises(
                     CoreMetrics.display_label,
                     CoreMetrics.industry_l1,
                     CoreMetrics.province,
+                    CoreMetrics.city,
                 ).order_by(CoreMetrics.enterprise_id)
             )
         ).all()
@@ -271,6 +266,7 @@ async def list_enterprises(
             "display_name": r[1] or r[2],
             "industry_l1": r[3],
             "province": r[4],
+            "city": r[5],
         }
         for r in rows
     ]
@@ -304,12 +300,6 @@ async def fraud_overview(
     return await run_blocking(fraud_engine.analyze_metrics_batch, batch, max_n=limit)
 
 
-@router.get("/fraud/demo")
-async def fraud_demo(_user: dict | None = Depends(get_current_user_optional)):
-    """验收：假发票进销错配样本。"""
-    return fraud_engine.fake_mismatch_sample()
-
-
 @router.get("/authenticity")
 async def authenticity_overview(
     industry: str | None = Query(None, description="行业大类"),
@@ -324,15 +314,6 @@ async def authenticity_overview(
     return await run_blocking(
         authenticity_engine.analyze_authenticity_batch, metrics, industry_l1=industry
     )
-
-
-@router.get("/authenticity/demo")
-async def authenticity_demo(_user: dict | None = Depends(get_current_user_optional)):
-    """验收：Benford 违例样本 + 自然对照。"""
-    return {
-        "violation_sample": authenticity_engine.fake_benford_violation_sample(),
-        "natural_sample": authenticity_engine.natural_benford_sample(),
-    }
 
 
 @router.get("/enterprise/{enterprise_id}")

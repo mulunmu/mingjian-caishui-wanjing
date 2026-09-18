@@ -27,15 +27,6 @@ _AGGREGATE_TERMS = (
     "优先核查",
     "按行业",
 )
-_INDUSTRY_DISTRIBUTION_RE = re.compile(
-    r"(哪些|什么|多少).{0,8}行业|行业.{0,8}(划分|分类|分布|清单|有哪些)|按行业"
-)
-
-
-def is_industry_distribution_query(query: str) -> bool:
-    return bool(_INDUSTRY_DISTRIBUTION_RE.search(query or ""))
-
-
 def _extract_explicit_entities(query: str, existing: list[str]) -> list[str]:
     out = [item for item in existing if item]
     for match in _EXPLICIT_ENTITY_PATTERNS[0].finditer(query):

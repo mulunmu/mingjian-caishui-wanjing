@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 ActName = Literal[
     "negotiate_scope",
+    "subject_profile",
     "bind_subject",
     "analyze",
     "drill",
@@ -30,6 +31,7 @@ ActName = Literal[
 ScenarioName = Literal["loan", "rating", "warn", "audit"]
 ScopeTarget = Literal["individual", "cohort"]
 AskKind = Literal["overview", "list", "count", "entry_help"]
+InventoryDimension = Literal["industry", "province"]
 
 CONFIDENCE_CLARIFY = 0.55
 
@@ -76,6 +78,24 @@ _CAPABILITY_METRIC_RE = re.compile(
     r"能做什么|可以做什么|有什么功能|有哪些功能",
     re.I,
 )
+_INVENTORY_INDUSTRY_RE = re.compile(
+    r"(?:哪些|什么|多少种|有哪些|分别|数量|覆盖).{0,8}行业|"
+    r"行业.{0,8}(?:有哪些|是什么|分别|数量|多少家|覆盖|列表)|"
+    r"(?:行业|产业).{0,6}(?:分布|构成|数量)|"
+    r"(?:数据库|库里|全库|当前数据|当前样本).{0,10}行业"
+)
+_INVENTORY_REGION_RE = re.compile(
+    r"(?:哪些|什么|有哪些|分别|数量|覆盖).{0,8}(?:地区|省份|省市)|"
+    r"(?:地区|省份|省市).{0,8}(?:有哪些|是什么|分别|数量|多少家|覆盖|列表)|"
+    r"(?:地区|区域|省份|省市).{0,6}(?:分布|构成|数量)|"
+    r"(?:数据库|库里|全库|当前数据|当前样本).{0,10}(?:地区|省份|省市)"
+)
+_SUBJECT_PROFILE_RE = re.compile(
+    r"(?:企业\s*\d+|这家|该企业|这个企业|本企业|该户).{0,12}(?:"
+    r"(?:是什么|属于什么|哪个|哪家|在哪|哪里|所在).{0,6}(?:行业|领域|地区|省份|城市)|"
+    r"(?:行业|领域|地区|省份|城市).{0,8}(?:是什么|是哪个|哪个|属于|在哪|哪里)"
+    r")"
+)
 _UNDERSPECIFIED_QUERY_RE = re.compile(
     r"^(?:嗯[，, ]*)?(?:继续|分析一下|帮我看看那个|这个怎么样|那个东西有问题吗)"
     r"[。！？!?，, ]*$|"
@@ -95,6 +115,49 @@ def looks_aggregate_analyze(query: str) -> bool:
 
 def looks_greeting(query: str) -> bool:
     return bool(_GREETING_RE.match((query or "").strip()))
+
+
+def deterministic_inventory_or_profile(query: str) -> DialogAct | None:
+    q = (query or '').strip()
+    if not q:
+        return None
+    from app.services.semantic_lexicon import _match_industry, _match_province
+    if _SUBJECT_PROFILE_RE.search(q):
+        m = re.search(r'企业\s*(?:\d+|[零〇一二三四五六七八九十百千万两]+)', q)
+        return DialogAct(act='subject_profile', subject_ref=m.group(0) if m else None, confidence=0.99)
+    industry_filter = _match_industry(q)
+    province_filter = _match_province(q)
+    list_intent = bool(re.search(r'企业|公司|名单|哪些家|有几家|多少家|列一下', q))
+    industry_distribution = bool(_INVENTORY_INDUSTRY_RE.search(q))
+    region_distribution = bool(_INVENTORY_REGION_RE.search(q))
+    if not (
+        industry_distribution
+        or region_distribution
+        or ((industry_filter or province_filter) and list_intent)
+    ):
+        return None
+    if industry_distribution:
+        dimension = 'industry'
+    elif region_distribution:
+        dimension = 'province'
+    else:
+        dimension = None
+    if re.search(r'多少家|多少个|几家|数量|计数', q) and not re.search(
+        r'哪些企业|哪些公司|名单|列一下', q
+    ):
+        ask_kind = 'count'
+    elif industry_distribution or region_distribution:
+        ask_kind = 'overview'
+    else:
+        ask_kind = 'list'
+    return DialogAct(
+        act='negotiate_scope',
+        ask_kind=ask_kind,
+        inventory_dimension=dimension,
+        industry_l1=industry_filter,
+        province=province_filter,
+        confidence=0.99,
+    )
 
 
 def split_multi_intent(query: str) -> list[str]:
@@ -122,6 +185,7 @@ class DialogAct(BaseModel):
     ask_kind: AskKind | None = None
     industry_l1: str | None = None
     province: str | None = None
+    inventory_dimension: InventoryDimension | None = None
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     # M1 弃权三态：can_answer=False → clarify（有 clarify_question）或 abstain（无）
     can_answer: bool = Field(default=True, description="False 时走 clarify 或 abstain 路径")
@@ -142,6 +206,7 @@ class DialogAct(BaseModel):
         "ask_kind",
         "industry_l1",
         "province",
+        "inventory_dimension",
         "clarify_question",
         "refusal_kind",
         mode="before",
@@ -288,6 +353,10 @@ async def classify(query: str | None, state: dict[str, Any] | None = None) -> Di
     cr = state.get("custom_report") if isinstance(state.get("custom_report"), dict) else None
     if cr and cr.get("active"):
         return DialogAct(act="custom_report", confidence=1.0)
+
+    inventory_or_profile = deterministic_inventory_or_profile(q)
+    if inventory_or_profile is not None:
+        return inventory_or_profile
 
     # 明确要求生成/导出报告是确定性命令，不应让模型偶尔判成 FAQ 或协商。
     # 报告“怎么生成/如何导出”仍走 product_faq。

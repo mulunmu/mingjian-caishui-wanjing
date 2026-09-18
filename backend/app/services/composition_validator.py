@@ -48,6 +48,8 @@ def validate_composition_plan(
     warnings: list[CompositionValidationError] = []
     nodes = {node.node_id: node for node in plan.nodes}
 
+    if not plan.nodes:
+        errors.append(_issue("plan_empty", "composition plan must contain at least one node"))
     if len(plan.nodes) > MAX_PLAN_NODES:
         errors.append(_issue("plan_too_large", f"plan exceeds {MAX_PLAN_NODES} nodes"))
     if len(nodes) != len(plan.nodes):

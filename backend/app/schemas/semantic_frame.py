@@ -20,8 +20,15 @@ class SemanticFrame(BaseModel):
     task_type: Literal[
         "metric_lookup",
         "multi_metric",
+        "open_overview",
+        "distribution",
         "comparison",
         "trend",
+        "ranking",
+        "contribution",
+        "correlation",
+        "benchmark",
+        "scenario",
         "diagnosis",
         "drilldown",
         "report",
@@ -30,6 +37,9 @@ class SemanticFrame(BaseModel):
         "memory",
         "clarify",
     ] = "metric_lookup"
+    analysis_pattern: str = "metric_lookup"
+    analysis_components: list[str] = Field(default_factory=list)
+    comparison_basis: str | None = None
     subject_scope: Literal["individual", "cohort", "unbound", "system"] = "unbound"
     entities: list[str] = Field(default_factory=list)
     metrics: list[str] = Field(default_factory=list)

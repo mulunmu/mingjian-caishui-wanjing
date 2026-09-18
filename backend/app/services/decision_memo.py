@@ -344,11 +344,18 @@ def build_bluf(
         ]
     elif memo == "audit":
         involved = n_focus or buckets["reject"] or 0
-        bluf = f"优先查约 {involved} 家，主要疑点〔{blocker_txt}〕，建议先调〔票据/申报凭证〕。"
+        total = buckets["total"] or sample_n or involved or 1
+        ratio = round(involved / total * 100, 1) if total else 0.0
+        bluf = (
+            f"从 {total} 家样本中识别出 {involved} 家需要优先核查，占 {ratio:.1f}%。"
+            f"这批企业不是只有一个指标异常，而是同时出现「{blocker_txt}」等经营疑点。"
+            "建议先调取这些企业的发票、纳税申报表和销售合同，核对发票金额与申报收入、账面收入是否一致；"
+            "对不上或缺少业务凭证的，再进入实地核查和第二轮穿透检查。"
+        )
         actions = [
-            f"按〔{blocker_txt}〕排序抽查，先调红冲发票与对应销售方名单。",
-            "交叉核申报收入与开票收入，不一致的进入第二核查队列。",
-            "税务欠税/滞纳信号与发票疑点叠加的主体优先立案核查。",
+            f"按〔{blocker_txt}〕排序核查，先调取发票、申报表和销售合同。",
+            "核对发票金额、申报收入、账面收入三者是否一致，不一致的进入第二核查队列。",
+            "税务欠税或发票疑点叠加的主体优先核查，并要求补充业务和资金凭证。",
         ]
     elif memo == "enterprise":
         bluf = f"综合评级「{risk_level}」"

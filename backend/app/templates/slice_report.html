@@ -168,13 +168,16 @@
     border-left: 2px solid var(--brand);
     padding: 4px 0 4px 9px;
     margin: 8px 0;
-    page-break-inside: avoid;
+    page-break-inside: auto;
+    break-inside: auto;
   }
   .block-title {
     color: var(--brand);
     font-size: 9.5pt;
     font-weight: 700;
     margin-bottom: 2px;
+    page-break-after: avoid;
+    break-after: avoid;
   }
   .block-text {
     font-size: 10pt;
@@ -218,7 +221,11 @@
       margin: 10px 0 16px;
       font-size: 9.5pt;
       table-layout: fixed;
+      page-break-inside: auto;
+      break-inside: auto;
     }
+    thead { display: table-header-group; }
+    tr { page-break-inside: avoid; break-inside: avoid; }
     table th, table td {
       border: 1px solid var(--line);
       padding: 6px 8px;
@@ -320,7 +327,8 @@
       border: 1px solid var(--line);
       padding: 10px 12px;
       margin: 0 0 10px;
-      page-break-inside: avoid;
+      page-break-inside: auto;
+      break-inside: auto;
     }
     .summary-panel .bullet-line,
     .bullet-line {
@@ -514,10 +522,12 @@
     {% if ch.blocks %}
     <div class="block-list">
       {% for block in ch.blocks %}
+      {% if block.status != 'duplicate' %}
       <div class="report-block">
         <div class="block-title">{{ block.title }}</div>
         <p class="block-text">{{ block.paragraph }}</p>
       </div>
+      {% endif %}
       {% endfor %}
     </div>
     {% endif %}

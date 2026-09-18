@@ -5,6 +5,9 @@ import type {
   ReportListResponse,
   ReportGenerateResponse,
   EmailReportParams,
+  CustomReportCatalog,
+  CustomReportPlan,
+  CustomReportSpec,
 } from '@/types/report';
 
 export const reportApi = {
@@ -50,6 +53,15 @@ export const reportApi = {
     scope_sample_count?: number;
     available_chapter_count?: number;
   }> => client.post('/report/validate-wizard', params),
+
+  customCatalog: (): Promise<CustomReportCatalog> =>
+    client.get('/report/custom/catalog'),
+
+  planCustom: (spec: CustomReportSpec): Promise<CustomReportPlan> =>
+    client.post('/report/custom/plan', { spec }),
+
+  generateCustom: (spec: CustomReportSpec, sessionId?: string): Promise<ReportGenerateResponse> =>
+    client.post('/report/custom/generate', { spec, session_id: sessionId }),
 
   /** HTML 预览 */
   preview: (params: ReportParams): Promise<string> =>

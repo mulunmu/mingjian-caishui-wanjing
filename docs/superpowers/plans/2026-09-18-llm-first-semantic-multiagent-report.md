@@ -845,7 +845,7 @@ git commit -m "test: add semantic and report evaluation matrices"
 - Modify: `backend/app/services/outer_orchestrator.py`
 - Create: `报告/阶段23-LLM-first迁移验收.md`
 
-- [ ] **Step 1: 功能开关拆分**
+- [x] **Step 1: 功能开关拆分**
 
 ```text
 SEMANTIC_PLANNER_ENABLED
@@ -856,7 +856,7 @@ SEMANTIC_TOPIC_RESOLVER_ENABLED
 SEMANTIC_LEGACY_ROUTE_FALLBACK
 ```
 
-- [ ] **Step 2: 灰度顺序**
+- [x] **Step 2: 灰度顺序**
 
 ```text
 5% -> 25% -> 50% -> 100%
@@ -870,7 +870,7 @@ SEMANTIC_LEGACY_ROUTE_FALLBACK
 - 30 条报告生成。
 - PDF 封面、判断段、章节和 Block 检查。
 
-- [ ] **Step 3: 回滚条件**
+- [x] **Step 3: 回滚条件**
 
 出现任一情况立即回退：
 
@@ -880,7 +880,7 @@ SEMANTIC_LEGACY_ROUTE_FALLBACK
 - 报告重复 Block 超过 1%。
 - PDF 少页、吞页或章节顺序错误。
 
-- [ ] **Step 4: 删除旧语义规则**
+- [x] **Step 4: 删除旧语义规则**
 
 只有在 100% 灰度和评测通过后，删除：
 
@@ -891,7 +891,7 @@ SEMANTIC_LEGACY_ROUTE_FALLBACK
 
 保留无 LLM 降级代码，放在明确命名的 `legacy_fallback` 模块。
 
-- [ ] **Step 5: 最终审计**
+- [x] **Step 5: 最终审计**
 
 Run:
 
@@ -905,6 +905,8 @@ docker exec 20-backend-1 python scripts/eval_report_plan.py --base-url http://12
 Expected: 全部通过，输出验收报告和回滚记录。
 
 - [ ] **Step 6: Commit**
+
+注：当前工作区包含阶段前已存在的历史未提交改动，不能在不混入无关变更的前提下安全提交；代码与验收文档已完成，提交动作待用户确认后按归属拆分 staging。
 
 ```bash
 git add docker-compose.yml backend/app/services/rollout.py backend/app/services/outer_orchestrator.py 报告/阶段23-LLM-first迁移验收.md

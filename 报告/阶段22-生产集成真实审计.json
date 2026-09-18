@@ -1,0 +1,262 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "name": "demo_login",
+      "passed": true,
+      "evidence": {
+        "status": 200
+      }
+    },
+    {
+      "name": "bootstrap_llm_welcome",
+      "passed": true,
+      "evidence": {
+        "status": 200,
+        "source": "llm"
+      }
+    },
+    {
+      "name": "bootstrap_not_in_history",
+      "passed": true,
+      "evidence": {
+        "status": 200,
+        "message_count": 0,
+        "detail": null
+      }
+    },
+    {
+      "name": "non_analysis_llm_expression",
+      "passed": true,
+      "evidence": {
+        "status": 200,
+        "reply_source": "llm"
+      }
+    },
+    {
+      "name": "trial_demo_scope_control",
+      "passed": true,
+      "evidence": {
+        "scope": "individual",
+        "enterprise_id": "0039fa8febbd8593f36ec19219685382",
+        "display_name": "企业1"
+      }
+    },
+    {
+      "name": "langgraph_outer_active",
+      "passed": true,
+      "evidence": {
+        "engine": "langgraph",
+        "status": "completed",
+        "session_id": "671cb9fb-85e2-4929-bba5-128dfa6b61bf",
+        "agents": [
+          {
+            "agent": "memory_agent",
+            "status": "completed",
+            "trace_id": "c96ce482249b416588e1e0a2d612e578",
+            "reference_detected": false,
+            "topic_count": 0
+          },
+          {
+            "agent": "classification_agent",
+            "status": "completed",
+            "trace_id": "c96ce482249b416588e1e0a2d612e578",
+            "route": "greeting"
+          },
+          {
+            "agent": "planning_agent",
+            "status": "completed",
+            "trace_id": "c96ce482249b416588e1e0a2d612e578",
+            "approval_required": false,
+            "memory_topics": 0
+          },
+          {
+            "agent": "execution_agent",
+            "status": "completed",
+            "trace_id": "c96ce482249b416588e1e0a2d612e578"
+          },
+          {
+            "agent": "finance_review_agent",
+            "status": "skipped",
+            "trace_id": "c96ce482249b416588e1e0a2d612e578",
+            "reason": "disabled",
+            "elapsed_ms": 0.7
+          },
+          {
+            "agent": "final_guard_agent",
+            "status": "completed",
+            "trace_id": "c96ce482249b416588e1e0a2d612e578",
+            "budget_ms": 15000,
+            "elapsed_ms": 595.9
+          },
+          {
+            "agent": "verification_agent",
+            "status": "completed",
+            "trace_id": "c96ce482249b416588e1e0a2d612e578",
+            "fallback": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "process_events_emitted",
+      "passed": true,
+      "evidence": {
+        "count": 7
+      }
+    },
+    {
+      "name": "open_overview_dynamic_dag",
+      "passed": true,
+      "evidence": {
+        "status": 200,
+        "strategy": "dynamic_candidate_graph",
+        "plan_tool_ids": [
+          "metric_overall_score",
+          "metric_authenticity_score",
+          "metric_tax_health_score",
+          "metric_invoice_score",
+          "metric_finance_score",
+          "metric_tax_violation_cnt"
+        ]
+      }
+    },
+    {
+      "name": "individual_scope_not_contaminated",
+      "passed": true,
+      "evidence": {
+        "contaminated_claims": []
+      }
+    },
+    {
+      "name": "entity_context_survives_followup",
+      "passed": true,
+      "evidence": {
+        "reply": "这家企业整体风险偏高，六方面体检里除了法律合规，其他都偏弱，尤其是经营真实性只有29.09分，说明收入真实性最值得怀疑。\n最关键的异常是：1家企业申报、开票、财报三个口径的营收全对不上，而且有欠税和税务违法记录，但增值税实际交税占营收只有1.00%，所得税只有0.26%，该交的税占比明显偏低。\n建议先核对申报和开票数据差异，重点查收入有没有少报或虚报，同时把欠税和违法记录处理掉。\n\n（下方按钮可继续追问）",
+        "scope": "individual",
+        "enterprise_id": "0039fa8febbd8593f36ec19219685382",
+        "route": "analysis"
+      }
+    },
+    {
+      "name": "followup_returns_chart",
+      "passed": true,
+      "evidence": {
+        "chart_type": "radar"
+      }
+    },
+    {
+      "name": "industry_inventory_uses_real_data",
+      "passed": true,
+      "evidence": {
+        "task_type": "distribution",
+        "scope": "cohort",
+        "labels": [
+          "制造",
+          "批发零售",
+          "服务",
+          "建筑",
+          "其他",
+          "IT软件"
+        ],
+        "chart_type": "bar"
+      }
+    },
+    {
+      "name": "cohort_button_预警",
+      "passed": true,
+      "evidence": {
+        "query": "哪里信号最多？",
+        "reply": "整体风险不算高，样本180家多口径最大偏差均值0.67。\n这个0.67说明各家数据口径差异不大，没有明显异常。\n建议先按行业拆分看，确认不同行业是否都稳定。\n\n（下方按钮可继续追问）",
+        "domain": "warn",
+        "plan_tool_ids": [
+          "metric_cross_max_deviation"
+        ],
+        "chart_type": null
+      }
+    },
+    {
+      "name": "cohort_button_稽查",
+      "passed": true,
+      "evidence": {
+        "query": "哪里可疑要查？",
+        "reply": "整体风险偏高，193家里164家申报、开票、财报收入对不上，占85.0%。\n62家有进货销货对不上、发票冲红等迹象，其中买卖集中27家、进货销货对不上22家。\n先查这62家的票据交易背景和货物凭证，再核对申报与开票差异。\n\n（下方按钮可继续追问）",
+        "domain": "audit",
+        "plan_tool_ids": [
+          "metric_red_invoice_cnt",
+          "metric_invalid_invoice_ratio",
+          "metric_fraud_composite_score",
+          "metric_authenticity_score",
+          "metric_high_severity_cnt",
+          "metric_tax_health_score"
+        ],
+        "chart_type": "funnel"
+      }
+    },
+    {
+      "name": "cohort_button_行业",
+      "passed": true,
+      "evidence": {
+        "query": "按行业拆风险等级",
+        "reply": "整体看风险偏高，各行业信用表现还算稳健。\n全样本193家平均43.14分，税务健康24分、经营真实性39.45分偏弱。\n建议先核对申报与开票数据差异，关注收入真实性。\n\n（下方按钮可继续追问）",
+        "domain": "general",
+        "plan_tool_ids": [
+          "metric_industry_score",
+          "metric_credit_level",
+          "metric_overall_score",
+          "metric_tax_health_score",
+          "metric_authenticity_score",
+          "metric_invoice_score"
+        ],
+        "chart_type": "bar"
+      }
+    },
+    {
+      "name": "langgraph_installed",
+      "passed": true,
+      "evidence": {
+        "langgraph": "1.2.11",
+        "langgraph-checkpoint-postgres": "3.1.2",
+        "langchain-core": "1.6.3"
+      }
+    },
+    {
+      "name": "langchain_not_in_core_path",
+      "passed": true,
+      "evidence": {
+        "langchain_core": "1.6.3",
+        "note": "langchain-core is a LangGraph dependency; no separate LangChain planner is active"
+      }
+    },
+    {
+      "name": "finance_review_disabled_by_decision",
+      "passed": true,
+      "evidence": {
+        "enabled": "false"
+      }
+    },
+    {
+      "name": "metric_terminal_state",
+      "passed": true,
+      "evidence": {
+        "validated_metrics": 67,
+        "unsupported_metrics": 36,
+        "validated_tools": 89,
+        "composition_blueprints": 68,
+        "composition_checkpoints": 506
+      }
+    }
+  ],
+  "database": {
+    "validated_metrics": 67,
+    "unsupported_metrics": 36,
+    "validated_tools": 89,
+    "composition_blueprints": 68,
+    "composition_checkpoints": 506
+  },
+  "versions": {
+    "langgraph": "1.2.11",
+    "langgraph-checkpoint-postgres": "3.1.2",
+    "langchain-core": "1.6.3"
+  }
+}

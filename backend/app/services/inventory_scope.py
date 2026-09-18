@@ -42,16 +42,32 @@ async def load_inventory(
         total_q = total_q.where(*filters)
     total = int((await db.execute(total_q)).scalar() or 0)
 
-    ind_rows = (
-        await db.execute(
-            select(CoreMetrics.industry_l1, func.count())
-            .group_by(CoreMetrics.industry_l1)
-            .order_by(func.count().desc())
-        )
-    ).all()
+    ind_q = select(CoreMetrics.industry_l1, func.count()).group_by(CoreMetrics.industry_l1).order_by(func.count().desc())
+    if filters:
+        ind_q = ind_q.where(*filters)
+    ind_rows = (await db.execute(ind_q)).all()
     industries = [
         {"industry_l1": ((ind or "其他").strip() or "其他"), "n": int(n or 0)}
         for ind, n in ind_rows
+    ]
+
+    province_q = select(CoreMetrics.province, func.count()).group_by(CoreMetrics.province).order_by(func.count().desc())
+    if filters:
+        province_q = province_q.where(*filters)
+    province_rows = (await db.execute(province_q)).all()
+    provinces = [{"province": ((prov or "未标注").strip() or "未标注"), "n": int(n or 0)} for prov, n in province_rows]
+
+    city_q = (
+        select(CoreMetrics.city, func.count())
+        .where(CoreMetrics.city.is_not(None), CoreMetrics.city != "")
+        .group_by(CoreMetrics.city)
+        .order_by(func.count().desc())
+    )
+    city_rows = (await db.execute(city_q)).all()
+    cities = [
+        {"city": (str(city or "").strip()), "n": int(n or 0)}
+        for city, n in city_rows
+        if str(city or "").strip()
     ]
 
     name_q = select(
@@ -59,24 +75,30 @@ async def load_inventory(
         CoreMetrics.display_name,
         CoreMetrics.display_label,
         CoreMetrics.industry_l1,
+        CoreMetrics.province,
+        CoreMetrics.city,
     )
     if filters:
         name_q = name_q.where(*filters)
     name_rows = (await db.execute(name_q.order_by(CoreMetrics.enterprise_id).limit(top_n))).all()
     top_names: list[dict[str, Any]] = []
     for i, row in enumerate(name_rows, start=1):
-        eid, dname, dlabel, ind = row
+        eid, dname, dlabel, ind, province, city = row
         top_names.append(
             {
                 "enterprise_id": eid,
                 "display_name": dname or dlabel or f"企业{i}",
                 "industry_l1": ind or "其他",
+                "province": province or "",
+                "city": city or "",
             }
         )
 
     return {
         "sample_count": total,
         "industries": industries,
+        "provinces": provinces,
+        "cities": cities,
         "top_names": top_names,
         "industry_l1": industry_l1,
         "province": province,
@@ -302,6 +324,25 @@ async def inventory_answer(
     return _pack(reply, claims, items, inv, kind, n, None, None)
 
 
+async def dimension_inventory_answer(db, *, dimension: str, industry_l1: str | None = None, province: str | None = None) -> dict[str, Any]:
+    inv = await load_inventory(db, industry_l1=industry_l1, province=province, top_n=30)
+    rows = inv.get('provinces') if dimension == 'province' else inv.get('industries')
+    rows = [row for row in (rows or []) if int(row.get('n') or 0) > 0]
+    total = int(inv.get('sample_count') or 0)
+    scope = province or industry_l1 or '全库'
+    label_key = 'province' if dimension == 'province' else 'industry_l1'
+    labels = [str(row.get(label_key)) for row in rows]
+    values = [int(row.get('n') or 0) for row in rows]
+    dimension_label = '地区' if dimension == 'province' else '行业'
+    bits = '、'.join(f'{label}{value}家' for label, value in zip(labels, values))
+    reply = f'当前「{scope}」共 {total} 家样本，覆盖 {len(rows)} 个{dimension_label}：{bits}。' if rows else f'当前「{scope}」没有可用的{dimension_label}分布数据。'
+    claims = [_claim(reply, metric=f'{dimension}_inventory', number=total, unit='家', field=label_key)]
+    for label, value in zip(labels, values):
+        claims.append(_claim(f'{label}样本 {value} 家。', metric=f'{dimension}_count_{label}', number=value, unit='家', field=label_key))
+    chart = {'type': 'bar', 'title': f'{scope}{dimension_label}样本数量', 'data': {'labels': labels, 'series': [{'name': '企业数量', 'values': values}]}}
+    return {'reply': reply, 'claims': claims, 'followup_items': [], 'charts': [chart], 'meta': {'function': 'inventory', 'inventory': True, 'inventory_dimension': dimension, 'inventory_rows': rows, 'sample_count': total}, 'sample_count': total, 'inventory_focus': ({'industry_l1': industry_l1, 'province': province, 'ask_kind': 'overview'} if (industry_l1 or province) else None)}
+
+
 def _pack(reply, claims, items, inv, kind, n, industry_l1, province):
     focus = None
     if industry_l1 or province:
@@ -325,6 +366,43 @@ def _pack(reply, claims, items, inv, kind, n, industry_l1, province):
 
 
 # ── subject 解析（bind）──
+
+async def subject_profile_answer(db: AsyncSession, *, subject_ref: str | None = None, current_eid: str | None = None) -> dict[str, Any]:
+    if subject_ref:
+        resolved = await resolve_subject_ref(db, subject_ref, current_eid=current_eid)
+    elif current_eid:
+        resolved = {'enterprise_id': current_eid}
+    else:
+        resolved = None
+    if not resolved:
+        return {'reply': '请补充企业名称或编号。', 'claims': [], 'followup_items': []}
+    row = (await db.execute(select(CoreMetrics.enterprise_id, CoreMetrics.display_name, CoreMetrics.display_label, CoreMetrics.industry_l1, CoreMetrics.province, CoreMetrics.city).where(CoreMetrics.enterprise_id == resolved['enterprise_id']).limit(1))).first()
+    if not row:
+        return {'reply': '未找到对应企业。', 'claims': [], 'followup_items': []}
+    eid, name, label, industry, province, city = row
+    display = name or label or 'Enterprise'
+    location_parts = list(dict.fromkeys(x for x in (province, city) if x))
+    location = '-'.join(location_parts) or '未标注'
+    industry_text = industry or '未标注'
+    reply = f'{display}属于{industry_text}，所在地区为{location}。'
+    claims = [
+        _claim(
+            f'{display}所属行业：{industry_text}。',
+            metric='industry_l1',
+            number=None,
+            unit='',
+            field='industry_l1',
+        ),
+        _claim(
+            f'{display}所在地区：{location}。',
+            metric='province',
+            number=None,
+            unit='',
+            field='province',
+        ),
+    ]
+    return {'reply': reply, 'claims': claims, 'followup_items': [], 'meta': {'function': 'profile', 'profile': {'enterprise_id': eid, 'display_name': display, 'industry_l1': industry_text, 'province': province or '', 'city': city or ''}}}
+
 
 async def resolve_subject_ref(
     db: AsyncSession,

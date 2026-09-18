@@ -11,6 +11,7 @@ from app.models.core_metrics import CoreMetrics
 from app.schemas.claim import Claim
 from app.schemas.conversation_route import ConversationPolicyRegistry
 from app.schemas.semantic_turn import SemanticTurnResult
+from app.schemas.tool_rag import ToolCandidate
 from app.schemas.tool_plan import ToolPlan, ToolStep
 from app.services.plan_execution import execute_tool_plan_async
 from app.services.route_normalize import normalize_route
@@ -18,13 +19,13 @@ from app.services.semantic_tool_executors import build_semantic_tool_executors
 from app.services.hybrid_tool_rag import retrieve_tools_hybrid
 from app.services.tool_rag import ToolSnapshot, load_tool_snapshot
 from app.services.observability import observe_latency
+from app.services.progress import emit_progress
 
 
 def _numeric_entity_key(value: str) -> str | None:
-    import re
+    from app.services.number_norm import numeric_entity_key
 
-    match = re.search(r"(\d+)", value or "")
-    return match.group(1).lstrip("0") or "0" if match else None
+    return numeric_entity_key(value)
 
 
 async def resolve_enterprise_entities(db: AsyncSession, entities: list[str]) -> list[str]:
@@ -68,6 +69,20 @@ def _tool_params(query: str, raw_route: dict, entities: list[str]) -> dict[str, 
     return params
 
 
+def _prefer_dimension_candidate(candidates: list[ToolCandidate], raw_route: dict):
+    filters = raw_route.get("filters") if isinstance(raw_route.get("filters"), dict) else {}
+    dimension = str(filters.get("dimension") or "")
+    if dimension != "industry":
+        return candidates
+    preferred = next(
+        (candidate for candidate in candidates if candidate.tool_id == "metric_industry_score"),
+        None,
+    )
+    if preferred is None:
+        return candidates
+    return [preferred] + [candidate for candidate in candidates if candidate.tool_id != preferred.tool_id]
+
+
 async def compose_semantic_turn(
     *,
     db: AsyncSession,
@@ -102,6 +117,7 @@ async def compose_semantic_turn(
         or route.route in {"analysis", "report", "clarify", "capability"}
     )
     retrieval_started = time.perf_counter()
+    await emit_progress("retrieval", "正在检索可执行指标")
     candidates = (
         await retrieve_tools_hybrid(
             db,
@@ -152,6 +168,7 @@ async def compose_semantic_turn(
             policy=policy,
             reply="当前没有匹配到可执行的金融风控指标，请换一种问法或指定企业/指标。",
         )
+    candidates = _prefer_dimension_candidate(candidates, raw_route)
     selected = candidates[0]
     params = _tool_params(query, raw_route, resolved_entities)
     if selected.tool_id == "metric_industry_score":
@@ -168,6 +185,7 @@ async def compose_semantic_turn(
     )
     executors = build_semantic_tool_executors(db=db, session_id=session_id)
     execution_started = time.perf_counter()
+    await emit_progress("execution", "正在执行分析")
     execution = await execute_tool_plan_async(
         plan,
         snapshot,
@@ -180,6 +198,16 @@ async def compose_semantic_turn(
         {"stage": "tool_execution"},
     )
     claims = [Claim.model_validate(item) for item in execution.claims]
+    charts: list[dict[str, Any]] = []
+    for output in execution.step_outputs.values():
+        if not isinstance(output, dict):
+            continue
+        meta = output.get("meta")
+        chart = meta.get("charts") if isinstance(meta, dict) else None
+        if isinstance(chart, dict):
+            charts.append(chart)
+        elif isinstance(chart, list):
+            charts.extend(item for item in chart if isinstance(item, dict))
     if not claims:
         return SemanticTurnResult(
             status="abstain",
@@ -199,6 +227,7 @@ async def compose_semantic_turn(
     from app.services import llm_reply
 
     authoring_started = time.perf_counter()
+    await emit_progress("authoring", "正在组织回答")
     reply, bundle, reply_source = await llm_reply.generate_claim_reply(
         query,
         claims,
@@ -232,5 +261,5 @@ async def compose_semantic_turn(
         reply=reply,
         followups=followups,
         reply_source=reply_source,
-        meta={"step_outputs": execution.step_outputs},
+        meta={"step_outputs": execution.step_outputs, "charts": charts},
     )

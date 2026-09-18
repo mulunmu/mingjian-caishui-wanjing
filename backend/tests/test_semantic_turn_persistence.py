@@ -73,3 +73,48 @@ async def test_history_failure_prevents_topic_write(monkeypatch):
             turn=turn,
         )
     assert topic_called is False
+
+
+@pytest.mark.asyncio
+async def test_dialogue_state_keeps_human_entity_label(monkeypatch):
+    from app.schemas.tool_plan import ToolPlan, ToolStep
+    from app.services import semantic_turn_persistence as stp
+
+    captured = {}
+
+    def fake_store(*args, **kwargs):
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(stp.session_store, "store_session", fake_store)
+    monkeypatch.setattr(stp, "append_topic_blocking", lambda *a, **k: None)
+    monkeypatch.setattr(stp, "get_sync_engine", lambda: object())
+
+    route = ConversationRoute(route="analysis", domain="warn", entities=["企业1"])
+    turn = SemanticTurnResult(
+        status="answered",
+        route=route,
+        policy=ConversationPolicyRegistry.resolve(route),
+        plan=ToolPlan(
+            mode="answer",
+            steps=[
+                ToolStep(
+                    step_id="s1",
+                    tool_id="metric_overall_score",
+                    params={"entity": "hash-1", "query": "企业1风险"},
+                )
+            ],
+        ),
+        meta={"entity_display_names": {"hash-1": "企业1"}},
+    )
+
+    await stp.persist_primary_turn(
+        db=object(),
+        session_id="s1",
+        owner=None,
+        query="企业1风险",
+        turn=turn,
+    )
+
+    assert captured["dialogue_state"]["subject"]["enterprise_id"] == "hash-1"
+    assert captured["dialogue_state"]["subject"]["display_name"] == "企业1"

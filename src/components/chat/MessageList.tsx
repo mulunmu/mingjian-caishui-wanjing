@@ -26,6 +26,8 @@ function resolveNavigateTarget(target: string | undefined): string | 'ingest_mod
 export default function MessageList({ messages, isLoading, onFollowUp }: MessageListProps) {
   const navigate = useNavigate();
   const openIngestModal = useChatStore((s) => s.openIngestModal);
+  const activeProcess = useChatStore((s) => s.activeProcess);
+  const requestScopePicker = useChatStore((s) => s.requestScopePicker);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -34,18 +36,6 @@ export default function MessageList({ messages, isLoading, onFollowUp }: Message
 
   const handleFollowUp = (q: string | FollowUpItem) => {
     if (typeof q === 'string') {
-      if (q === '查看整体概览' || q === '查看风险预警') {
-        navigate('/overview');
-        return;
-      }
-      if (q.includes('数据接入') || q.includes('数据怎么导入')) {
-        openIngestModal();
-        return;
-      }
-      if (q.includes('生成报告') || q.includes('报告生成')) {
-        navigate('/report?wizard=1');
-        return;
-      }
       onFollowUp(q);
       return;
     }
@@ -60,6 +50,11 @@ export default function MessageList({ messages, isLoading, onFollowUp }: Message
         navigate(path);
         return;
       }
+    }
+
+    if (q.type === 'switch_scope' && q.params?.open_picker) {
+      requestScopePicker();
+      return;
     }
 
     if (q.type === 'action') {
@@ -89,7 +84,7 @@ export default function MessageList({ messages, isLoading, onFollowUp }: Message
           <AIMessage key={msg.id} message={msg} onFollowUp={handleFollowUp} onAction={handleAction} />
         )
       )}
-      {isLoading && <TypingIndicator />}
+      {isLoading && <TypingIndicator steps={activeProcess} />}
       <div ref={bottomRef} />
     </div>
   );

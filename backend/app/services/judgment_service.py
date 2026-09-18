@@ -1792,30 +1792,78 @@ async def _metric_dispatcher(
 
     industry = _sq_industry(sq)
     province = _sq_province(sq)
+    enterprise_ids = list(sq.entities or [])
     if metric == "overall_score":
-        return await build_score_claims(db, industry, dimension="overall", province=province)
+        return await build_score_claims(
+            db,
+            industry,
+            dimension=_sq_dimension(sq),
+            province=province,
+            enterprise_ids=enterprise_ids,
+        )
     if metric == "credit_score":
-        return await build_score_claims(db, industry, dimension=_sq_dimension(sq), province=province)
+        return await build_score_claims(
+            db,
+            industry,
+            dimension=_sq_dimension(sq),
+            province=province,
+            enterprise_ids=enterprise_ids,
+        )
     if metric == "authenticity_score":
-        return await build_authenticity_claims(db, industry, province=province)
+        return await build_authenticity_claims(
+            db, industry, province=province, enterprise_ids=enterprise_ids
+        )
     if metric == "fraud_composite_score":
-        return await build_fraud_claims(db, industry, province=province)
+        return await build_fraud_claims(
+            db, industry, province=province, enterprise_ids=enterprise_ids
+        )
     if metric == "industry_score":
-        return await build_score_claims(db, industry, dimension="industry", province=province)
+        return await build_score_claims(
+            db,
+            industry,
+            dimension="industry",
+            province=province,
+            enterprise_ids=enterprise_ids,
+        )
     if metric == "revenue_yoy":
-        return await build_trend_industry_claims(db, industry, province=province)
+        return await build_trend_industry_claims(
+            db, industry, province=province, enterprise_ids=enterprise_ids
+        )
     if metric in {"tax_health_score", "legal_score"}:
-        return await build_tax_claims(db, industry, dimension=_sq_dimension(sq), province=province)
+        return await build_tax_claims(
+            db,
+            industry,
+            dimension=_sq_dimension(sq),
+            province=province,
+            enterprise_ids=enterprise_ids,
+        )
     if metric == "finance_score":
-        return await build_financial_claims(db, industry, dimension=_sq_dimension(sq), province=province)
+        return await build_financial_claims(
+            db,
+            industry,
+            dimension=_sq_dimension(sq),
+            province=province,
+            enterprise_ids=enterprise_ids,
+        )
     if metric in {"invoice_score", "suspicious_count"}:
-        return await build_authenticity_claims(db, industry, province=province)
+        return await build_authenticity_claims(
+            db, industry, province=province, enterprise_ids=enterprise_ids
+        )
     if metric == "flagged_count":
-        return await build_fraud_claims(db, industry, province=province)
+        return await build_fraud_claims(
+            db, industry, province=province, enterprise_ids=enterprise_ids
+        )
     if metric in {"peer_industry_percentile", "peer_province_percentile"}:
-        return await build_benchmark_claims(db, industry, province=province)
+        return await build_benchmark_claims(
+            db, industry, province=province, enterprise_ids=enterprise_ids
+        )
     if metric in {"signal_total", "tax_violation", "high_dev", "low_credit"}:
-        return await build_signal_claims(db, industry_l1=industry, province=province)
+        return await build_signal_claims(
+            db,
+            industry_l1=industry,
+            province=province,
+            enterprise_ids=enterprise_ids,
+        )
     if metric in {"cash_flow_level", "credit_level", "social_trend", "is_dishonesty", "is_execution"}:
         return await _generic_category_summary(db, sq, metric)
     return await _generic_simple_avg(db, sq, metric)
@@ -1826,8 +1874,19 @@ async def _generic_simple_avg(
 ) -> tuple[list[Claim], dict[str, Any]]:
     sf = _metric_to_source_field(metric)
     if not sf:
-        return await build_score_claims(db, _sq_industry(sq), dimension=_sq_dimension(sq), province=_sq_province(sq))
-    rows = await _load_metrics(db, _sq_industry(sq), province=_sq_province(sq))
+        return await build_score_claims(
+            db,
+            _sq_industry(sq),
+            dimension=_sq_dimension(sq),
+            province=_sq_province(sq),
+            enterprise_ids=list(sq.entities or []),
+        )
+    rows = await _load_metrics_scoped(
+        db,
+        _sq_industry(sq),
+        province=_sq_province(sq),
+        enterprise_ids=list(sq.entities or []),
+    )
     label = _metric_label(metric)
     if not rows:
         return (
@@ -1912,7 +1971,12 @@ async def _generic_category_summary(
         "is_dishonesty": "is_dishonesty",
         "is_execution": "is_execution",
     }.get(metric, metric)
-    rows = await _load_metrics_scoped(db, _sq_industry(sq), province=_sq_province(sq))
+    rows = await _load_metrics_scoped(
+        db,
+        _sq_industry(sq),
+        province=_sq_province(sq),
+        enterprise_ids=list(sq.entities or []),
+    )
     counts: dict[str, int] = {}
     for row in rows:
         raw = getattr(row, field, None)

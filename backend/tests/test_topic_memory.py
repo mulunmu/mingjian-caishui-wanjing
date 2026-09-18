@@ -65,6 +65,19 @@ def test_topic_order_and_previous_previous_reference():
         assert resolved.summary == "天气询问"
 
 
+def test_earliest_topic_reference_uses_first_turn():
+    engine, _ = _seed_topics()
+    with Session(engine) as session:
+        resolved = resolve_topic_reference(
+            session,
+            "session-1",
+            "回到最开始那个制造业问题继续分析",
+        )
+
+    assert resolved is not None
+    assert resolved.summary == "制造业企业风险"
+
+
 def test_semantic_reference_can_target_older_topic():
     engine, _ = _seed_topics()
     with Session(engine) as session:

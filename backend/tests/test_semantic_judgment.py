@@ -169,6 +169,38 @@ async def test_ranking_group_top_n(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_overall_score_lookup_honors_industry_dimension(monkeypatch):
+    from app.schemas.semantic_query import SemanticQuery
+    from app.services import judgment_service
+
+    async def fake_load_scoped(db, industry_l1=None, province=None, enterprise_ids=None):
+        del db, industry_l1, province, enterprise_ids
+        return [
+            _row(industry_l1="制造", credit_score=80, tax_on_time_rate=0.7),
+            _row(industry_l1="制造", credit_score=90, tax_on_time_rate=0.8),
+            _row(industry_l1="服务", credit_score=60, tax_on_time_rate=0.6),
+        ]
+
+    monkeypatch.setattr(
+        judgment_service, "_load_metrics_scoped", fake_load_scoped
+    )
+    sq = SemanticQuery(
+        query_type="lookup",
+        metrics=["overall_score"],
+        dimensions=["industry_l1"],
+    )
+
+    claims, meta = await judgment_service._metric_dispatcher(  # type: ignore[arg-type]
+        None, sq, "overall_score"
+    )
+
+    assert {item["industry_l1"] for item in meta["by_industry"]} == {"制造", "服务"}
+    assert meta["charts"]["shape"] == "categorical_distribution"
+    assert meta["charts"]["data"]["labels"] == ["制造", "服务"]
+    assert len([claim for claim in claims if claim.value]) >= 2
+
+
+@pytest.mark.asyncio
 async def test_ranking_ascending_uses_low_ordinal(monkeypatch):
     from app.schemas.semantic_query import SemanticQuery, SortSpec
     from app.services import judgment_service
