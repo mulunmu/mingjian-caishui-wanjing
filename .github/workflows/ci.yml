@@ -31,5 +31,12 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install -r requirements.txt
       - run: python -c "from app.main import app; print(f'{len(app.routes)} routes OK')"
+      - name: architecture health baseline
+        run: python scripts/audit_architecture_health.py --output architecture-health.json
+      - name: upload architecture health
+        uses: actions/upload-artifact@v4
+        with:
+          name: architecture-health
+          path: backend/architecture-health.json
       - name: pytest (exclude optional llm)
         run: python -m pytest tests/ -q -m "not llm"

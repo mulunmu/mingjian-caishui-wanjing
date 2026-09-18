@@ -1,0 +1,162 @@
+{
+  "root": "backend/app",
+  "thresholds": {
+    "god_lines": 800,
+    "fan_in": 20,
+    "fan_out": 20
+  },
+  "summary": {
+    "modules": 175,
+    "total_lines": 44547,
+    "god_files": 10,
+    "cycles": 1,
+    "high_fan_in_modules": 5,
+    "high_fan_out_modules": 4
+  },
+  "packages": [
+    {
+      "package": "api",
+      "modules": 12,
+      "lines": 2255
+    },
+    {
+      "package": "app",
+      "modules": 1,
+      "lines": 0
+    },
+    {
+      "package": "db",
+      "modules": 7,
+      "lines": 384
+    },
+    {
+      "package": "etl",
+      "modules": 5,
+      "lines": 1987
+    },
+    {
+      "package": "main",
+      "modules": 1,
+      "lines": 413
+    },
+    {
+      "package": "models",
+      "modules": 18,
+      "lines": 965
+    },
+    {
+      "package": "responses",
+      "modules": 1,
+      "lines": 20
+    },
+    {
+      "package": "schemas",
+      "modules": 17,
+      "lines": 917
+    },
+    {
+      "package": "services",
+      "modules": 113,
+      "lines": 37606
+    }
+  ],
+  "god_files": [
+    {
+      "module": "app.services.slice_report",
+      "lines": 4019,
+      "path": "app/services/slice_report.py"
+    },
+    {
+      "module": "app.services.judgment_service",
+      "lines": 2565,
+      "path": "app/services/judgment_service.py"
+    },
+    {
+      "module": "app.services.semantic_primary",
+      "lines": 1227,
+      "path": "app/services/semantic_primary.py"
+    },
+    {
+      "module": "app.etl.pipeline",
+      "lines": 1123,
+      "path": "app/etl/pipeline.py"
+    },
+    {
+      "module": "app.services.assessment",
+      "lines": 1088,
+      "path": "app/services/assessment.py"
+    },
+    {
+      "module": "app.services.report_templates",
+      "lines": 1008,
+      "path": "app/services/report_templates.py"
+    },
+    {
+      "module": "app.services.outer_orchestrator",
+      "lines": 899,
+      "path": "app/services/outer_orchestrator.py"
+    },
+    {
+      "module": "app.services.llm_reply",
+      "lines": 877,
+      "path": "app/services/llm_reply.py"
+    },
+    {
+      "module": "app.services.dialog_act",
+      "lines": 868,
+      "path": "app/services/dialog_act.py"
+    },
+    {
+      "module": "app.services.metric_registry",
+      "lines": 817,
+      "path": "app/services/metric_registry.py"
+    }
+  ],
+  "high_fan_in": [
+    {
+      "module": "app.services",
+      "fan_in": 38
+    },
+    {
+      "module": "app.db.session",
+      "fan_in": 32
+    },
+    {
+      "module": "app.services.metric_registry",
+      "fan_in": 22
+    },
+    {
+      "module": "app.models.core_metrics",
+      "fan_in": 20
+    },
+    {
+      "module": "app.schemas.claim",
+      "fan_in": 20
+    }
+  ],
+  "high_fan_out": [
+    {
+      "module": "app.services.semantic_primary",
+      "fan_out": 35
+    },
+    {
+      "module": "app.services.slice_report",
+      "fan_out": 29
+    },
+    {
+      "module": "app.main",
+      "fan_out": 27
+    },
+    {
+      "module": "app.services.composition_execution_bridge",
+      "fan_out": 20
+    }
+  ],
+  "cycles": [
+    [
+      "app.services.custom_report",
+      "app.services.report_planner"
+    ]
+  ],
+  "critical": true
+}

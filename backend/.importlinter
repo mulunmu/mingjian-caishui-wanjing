@@ -1,0 +1,26 @@
+[importlinter]
+root_package = app
+
+[importlinter:contract:models-independent]
+name = Models must not import api or services
+type = forbidden
+source_modules = app.models
+forbidden_modules = app.api, app.services
+
+[importlinter:contract:schemas-independent]
+name = Schemas must not import api or services
+type = forbidden
+source_modules = app.schemas
+forbidden_modules = app.api, app.services
+
+[importlinter:contract:services-not-api]
+name = Services must not import API
+type = forbidden
+source_modules = app.services
+forbidden_modules = app.api
+
+[importlinter:contract:etl-not-api]
+name = ETL must not import API
+type = forbidden
+source_modules = app.etl
+forbidden_modules = app.api
